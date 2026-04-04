@@ -4,11 +4,18 @@ import { useState, useEffect, useRef } from "react";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
+import { suggestKeyResults } from "@/lib/claude";
+import { getSettings } from "@/lib/storage";
 
 export default function OKRPage() {
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // KR suggestions state: objectiveId -> suggested KR titles
+  const [suggestions, setSuggestions] = useState<Record<string, string[]>>({});
+  const [suggestingId, setSuggestingId] = useState<string | null>(null);
+  // track which suggestions are checked: objectiveId -> Set of indices
+  const [checkedSuggestions, setCheckedSuggestions] = useState<Record<string, Set<number>>>({});
 
   useEffect(() => {
     fetchObjectives().then(setObjectives).catch(console.error);
@@ -73,6 +80,55 @@ export default function OKRPage() {
     updateObjective(objectiveId, {
       keyResults: o.keyResults.filter((kr) => kr.id !== krId),
     });
+  }
+
+  async function handleSuggestKRs(objectiveId: string) {
+    const o = objectives.find((o) => o.id === objectiveId);
+    if (!o || !o.title.trim()) return;
+    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
+    if (!apiKey) return;
+    setSuggestingId(objectiveId);
+    try {
+      const { claudeModel } = getSettings();
+      const suggested = await suggestKeyResults(apiKey, claudeModel, o.title, o.description);
+      setSuggestions((prev) => ({ ...prev, [objectiveId]: suggested }));
+      setCheckedSuggestions((prev) => ({
+        ...prev,
+        [objectiveId]: new Set(suggested.map((_, i) => i)),
+      }));
+    } catch {
+      // silently fail
+    } finally {
+      setSuggestingId(null);
+    }
+  }
+
+  function toggleSuggestion(objectiveId: string, index: number) {
+    setCheckedSuggestions((prev) => {
+      const set = new Set(prev[objectiveId] ?? []);
+      if (set.has(index)) set.delete(index);
+      else set.add(index);
+      return { ...prev, [objectiveId]: set };
+    });
+  }
+
+  function acceptSuggestions(objectiveId: string) {
+    const o = objectives.find((o) => o.id === objectiveId);
+    if (!o) return;
+    const list = suggestions[objectiveId] ?? [];
+    const checked = checkedSuggestions[objectiveId] ?? new Set();
+    const newKRs: KeyResult[] = list
+      .filter((_, i) => checked.has(i))
+      .map((title) => ({ id: uuid(), title, description: "" }));
+    if (newKRs.length === 0) return;
+    updateObjective(objectiveId, { keyResults: [...o.keyResults, ...newKRs] });
+    setSuggestions((prev) => { const n = { ...prev }; delete n[objectiveId]; return n; });
+    setCheckedSuggestions((prev) => { const n = { ...prev }; delete n[objectiveId]; return n; });
+  }
+
+  function dismissSuggestions(objectiveId: string) {
+    setSuggestions((prev) => { const n = { ...prev }; delete n[objectiveId]; return n; });
+    setCheckedSuggestions((prev) => { const n = { ...prev }; delete n[objectiveId]; return n; });
   }
 
   return (
@@ -156,12 +212,55 @@ export default function OKRPage() {
                   </div>
                 ))}
               </div>
-              <button
-                onClick={() => addKR(o.id)}
-                className="mt-3 text-xs text-indigo-500 hover:text-indigo-700 font-medium"
-              >
-                + 新增 Key Result
-              </button>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  onClick={() => addKR(o.id)}
+                  className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+                >
+                  + 新增 Key Result
+                </button>
+                {o.title.trim() && !suggestions[o.id] && (
+                  <button
+                    onClick={() => handleSuggestKRs(o.id)}
+                    disabled={suggestingId === o.id}
+                    className="text-xs text-gray-400 hover:text-indigo-500 font-medium disabled:opacity-50 transition-colors"
+                  >
+                    {suggestingId === o.id ? "AI 推薦中…" : "✦ AI 推薦 KR"}
+                  </button>
+                )}
+              </div>
+
+              {/* AI suggestions panel */}
+              {suggestions[o.id] && (
+                <div className="mt-3 bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-2">
+                  <p className="text-xs font-medium text-indigo-700 mb-2">AI 推薦的 Key Results（勾選後加入）</p>
+                  {suggestions[o.id].map((s, i) => (
+                    <label key={i} className="flex items-start gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={checkedSuggestions[o.id]?.has(i) ?? false}
+                        onChange={() => toggleSuggestion(o.id, i)}
+                        className="mt-0.5 accent-indigo-600 shrink-0"
+                      />
+                      <span className="text-xs text-indigo-800 group-hover:text-indigo-900">{s}</span>
+                    </label>
+                  ))}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => acceptSuggestions(o.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
+                    >
+                      加入選取的 KR
+                    </button>
+                    <button
+                      onClick={() => dismissSuggestions(o.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ))}

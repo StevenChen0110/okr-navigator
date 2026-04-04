@@ -35,11 +35,36 @@ Scoring guide:
 
 The finalScore should reflect overall priority considering all objectives together. Weigh objectives equally unless context suggests otherwise. Output ONLY the JSON object, no markdown fences.`;
 
+export async function suggestKeyResults(
+  apiKey: string,
+  model: string,
+  objectiveTitle: string,
+  objectiveDescription?: string
+): Promise<string[]> {
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+  const message = await client.messages.create({
+    model,
+    max_tokens: 512,
+    system: `You are an OKR expert. Given an Objective, suggest 3-5 specific, measurable Key Results that would indicate success. Output ONLY a JSON array of strings, e.g. ["KR1", "KR2"]. No markdown fences, no extra text.`,
+    messages: [
+      {
+        role: "user",
+        content: `Objective: ${objectiveTitle}${objectiveDescription ? `\nDescription: ${objectiveDescription}` : ""}`,
+      },
+    ],
+  });
+  let text = (message.content[0] as { type: string; text: string }).text.trim();
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  return JSON.parse(text) as string[];
+}
+
 export async function analyzeIdea(
   apiKey: string,
   model: string,
   ideaTitle: string,
-  ideaDescription: string,
+  ideaWhy: string,
+  ideaOutcome: string,
+  ideaNotes: string,
   objectives: Objective[]
 ): Promise<IdeaAnalysis> {
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
@@ -53,7 +78,12 @@ export async function analyzeIdea(
     )
     .join("\n\n");
 
-  const userPrompt = `USER'S OKRs:\n${okrContext}\n\nIDEA TO ANALYZE:\nTitle: ${ideaTitle}\nDescription: ${ideaDescription}`;
+  const parts = [`Title: ${ideaTitle}`];
+  if (ideaWhy.trim()) parts.push(`Why (motivation): ${ideaWhy}`);
+  if (ideaOutcome.trim()) parts.push(`Expected outcome: ${ideaOutcome}`);
+  if (ideaNotes.trim()) parts.push(`Additional notes: ${ideaNotes}`);
+
+  const userPrompt = `USER'S OKRs:\n${okrContext}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
 
   const message = await client.messages.create({
     model,

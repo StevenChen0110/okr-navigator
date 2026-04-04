@@ -15,7 +15,9 @@ type Status = "idle" | "analyzing" | "done" | "error";
 export default function NewIdeaPage() {
   const router = useRouter();
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [why, setWhy] = useState("");
+  const [outcome, setOutcome] = useState("");
+  const [notes, setNotes] = useState("");
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [idea, setIdea] = useState<Idea | null>(null);
@@ -26,7 +28,7 @@ export default function NewIdeaPage() {
   }, []);
 
   async function handleAnalyze() {
-    if (!title.trim() || !description.trim()) return;
+    if (!title.trim()) return;
     const settings = getSettings();
     const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
     if (!apiKey) {
@@ -48,13 +50,19 @@ export default function NewIdeaPage() {
         apiKey,
         settings.claudeModel,
         title,
-        description,
+        why,
+        outcome,
+        notes,
         objectives
       );
+      const descParts: string[] = [];
+      if (why.trim()) descParts.push(`為什麼要做：${why}`);
+      if (outcome.trim()) descParts.push(`預期成效：${outcome}`);
+      if (notes.trim()) descParts.push(`備註：${notes}`);
       const newIdea: Idea = {
         id: uuid(),
         title,
-        description,
+        description: descParts.join("\n"),
         analysis,
         createdAt: new Date().toISOString(),
       };
@@ -146,7 +154,9 @@ export default function NewIdeaPage() {
               setStatus("idle");
               setIdea(null);
               setTitle("");
-              setDescription("");
+              setWhy("");
+              setOutcome("");
+              setNotes("");
             }}
             className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
           >
@@ -164,7 +174,7 @@ export default function NewIdeaPage() {
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Idea 標題</label>
+          <label className="block text-sm font-medium text-gray-700">名稱</label>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -174,12 +184,40 @@ export default function NewIdeaPage() {
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">詳細描述</label>
+          <label className="block text-sm font-medium text-gray-700">
+            為什麼要做？<span className="text-gray-400 font-normal ml-1">（選填）</span>
+          </label>
           <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="這個想法的細節、動機、預期效果…"
-            rows={5}
+            value={why}
+            onChange={(e) => setWhy(e.target.value)}
+            placeholder="背景、問題、動機…"
+            rows={3}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">
+            預期成效<span className="text-gray-400 font-normal ml-1">（選填）</span>
+          </label>
+          <textarea
+            value={outcome}
+            onChange={(e) => setOutcome(e.target.value)}
+            placeholder="做了之後會有什麼改變、達成什麼目標…"
+            rows={3}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">
+            備註<span className="text-gray-400 font-normal ml-1">（選填）</span>
+          </label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="其他補充說明…"
+            rows={2}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
           />
         </div>
@@ -192,7 +230,7 @@ export default function NewIdeaPage() {
 
         <button
           onClick={handleAnalyze}
-          disabled={status === "analyzing" || !title.trim() || !description.trim()}
+          disabled={status === "analyzing" || !title.trim()}
           className="w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {status === "analyzing" ? "AI 分析中…" : "分析 Idea"}
