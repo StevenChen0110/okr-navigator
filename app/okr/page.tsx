@@ -1,24 +1,38 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult } from "@/lib/types";
-import { getObjectives, saveObjectives } from "@/lib/storage";
+import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
 
 export default function OKRPage() {
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
-    setObjectives(getObjectives());
+    fetchObjectives().then(setObjectives).catch(console.error);
   }, []);
 
-  function persist(next: Objective[]) {
-    setObjectives(next);
-    saveObjectives(next);
+  function scheduleSave(objective: Objective) {
+    if (saveTimers.current[objective.id]) {
+      clearTimeout(saveTimers.current[objective.id]);
+    }
+    saveTimers.current[objective.id] = setTimeout(() => {
+      saveObjective(objective).catch(console.error);
+    }, 800);
   }
 
-  function addObjective() {
+  function updateObjective(id: string, patch: Partial<Objective>) {
+    setObjectives((prev) => {
+      const next = prev.map((o) => (o.id === id ? { ...o, ...patch } : o));
+      const updated = next.find((o) => o.id === id);
+      if (updated) scheduleSave(updated);
+      return next;
+    });
+  }
+
+  async function addObjective() {
     const newO: Objective = {
       id: uuid(),
       title: "",
@@ -26,38 +40,30 @@ export default function OKRPage() {
       keyResults: [],
       createdAt: new Date().toISOString(),
     };
-    const next = [...objectives, newO];
-    persist(next);
+    setObjectives((prev) => [...prev, newO]);
     setEditingId(newO.id);
-  }
-
-  function updateObjective(id: string, patch: Partial<Objective>) {
-    persist(objectives.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+    saveObjective(newO).catch(console.error);
   }
 
   function deleteObjective(id: string) {
     if (!confirm("確定要刪除這個目標嗎？")) return;
-    persist(objectives.filter((o) => o.id !== id));
+    setObjectives((prev) => prev.filter((o) => o.id !== id));
     if (editingId === id) setEditingId(null);
+    removeObjective(id).catch(console.error);
   }
 
   function addKR(objectiveId: string) {
     const kr: KeyResult = { id: uuid(), title: "", description: "" };
-    updateObjective(objectiveId, {
-      keyResults: [
-        ...(objectives.find((o) => o.id === objectiveId)?.keyResults ?? []),
-        kr,
-      ],
-    });
+    const o = objectives.find((o) => o.id === objectiveId);
+    if (!o) return;
+    updateObjective(objectiveId, { keyResults: [...o.keyResults, kr] });
   }
 
   function updateKR(objectiveId: string, krId: string, patch: Partial<KeyResult>) {
     const o = objectives.find((o) => o.id === objectiveId);
     if (!o) return;
     updateObjective(objectiveId, {
-      keyResults: o.keyResults.map((kr) =>
-        kr.id === krId ? { ...kr, ...patch } : kr
-      ),
+      keyResults: o.keyResults.map((kr) => (kr.id === krId ? { ...kr, ...patch } : kr)),
     });
   }
 
@@ -94,7 +100,6 @@ export default function OKRPage() {
       <div className="space-y-4">
         {objectives.map((o, oi) => (
           <div key={o.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            {/* Objective Header */}
             <div className="p-5">
               <div className="flex items-start gap-3">
                 <span className="mt-1 text-xs font-bold text-indigo-400 bg-indigo-50 rounded px-1.5 py-0.5 shrink-0">
@@ -123,7 +128,6 @@ export default function OKRPage() {
               </div>
             </div>
 
-            {/* Key Results */}
             <div className="border-t border-gray-100 px-5 pb-4">
               <div className="space-y-2 pt-3">
                 {o.keyResults.map((kr, kri) => (

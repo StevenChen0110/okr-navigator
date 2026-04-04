@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, Idea } from "@/lib/types";
-import { getObjectives, getSettings, upsertIdea } from "@/lib/storage";
+import { getSettings } from "@/lib/storage";
+import { fetchObjectives, saveIdea } from "@/lib/db";
 import { analyzeIdea } from "@/lib/claude";
 import ScoreBar from "@/components/ScoreBar";
 import Link from "next/link";
@@ -21,7 +22,7 @@ export default function NewIdeaPage() {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    setObjectives(getObjectives());
+    fetchObjectives().then(setObjectives).catch(console.error);
   }, []);
 
   async function handleAnalyze() {
@@ -56,7 +57,7 @@ export default function NewIdeaPage() {
         analysis,
         createdAt: new Date().toISOString(),
       };
-      upsertIdea(newIdea);
+      await saveIdea(newIdea);
       setIdea(newIdea);
       setStatus("done");
     } catch (e) {

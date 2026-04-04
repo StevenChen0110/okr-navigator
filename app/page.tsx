@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Idea, Objective } from "@/lib/types";
-import { getIdeas, getObjectives, deleteIdea as removeIdea } from "@/lib/storage";
+import { fetchIdeas, fetchObjectives, removeIdea } from "@/lib/db";
 import ScoreBar from "@/components/ScoreBar";
 
 type SortKey = "score" | "date";
@@ -15,13 +15,13 @@ export default function DashboardPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
-    setIdeas(getIdeas());
-    setObjectives(getObjectives());
+    fetchIdeas().then(setIdeas).catch(console.error);
+    fetchObjectives().then(setObjectives).catch(console.error);
   }, []);
 
   function handleDelete(id: string) {
     if (!confirm("確定要刪除這個 Idea？")) return;
-    removeIdea(id);
+    removeIdea(id).catch(console.error);
     setIdeas((prev) => prev.filter((i) => i.id !== id));
   }
 
@@ -149,7 +149,15 @@ function IdeaCard({
             <div key={os.objectiveId}>
               <div className="flex justify-between items-center mb-1">
                 <span className="text-xs font-medium text-gray-700">{os.objectiveTitle}</span>
-                <span className={`text-xs font-bold ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>
+                <span
+                  className={`text-xs font-bold ${
+                    os.overallScore >= 7
+                      ? "text-indigo-600"
+                      : os.overallScore >= 4
+                      ? "text-amber-500"
+                      : "text-red-500"
+                  }`}
+                >
                   {os.overallScore.toFixed(1)}
                 </span>
               </div>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "./AuthProvider";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: "⊞" },
@@ -12,6 +13,7 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user, signOut } = useAuth();
 
   return (
     <aside className="hidden md:flex w-56 flex-col border-r border-gray-200 bg-white shrink-0">
@@ -21,7 +23,9 @@ export default function Sidebar() {
       </div>
       <nav className="flex-1 px-3 py-4 space-y-0.5">
         {navItems.map((item) => {
-          const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+          const active =
+            pathname === item.href ||
+            (item.href !== "/" && pathname.startsWith(item.href));
           return (
             <Link
               key={item.href}
@@ -38,6 +42,15 @@ export default function Sidebar() {
           );
         })}
       </nav>
+      <div className="border-t border-gray-100 px-4 py-4">
+        <p className="text-xs text-gray-400 truncate mb-2">{user?.email}</p>
+        <button
+          onClick={signOut}
+          className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+        >
+          登出
+        </button>
+      </div>
     </aside>
   );
 }
