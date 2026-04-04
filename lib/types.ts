@@ -44,6 +44,5 @@ export interface Idea {
 }
 
 export interface AppSettings {
-  claudeApiKey: string;
   claudeModel: string;
 }

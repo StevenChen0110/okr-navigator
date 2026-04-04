@@ -57,7 +57,6 @@ export function deleteIdea(id: string): void {
 // Settings
 export function getSettings(): AppSettings {
   return load<AppSettings>(KEYS.SETTINGS, {
-    claudeApiKey: process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "",
     claudeModel: "claude-haiku-4-5-20251001",
   });
 }

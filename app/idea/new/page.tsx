@@ -28,8 +28,9 @@ export default function NewIdeaPage() {
   async function handleAnalyze() {
     if (!title.trim() || !description.trim()) return;
     const settings = getSettings();
-    if (!settings.claudeApiKey) {
-      setErrorMsg("請先在設定頁輸入 Claude API Key");
+    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
+    if (!apiKey) {
+      setErrorMsg("系統尚未設定 API Key，請聯絡管理員");
       setStatus("error");
       return;
     }
@@ -44,7 +45,7 @@ export default function NewIdeaPage() {
 
     try {
       const analysis = await analyzeIdea(
-        settings.claudeApiKey,
+        apiKey,
         settings.claudeModel,
         title,
         description,

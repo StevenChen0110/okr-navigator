@@ -5,18 +5,16 @@ import { getSettings, saveSettings } from "@/lib/storage";
 import { AppSettings } from "@/lib/types";
 
 const MODELS = [
-  "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-6",
-  "claude-opus-4-6",
+  { id: "claude-haiku-4-5-20251001", label: "Haiku（快速）" },
+  { id: "claude-sonnet-4-6", label: "Sonnet（均衡）" },
+  { id: "claude-opus-4-6", label: "Opus（最強）" },
 ];
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>({
-    claudeApiKey: "",
     claudeModel: "claude-haiku-4-5-20251001",
   });
   const [saved, setSaved] = useState(false);
-  const [showKey, setShowKey] = useState(false);
 
   useEffect(() => {
     setSettings(getSettings());
@@ -31,36 +29,9 @@ export default function SettingsPage() {
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10">
       <h1 className="text-xl font-semibold mb-1">設定</h1>
-      <p className="text-sm text-gray-500 mb-8">管理 Claude API 連線設定</p>
+      <p className="text-sm text-gray-500 mb-8">選擇 AI 分析模型</p>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-6">
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">
-            Claude API Key
-          </label>
-          <div className="relative">
-            <input
-              type={showKey ? "text" : "password"}
-              value={settings.claudeApiKey}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, claudeApiKey: e.target.value }))
-              }
-              placeholder="sk-ant-..."
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm pr-16 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600"
-            >
-              {showKey ? "隱藏" : "顯示"}
-            </button>
-          </div>
-          <p className="text-xs text-gray-400">
-            Key 只儲存在瀏覽器本地，不會傳送至任何伺服器。
-          </p>
-        </div>
-
         <div className="space-y-2">
           <label className="block text-sm font-medium text-gray-700">
             模型選擇
@@ -73,11 +44,14 @@ export default function SettingsPage() {
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
+              <option key={m.id} value={m.id}>
+                {m.label}
               </option>
             ))}
           </select>
+          <p className="text-xs text-gray-400">
+            Haiku 速度最快，Opus 分析最深入。
+          </p>
         </div>
 
         <button
