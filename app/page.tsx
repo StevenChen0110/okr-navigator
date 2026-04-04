@@ -35,7 +35,7 @@ export default function DashboardPage() {
   const totalKRs = objectives.reduce((acc, o) => acc + o.keyResults.length, 0);
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
+    <div className="max-w-3xl mx-auto px-4 py-6 md:px-6 md:py-10">
       {/* OKR Summary */}
       <div className="grid grid-cols-3 gap-4 mb-8">
         <StatCard label="目標數 (O)" value={objectives.length} />

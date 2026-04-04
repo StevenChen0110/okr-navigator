@@ -14,7 +14,7 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 flex flex-col border-r border-gray-200 bg-white shrink-0">
+    <aside className="hidden md:flex w-56 flex-col border-r border-gray-200 bg-white shrink-0">
       <div className="px-5 py-5 border-b border-gray-100">
         <span className="font-semibold text-base tracking-tight">OKR Navigator</span>
         <p className="text-xs text-gray-400 mt-0.5">決策導航系統</p>
