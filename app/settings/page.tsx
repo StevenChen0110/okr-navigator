@@ -13,6 +13,7 @@ const MODELS = [
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>({
     claudeModel: "claude-haiku-4-5-20251001",
+    language: "zh-TW",
   });
   const [saved, setSaved] = useState(false);
 
@@ -52,6 +53,25 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-400">
             Haiku 速度最快，Opus 分析最深入。
           </p>
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">
+            AI 回應語言
+          </label>
+          <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
+            {(["zh-TW", "en"] as const).map((lang) => (
+              <button
+                key={lang}
+                onClick={() => setSettings((s) => ({ ...s, language: lang }))}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  settings.language === lang ? "bg-white shadow-sm text-gray-900" : "text-gray-400"
+                }`}
+              >
+                {lang === "zh-TW" ? "繁體中文" : "English"}
+              </button>
+            ))}
+          </div>
         </div>
 
         <button

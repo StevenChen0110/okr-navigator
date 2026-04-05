@@ -1,26 +1,35 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, Idea } from "@/lib/types";
+import { Objective, Idea, IdeaKRLink, IdeaAnalysis } from "@/lib/types";
 import { getSettings } from "@/lib/storage";
 import { fetchObjectives, saveIdea } from "@/lib/db";
 import { analyzeIdea } from "@/lib/claude";
 import ScoreBar from "@/components/ScoreBar";
+import Markdown from "@/components/Markdown";
 import Link from "next/link";
 
-type Status = "idle" | "analyzing" | "done" | "error";
+type Status = "idle" | "analyzing" | "confirm" | "saving" | "done" | "error";
+
+interface SuggestedLink {
+  objectiveId: string;
+  objectiveTitle: string;
+  krId: string;
+  krTitle: string;
+  score: number;
+}
 
 export default function NewIdeaPage() {
-  const router = useRouter();
   const [title, setTitle] = useState("");
   const [why, setWhy] = useState("");
   const [outcome, setOutcome] = useState("");
   const [notes, setNotes] = useState("");
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [status, setStatus] = useState<Status>("idle");
-  const [idea, setIdea] = useState<Idea | null>(null);
+  const [analysis, setAnalysis] = useState<IdeaAnalysis | null>(null);
+  const [suggestedLinks, setSuggestedLinks] = useState<SuggestedLink[]>([]);
+  const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
@@ -31,59 +40,129 @@ export default function NewIdeaPage() {
     if (!title.trim()) return;
     const settings = getSettings();
     const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
-    if (!apiKey) {
-      setErrorMsg("系統尚未設定 API Key，請聯絡管理員");
-      setStatus("error");
-      return;
-    }
-    if (objectives.length === 0) {
-      setErrorMsg("請先在「OKR 目標」頁面建立至少一個目標");
-      setStatus("error");
-      return;
-    }
+    if (!apiKey) { setErrorMsg("系統尚未設定 API Key"); setStatus("error"); return; }
+    if (objectives.length === 0) { setErrorMsg("請先建立至少一個 OKR 目標"); setStatus("error"); return; }
 
     setStatus("analyzing");
     setErrorMsg("");
 
     try {
-      const analysis = await analyzeIdea(
-        apiKey,
-        settings.claudeModel,
-        title,
-        why,
-        outcome,
-        notes,
-        objectives
-      );
-      const descParts: string[] = [];
-      if (why.trim()) descParts.push(`為什麼要做：${why}`);
-      if (outcome.trim()) descParts.push(`預期成效：${outcome}`);
-      if (notes.trim()) descParts.push(`備註：${notes}`);
-      const newIdea: Idea = {
-        id: uuid(),
-        title,
-        description: descParts.join("\n"),
-        analysis,
-        createdAt: new Date().toISOString(),
-      };
-      await saveIdea(newIdea);
-      setIdea(newIdea);
-      setStatus("done");
+      const result = await analyzeIdea(apiKey, settings.claudeModel, settings.language, title, why, outcome, notes, objectives);
+      setAnalysis(result);
+
+      // Auto-suggest links from KRs with score >= 5
+      const links: SuggestedLink[] = [];
+      for (const os of result.objectiveScores) {
+        for (const krs of os.keyResultScores) {
+          if (krs.score >= 5) {
+            links.push({
+              objectiveId: os.objectiveId,
+              objectiveTitle: os.objectiveTitle,
+              krId: krs.keyResultId,
+              krTitle: krs.keyResultTitle,
+              score: krs.score,
+            });
+          }
+        }
+      }
+      links.sort((a, b) => b.score - a.score);
+      setSuggestedLinks(links);
+      // Pre-select links with score >= 7
+      setSelectedLinkIds(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
+      setStatus("confirm");
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "分析失敗，請確認 API Key 是否正確");
       setStatus("error");
     }
   }
 
-  if (status === "done" && idea?.analysis) {
-    const { analysis } = idea;
+  async function handleConfirm() {
+    if (!analysis) return;
+    setStatus("saving");
+
+    const linkedKRs: IdeaKRLink[] = suggestedLinks
+      .filter((l) => selectedLinkIds.has(l.krId))
+      .map((l) => ({ objectiveId: l.objectiveId, krId: l.krId }));
+
+    const descParts: string[] = [];
+    if (why.trim()) descParts.push(`為什麼要做：${why}`);
+    if (outcome.trim()) descParts.push(`預期成效：${outcome}`);
+    if (notes.trim()) descParts.push(`備註：${notes}`);
+
+    const newIdea: Idea = {
+      id: uuid(),
+      title,
+      description: descParts.join("\n"),
+      analysis,
+      createdAt: new Date().toISOString(),
+      completed: false,
+      linkedKRs,
+    };
+
+    try {
+      await saveIdea(newIdea);
+      setStatus("done");
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "儲存失敗");
+      setStatus("confirm");
+    }
+  }
+
+  function toggleLink(krId: string) {
+    setSelectedLinkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(krId)) next.delete(krId); else next.add(krId);
+      return next;
+    });
+  }
+
+  function resetForm() {
+    setStatus("idle");
+    setAnalysis(null);
+    setSuggestedLinks([]);
+    setSelectedLinkIds(new Set());
+    setTitle(""); setWhy(""); setOutcome(""); setNotes("");
+  }
+
+  // ── Done ─────────────────────────────────────────────────────────────────────
+
+  if (status === "done") {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-10 text-center space-y-4">
+        <div className="text-4xl">✓</div>
+        <h1 className="text-lg font-semibold">Idea 已儲存</h1>
+        <p className="text-sm text-gray-500">{title}</p>
+        <div className="flex gap-3 pt-4">
+          <Link href="/" className="flex-1 py-2.5 text-center rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+            回到 Dashboard
+          </Link>
+          <button onClick={resetForm} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">
+            再分析一個
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Confirm step (analysis + KR links) ───────────────────────────────────────
+
+  if (status === "confirm" && analysis) {
+    const isOffTrack = analysis.objectiveScores.length > 0 &&
+      analysis.objectiveScores.every((os) => os.overallScore < 3);
+
     return (
       <div className="max-w-2xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
+        {isOffTrack && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-700">
+            這個 Idea 與你目前所有 OKR 的關聯度都很低，確定現在要投入嗎？
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-semibold">{idea.title}</h1>
-            <p className="text-sm text-gray-500 mt-1">{idea.description}</p>
+            <h1 className="text-xl font-semibold">{title}</h1>
+            <p className="text-sm text-gray-400 mt-1">分析結果</p>
           </div>
           <div className="flex flex-col items-center bg-white border border-gray-200 rounded-xl px-4 py-3 shrink-0 ml-4">
             <span className="text-3xl font-bold text-indigo-600">{analysis.finalScore.toFixed(1)}</span>
@@ -91,22 +170,22 @@ export default function NewIdeaPage() {
           </div>
         </div>
 
-        {/* Objective Scores */}
+        {/* Objective scores */}
         <div className="space-y-4">
           {analysis.objectiveScores.map((os) => (
             <div key={os.objectiveId} className="bg-white rounded-xl border border-gray-200 p-5">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2">
                 <h3 className="font-medium text-sm">{os.objectiveTitle}</h3>
                 <span className={`text-sm font-bold ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>
                   {os.overallScore.toFixed(1)} / 10
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mb-4">{os.reasoning}</p>
+              <Markdown className="text-xs text-gray-500 mb-3">{os.reasoning}</Markdown>
               <div className="space-y-2">
                 {os.keyResultScores.map((krs) => (
                   <div key={krs.keyResultId}>
                     <ScoreBar score={krs.score} label={krs.keyResultTitle} />
-                    <p className="text-xs text-gray-400 mt-0.5 pl-0">{krs.reasoning}</p>
+                    <Markdown className="text-xs text-gray-400 mt-0.5">{krs.reasoning}</Markdown>
                   </div>
                 ))}
               </div>
@@ -117,18 +196,16 @@ export default function NewIdeaPage() {
         {/* Risks */}
         {analysis.risks.length > 0 && (
           <div className="bg-red-50 border border-red-100 rounded-xl p-4">
-            <h3 className="text-sm font-medium text-red-700 mb-2">⚠ 風險與副作用</h3>
+            <h3 className="text-sm font-medium text-red-700 mb-2">風險與副作用</h3>
             <ul className="space-y-1">
               {analysis.risks.map((r, i) => (
-                <li key={i} className="text-xs text-red-600 flex gap-2">
-                  <span>•</span><span>{r}</span>
-                </li>
+                <li key={i} className="text-xs text-red-600 flex gap-2"><span>•</span><span>{r}</span></li>
               ))}
             </ul>
           </div>
         )}
 
-        {/* Suggestions */}
+        {/* Execution suggestions */}
         {analysis.executionSuggestions.length > 0 && (
           <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
             <h3 className="text-sm font-medium text-indigo-700 mb-2">執行建議</h3>
@@ -142,30 +219,67 @@ export default function NewIdeaPage() {
           </div>
         )}
 
+        {/* KR links confirmation */}
+        {suggestedLinks.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h3 className="text-sm font-medium text-gray-700 mb-1">連結至 KR</h3>
+            <p className="text-xs text-gray-400 mb-3">AI 建議此 Idea 對以下 KR 有貢獻，確認或調整</p>
+            <div className="space-y-2">
+              {suggestedLinks.map((l) => (
+                <label key={l.krId} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedLinkIds.has(l.krId)}
+                    onChange={() => toggleLink(l.krId)}
+                    className="mt-0.5 accent-indigo-600 shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-700">{l.krTitle}</p>
+                    <p className="text-xs text-gray-400">{l.objectiveTitle}</p>
+                  </div>
+                  <span className={`text-xs font-bold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>
+                    {l.score.toFixed(1)}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-600">{errorMsg}</div>
+        )}
+
         <div className="flex gap-3 pt-2">
-          <Link
-            href="/"
-            className="flex-1 py-2 text-center rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
-          >
-            回到 Dashboard
-          </Link>
           <button
-            onClick={() => {
-              setStatus("idle");
-              setIdea(null);
-              setTitle("");
-              setWhy("");
-              setOutcome("");
-              setNotes("");
-            }}
-            className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            onClick={resetForm}
+            className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
           >
-            再分析一個
+            ← 重新輸入
+          </button>
+          <button
+            onClick={handleConfirm}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+          >
+            確認並儲存 →
           </button>
         </div>
       </div>
     );
   }
+
+  // ── Saving ────────────────────────────────────────────────────────────────────
+
+  if (status === "saving") {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-10 text-center">
+        <div className="text-4xl mb-4 animate-pulse">◎</div>
+        <p className="text-sm text-gray-500">儲存中…</p>
+      </div>
+    );
+  }
+
+  // ── Input form ────────────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10">
@@ -203,7 +317,7 @@ export default function NewIdeaPage() {
           <textarea
             value={outcome}
             onChange={(e) => setOutcome(e.target.value)}
-            placeholder="做了之後會有什麼改變、達成什麼目標…"
+            placeholder="做了之後會有什麼改變…"
             rows={3}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
           />
@@ -216,16 +330,14 @@ export default function NewIdeaPage() {
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="其他補充說明…"
+            placeholder="其他補充…"
             rows={2}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
           />
         </div>
 
         {status === "error" && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-600">
-            {errorMsg}
-          </div>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-600">{errorMsg}</div>
         )}
 
         <button
@@ -237,9 +349,7 @@ export default function NewIdeaPage() {
         </button>
 
         {status === "analyzing" && (
-          <p className="text-center text-xs text-gray-400 animate-pulse">
-            正在向 Claude 請求分析，通常需要 5-15 秒…
-          </p>
+          <p className="text-center text-xs text-gray-400 animate-pulse">正在向 Claude 請求分析，通常需要 5-15 秒…</p>
         )}
       </div>
     </div>

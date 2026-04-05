@@ -58,6 +58,7 @@ export function deleteIdea(id: string): void {
 export function getSettings(): AppSettings {
   return load<AppSettings>(KEYS.SETTINGS, {
     claudeModel: "claude-haiku-4-5-20251001",
+    language: "zh-TW",
   });
 }
 

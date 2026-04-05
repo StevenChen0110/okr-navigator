@@ -23,6 +23,7 @@ export async function fetchObjectives(): Promise<Objective[]> {
     description: r.description ?? "",
     keyResults: r.key_results,
     createdAt: r.created_at,
+    meta: r.meta ?? undefined,
   }));
 }
 
@@ -35,6 +36,7 @@ export async function saveObjective(objective: Objective): Promise<void> {
     description: objective.description ?? "",
     key_results: objective.keyResults,
     created_at: objective.createdAt,
+    meta: objective.meta ?? null,
   });
   if (error) throw error;
 }
@@ -58,6 +60,9 @@ export async function fetchIdeas(): Promise<Idea[]> {
     description: r.description,
     analysis: r.analysis,
     createdAt: r.created_at,
+    completed: r.completed ?? false,
+    completedAt: r.completed_at ?? undefined,
+    linkedKRs: r.linked_krs ?? [],
   }));
 }
 
@@ -70,7 +75,18 @@ export async function saveIdea(idea: Idea): Promise<void> {
     description: idea.description,
     analysis: idea.analysis,
     created_at: idea.createdAt,
+    completed: idea.completed ?? false,
+    completed_at: idea.completedAt ?? null,
+    linked_krs: idea.linkedKRs ?? [],
   });
+  if (error) throw error;
+}
+
+export async function updateIdeaCompletion(id: string, completed: boolean): Promise<void> {
+  const { error } = await supabase.from("ideas").update({
+    completed,
+    completed_at: completed ? new Date().toISOString() : null,
+  }).eq("id", id);
   if (error) throw error;
 }
 
