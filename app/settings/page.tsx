@@ -5,9 +5,9 @@ import { getSettings, saveSettings } from "@/lib/storage";
 import { AppSettings } from "@/lib/types";
 
 const MODELS = [
-  { id: "claude-haiku-4-5-20251001", label: "Haiku（快速）" },
-  { id: "claude-sonnet-4-6", label: "Sonnet（均衡）" },
-  { id: "claude-opus-4-6", label: "Opus（最強）" },
+  { id: "claude-haiku-4-5-20251001", label: "快速模式（Haiku）" },
+  { id: "claude-sonnet-4-6", label: "均衡模式（Sonnet）" },
+  { id: "claude-opus-4-6", label: "深度分析模式（Opus）" },
 ];
 
 export default function SettingsPage() {
@@ -51,7 +51,7 @@ export default function SettingsPage() {
             ))}
           </select>
           <p className="text-xs text-gray-400">
-            Haiku 速度最快，Opus 分析最深入。
+            建議一般使用均衡模式，需要更深入分析時選擇深度分析模式
           </p>
         </div>
 

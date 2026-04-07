@@ -28,6 +28,23 @@ function daysUntil(dateStr: string): number {
   return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+function getProgressColor(completion: number, deadline?: string): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isOverdue = deadline ? new Date(deadline) < today : false;
+
+  if (isOverdue && completion < 100) {
+    return "bg-red-400";
+  }
+  if (completion >= 60) {
+    return "bg-green-400";
+  }
+  if (completion >= 30) {
+    return "bg-amber-400";
+  }
+  return "bg-gray-400";
+}
+
 export default function DashboardPage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
@@ -145,15 +162,13 @@ export default function DashboardPage() {
 
         {/* Ideas card */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="flex items-end gap-1.5">
-            <span className="text-2xl font-bold text-indigo-600">{ideas.length}</span>
-            {ideas.length > 0 && (
-              <span className="text-sm font-medium text-gray-400 mb-0.5">
-                {Math.round((completedIdeas / ideas.length) * 100)}%
-              </span>
-            )}
-          </div>
+          <div className="text-2xl font-bold text-indigo-600">{ideas.length}</div>
           <div className="text-xs text-gray-500 mt-1">Ideas</div>
+          {ideas.length > 0 && (
+            <div className="mt-1 text-xs text-gray-400">
+              {Math.round((completedIdeas / ideas.length) * 100)}% 完成
+            </div>
+          )}
           <div className="mt-1 text-xs text-gray-400">
             {completedIdeas > 0 && <span className="text-green-500">{completedIdeas} 完成</span>}
             {completedIdeas > 0 && linkedIdeas > 0 && <span className="mx-1">·</span>}
@@ -233,7 +248,7 @@ export default function DashboardPage() {
                     <div className="shrink-0 flex items-center gap-1.5">
                       <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full ${completion >= 70 ? "bg-green-400" : completion >= 40 ? "bg-amber-400" : "bg-red-400"}`}
+                          className={`h-full rounded-full ${getProgressColor(completion, kr.deadline)}`}
                           style={{ width: `${completion}%` }}
                         />
                       </div>
@@ -269,9 +284,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all ${
-                        completion >= 70 ? "bg-green-400" : completion >= 40 ? "bg-amber-400" : "bg-red-400"
-                      }`}
+                      className={`h-full rounded-full transition-all ${getProgressColor(completion)}`}
                       style={{ width: `${completion}%` }}
                     />
                   </div>
@@ -287,19 +300,21 @@ export default function DashboardPage() {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-base">Ideas 排行榜</h2>
-          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-            {(["score", "date"] as SortKey[]).map((k) => (
-              <button
-                key={k}
-                onClick={() => setSort(k)}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  sort === k ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
-                }`}
-              >
-                {k === "score" ? "依優先分" : "依時間"}
-              </button>
-            ))}
-          </div>
+          {ideas.length > 0 && (
+            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+              {(["score", "date"] as SortKey[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setSort(k)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    sort === k ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
+                  }`}
+                >
+                  {k === "score" ? "依優先分" : "依時間"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {sorted.length === 0 ? (

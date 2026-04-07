@@ -22,6 +22,23 @@ function calcKRCompletion(kr: KeyResult): number | undefined {
   return Math.min(100, Math.round(((kr.currentValue ?? 0) / kr.targetValue) * 100));
 }
 
+function getProgressColor(completion: number, deadline?: string): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isOverdue = deadline ? new Date(deadline) < today : false;
+
+  if (isOverdue && completion < 100) {
+    return "bg-red-400";
+  }
+  if (completion >= 60) {
+    return "bg-green-400";
+  }
+  if (completion >= 30) {
+    return "bg-amber-400";
+  }
+  return "bg-gray-400";
+}
+
 function calcOCompletion(o: Objective): number | undefined {
   const krs = o.keyResults.filter((kr) => kr.targetValue && kr.targetValue > 0);
   if (krs.length === 0) return undefined;
@@ -465,10 +482,10 @@ export default function OKRPage() {
                                   {/* Progress bar */}
                                   <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                                     <div
-                                      className={`h-full rounded-full transition-all ${
-                                        (calcKRCompletion(kr) ?? 0) >= 70 ? "bg-green-400" :
-                                        (calcKRCompletion(kr) ?? 0) >= 40 ? "bg-amber-400" : "bg-red-400"
-                                      }`}
+                                      className={`h-full rounded-full transition-all ${getProgressColor(
+                                        calcKRCompletion(kr) ?? 0,
+                                        kr.deadline
+                                      )}`}
                                       style={{ width: `${calcKRCompletion(kr) ?? 0}%` }}
                                     />
                                   </div>
@@ -477,21 +494,23 @@ export default function OKRPage() {
                               )}
                             </div>
 
-                            {/* Confidence selector */}
-                            <select
-                              value={kr.confidence ?? ""}
-                              onChange={(e) => handleConfidenceChange(o.id, kr.id, e.target.value as KRConfidence)}
-                              className={`text-xs rounded-lg px-2 py-1 border cursor-pointer focus:outline-none shrink-0 ${
-                                kr.confidence
-                                  ? CONFIDENCE_CONFIG[kr.confidence].color
-                                  : "text-gray-400 bg-gray-50 border-gray-200"
-                              }`}
-                            >
-                              <option value="" disabled>信心度</option>
-                              <option value="on-track">順利</option>
-                              <option value="at-risk">卡關</option>
-                              <option value="needs-rethink">需重新思考</option>
-                            </select>
+                            {/* Confidence selector (button group) */}
+                            <div className="flex gap-1 shrink-0">
+                              {(["on-track", "at-risk", "needs-rethink"] as const).map((conf) => (
+                                <button
+                                  key={conf}
+                                  onClick={() => handleConfidenceChange(o.id, kr.id, conf)}
+                                  className={`text-xs px-2 py-1 rounded-lg border cursor-pointer transition-colors ${
+                                    kr.confidence === conf
+                                      ? `${CONFIDENCE_CONFIG[conf].color} border-current`
+                                      : "text-gray-400 bg-gray-50 border-gray-200 hover:border-gray-300"
+                                  }`}
+                                  title={CONFIDENCE_CONFIG[conf].label}
+                                >
+                                  {CONFIDENCE_CONFIG[conf].label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
 
                           {/* Confidence advice */}
