@@ -5,11 +5,10 @@ import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, OKRMeta, Background, BackgroundCategory } from "@/lib/types";
 import { getSettings } from "@/lib/storage";
-import { saveObjective, fetchBackgrounds, saveBackground } from "@/lib/db";
+import { saveObjective, fetchBackgrounds, saveBackground, removeBackground } from "@/lib/db";
 import {
   refineObjective,
   suggestKeyResults,
-  convertAllToSMART,
   generateSnapshot,
   parseKRMetrics,
 } from "@/lib/claude";
@@ -26,6 +25,14 @@ interface RefinedO {
   timeframe: string;
 }
 
+interface ParsedKR {
+  title: string;
+  metricName: string;
+  targetValue: number | null;
+  unit: string;
+  deadline: string | null;
+}
+
 const TIMEFRAME_OPTIONS = ["本月", "本季", "半年", "全年"];
 
 export default function NewOKRPage() {
@@ -38,7 +45,7 @@ export default function NewOKRPage() {
     okrType: "committed",
     timeframe: "本季",
   });
-  const [krs, setKrs] = useState<string[]>([]);
+  const [parsedKrs, setParsedKrs] = useState<ParsedKR[]>([]);
   const [savedObjective, setSavedObjective] = useState<Objective | null>(null);
   const [error, setError] = useState("");
 
@@ -91,16 +98,57 @@ export default function NewOKRPage() {
     }
   }
 
-  // Background → KR loading
+  // Delete a background from the list
+  async function handleDeleteBackground(id: string) {
+    await removeBackground(id).catch(() => {});
+    setBackgrounds((prev) => prev.filter((bg) => bg.id !== id));
+    setSelectedBgIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  // Background → KR loading: suggest KRs + parse metrics
   async function handleConfirmBackground() {
     setStep("kr-loading");
     try {
       const selectedBgs = backgrounds.filter((bg) => selectedBgIds.has(bg.id));
-      const bgContext = selectedBgs.length > 0
-        ? selectedBgs.map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`).join("\n")
-        : undefined;
-      const suggested = await suggestKeyResults(apiKey, model, language, refined.title, refined.motivation, undefined, bgContext);
-      setKrs(suggested);
+      const bgContext =
+        selectedBgs.length > 0
+          ? selectedBgs
+              .map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`)
+              .join("\n")
+          : undefined;
+      const suggested = await suggestKeyResults(
+        apiKey,
+        model,
+        language,
+        refined.title,
+        refined.motivation,
+        undefined,
+        bgContext
+      );
+
+      // Parse each KR into structured fields in parallel
+      const parsed = await Promise.all(
+        suggested.map(async (title) => {
+          try {
+            const m = await parseKRMetrics(apiKey, model, title);
+            return {
+              title,
+              metricName: m.metricName ?? "",
+              targetValue: m.targetValue ?? null,
+              unit: m.unit ?? "",
+              deadline: m.deadline ?? null,
+            };
+          } catch {
+            return { title, metricName: "", targetValue: null, unit: "", deadline: null };
+          }
+        })
+      );
+
+      setParsedKrs(parsed);
       setStep("confirm-kr");
     } catch {
       setError("推薦 KR 失敗，請重試");
@@ -108,28 +156,32 @@ export default function NewOKRPage() {
     }
   }
 
-  // Step 4 → 5: convert to SMART + generate snapshot + save
+  // Step 4 → 5: generate snapshot + save (no SMART conversion needed — user already set structured fields)
   async function handleConfirmKRs() {
-    const filledKRs = krs.filter((k) => k.trim());
-    if (filledKRs.length === 0) return;
+    const filled = parsedKrs.filter((k) => k.title.trim());
+    if (filled.length === 0) return;
     setStep("saving");
     setError("");
     try {
-      const [smartKRs, snapshot] = await Promise.all([
-        convertAllToSMART(apiKey, model, language, filledKRs, refined.title, refined.timeframe),
-        generateSnapshot(apiKey, model, language, refined.title, refined.motivation, refined.okrType, refined.timeframe, filledKRs),
-      ]);
-
-      const metrics = await Promise.all(
-        smartKRs.map((kr) => parseKRMetrics(apiKey, model, kr).catch(() => null))
+      const snapshot = await generateSnapshot(
+        apiKey,
+        model,
+        language,
+        refined.title,
+        refined.motivation,
+        refined.okrType,
+        refined.timeframe,
+        filled.map((k) => k.title)
       );
 
-      const keyResults: KeyResult[] = smartKRs.map((title, i) => ({
+      const keyResults: KeyResult[] = filled.map((kr) => ({
         id: uuid(),
-        title,
+        title: kr.title,
         description: "",
-        ...(metrics[i] ?? {}),
-        deadline: metrics[i]?.deadline ?? undefined,
+        ...(kr.metricName ? { metricName: kr.metricName } : {}),
+        ...(kr.targetValue != null ? { targetValue: kr.targetValue } : {}),
+        ...(kr.unit ? { unit: kr.unit } : {}),
+        ...(kr.deadline ? { deadline: kr.deadline } : {}),
       }));
 
       const meta: OKRMeta = {
@@ -157,16 +209,19 @@ export default function NewOKRPage() {
     }
   }
 
-  function updateKR(index: number, value: string) {
-    setKrs((prev) => prev.map((k, i) => (i === index ? value : k)));
+  function updateParsedKR(index: number, field: keyof ParsedKR, value: string | number | null) {
+    setParsedKrs((prev) => prev.map((k, i) => (i === index ? { ...k, [field]: value } : k)));
   }
 
-  function removeKR(index: number) {
-    setKrs((prev) => prev.filter((_, i) => i !== index));
+  function removeParsedKR(index: number) {
+    setParsedKrs((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function addKR() {
-    setKrs((prev) => [...prev, ""]);
+  function addParsedKR() {
+    setParsedKrs((prev) => [
+      ...prev,
+      { title: "", metricName: "", targetValue: null, unit: "", deadline: null },
+    ]);
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -175,7 +230,9 @@ export default function NewOKRPage() {
     return (
       <div className="max-w-xl mx-auto px-4 py-10 md:px-6">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600 text-white text-xl mb-4">◎</div>
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600 text-white text-xl mb-4">
+            ◎
+          </div>
           <h1 className="text-xl font-semibold">目標已建立</h1>
           <p className="text-sm text-gray-400 mt-1">{savedObjective.title}</p>
         </div>
@@ -183,7 +240,9 @@ export default function NewOKRPage() {
         {savedObjective.meta?.snapshot && (
           <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-6">
             <p className="text-xs font-medium text-indigo-600 mb-1">設定背景</p>
-            <Markdown className="text-sm text-indigo-800 leading-relaxed">{savedObjective.meta.snapshot}</Markdown>
+            <Markdown className="text-sm text-indigo-800 leading-relaxed">
+              {savedObjective.meta.snapshot}
+            </Markdown>
           </div>
         )}
 
@@ -208,7 +267,7 @@ export default function NewOKRPage() {
             onClick={() => {
               setStep("input");
               setRawInput("");
-              setKrs([]);
+              setParsedKrs([]);
               setError("");
             }}
             className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
@@ -224,7 +283,7 @@ export default function NewOKRPage() {
     return (
       <div className="max-w-xl mx-auto px-4 py-10 md:px-6 text-center">
         <div className="text-4xl mb-4 animate-pulse">◎</div>
-        <p className="text-sm text-gray-500">正在轉換 SMART 格式並生成快照…</p>
+        <p className="text-sm text-gray-500">正在生成設定背景快照…</p>
       </div>
     );
   }
@@ -233,7 +292,7 @@ export default function NewOKRPage() {
     return (
       <div className="max-w-xl mx-auto px-4 py-10 md:px-6 text-center">
         <div className="text-4xl mb-4 animate-pulse">◎</div>
-        <p className="text-sm text-gray-500">AI 正在推薦 Key Results…</p>
+        <p className="text-sm text-gray-500">AI 正在推薦 Key Results 並分析指標…</p>
       </div>
     );
   }
@@ -249,19 +308,28 @@ export default function NewOKRPage() {
           const active = step === s;
           return (
             <div key={s} className="flex items-center gap-2">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                active ? "bg-indigo-600 text-white"
-                : done ? "bg-indigo-100 text-indigo-600"
-                : "bg-gray-100 text-gray-400"
-              }`}>{i + 1}</div>
+              <div
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                  active
+                    ? "bg-indigo-600 text-white"
+                    : done
+                    ? "bg-indigo-100 text-indigo-600"
+                    : "bg-gray-100 text-gray-400"
+                }`}
+              >
+                {i + 1}
+              </div>
               {i < 3 && <div className="flex-1 h-px bg-gray-200 w-6" />}
             </div>
           );
         })}
         <span className="text-xs text-gray-400 ml-1">
-          {step === "input" ? "描述目標"
-            : step === "confirm-o" ? "確認目標"
-            : step === "background" ? "背景經歷"
+          {step === "input"
+            ? "描述目標"
+            : step === "confirm-o"
+            ? "確認目標"
+            : step === "background"
+            ? "背景經歷"
             : "設定 KR"}
         </span>
       </div>
@@ -390,7 +458,9 @@ export default function NewOKRPage() {
         <div className="space-y-6">
           <div>
             <h1 className="text-xl font-semibold mb-1">相關背景經歷</h1>
-            <p className="text-sm text-gray-500">選擇與這個目標相關的背景，幫助 AI 推薦更符合你能力的 KR</p>
+            <p className="text-sm text-gray-500">
+              選擇與這個目標相關的背景，幫助 AI 推薦更符合你能力的 KR
+            </p>
           </div>
 
           {/* Existing backgrounds */}
@@ -398,7 +468,7 @@ export default function NewOKRPage() {
             <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
               <p className="text-xs font-medium text-gray-500 mb-3">已儲存的背景（勾選相關的）</p>
               {backgrounds.map((bg) => (
-                <label key={bg.id} className="flex items-start gap-3 cursor-pointer">
+                <div key={bg.id} className="flex items-start gap-3">
                   <input
                     type="checkbox"
                     checked={selectedBgIds.has(bg.id)}
@@ -410,7 +480,7 @@ export default function NewOKRPage() {
                         return next;
                       });
                     }}
-                    className="mt-0.5 accent-indigo-600"
+                    className="mt-1 accent-indigo-600 shrink-0"
                   />
                   <div className="flex-1 min-w-0">
                     <span className="text-xs text-indigo-600 font-medium mr-1.5">[{bg.category}]</span>
@@ -419,7 +489,14 @@ export default function NewOKRPage() {
                       <p className="text-xs text-gray-400 mt-0.5">{bg.description}</p>
                     )}
                   </div>
-                </label>
+                  <button
+                    onClick={() => handleDeleteBackground(bg.id)}
+                    className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-lg leading-none mt-0.5"
+                    title="刪除"
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -447,7 +524,12 @@ export default function NewOKRPage() {
               <input
                 value={newBgTitle}
                 onChange={(e) => setNewBgTitle(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddBackground(); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddBackground();
+                  }
+                }}
                 placeholder="例：3 年 Python 開發經驗"
                 className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
               />
@@ -473,43 +555,106 @@ export default function NewOKRPage() {
               onClick={handleConfirmBackground}
               className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
             >
-              {selectedBgIds.size > 0 ? `帶入 ${selectedBgIds.size} 筆背景，推薦 KR →` : "跳過，直接推薦 KR →"}
+              {selectedBgIds.size > 0
+                ? `帶入 ${selectedBgIds.size} 筆背景，推薦 KR →`
+                : "跳過，直接推薦 KR →"}
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Step 4: Confirm KRs ── */}
+      {/* ── Step 4: Confirm KRs (structured table view) ── */}
       {step === "confirm-kr" && (
         <div className="space-y-6">
           <div>
             <h1 className="text-xl font-semibold mb-1">設定 Key Results</h1>
             <p className="text-sm text-gray-500">
-              AI 推薦了以下 KR，可以直接編輯、刪除或新增。確認後 AI 會轉成 SMART 格式
+              AI 已推薦並解析以下 KR，可直接修改各欄位後確認
             </p>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
-            <p className="text-xs font-medium text-indigo-600">{refined.title}</p>
-            {krs.map((kr, i) => (
-              <div key={i} className="flex gap-2 items-start">
-                <span className="text-xs text-gray-400 mt-2.5 shrink-0 w-8">KR{i + 1}</span>
-                <input
-                  value={kr}
-                  onChange={(e) => updateKR(i, e.target.value)}
-                  className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                />
-                <button
-                  onClick={() => removeKR(i)}
-                  className="mt-2 text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
-                >
-                  ×
-                </button>
+          <div className="space-y-4">
+            <p className="text-xs font-medium text-indigo-600 px-1">{refined.title}</p>
+
+            {parsedKrs.map((kr, i) => (
+              <div
+                key={i}
+                className="bg-white border border-gray-200 rounded-xl p-4 space-y-3"
+              >
+                {/* KR header */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                    KR {i + 1}
+                  </span>
+                  <button
+                    onClick={() => removeParsedKR(i)}
+                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                    title="刪除此 KR"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* Full KR title */}
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-400">目標描述</label>
+                  <input
+                    value={kr.title}
+                    onChange={(e) => updateParsedKR(i, "title", e.target.value)}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  />
+                </div>
+
+                {/* Structured metric fields */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">指標名稱</label>
+                    <input
+                      value={kr.metricName}
+                      onChange={(e) => updateParsedKR(i, "metricName", e.target.value)}
+                      placeholder="例：完成篇數"
+                      className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">目標值</label>
+                    <input
+                      type="number"
+                      value={kr.targetValue ?? ""}
+                      onChange={(e) =>
+                        updateParsedKR(i, "targetValue", e.target.value ? Number(e.target.value) : null)
+                      }
+                      placeholder="例：10"
+                      className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">單位</label>
+                    <input
+                      value={kr.unit}
+                      onChange={(e) => updateParsedKR(i, "unit", e.target.value)}
+                      placeholder="例：篇、小時、%"
+                      className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                    />
+                  </div>
+                </div>
+
+                {/* Deadline */}
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-400">截止日期（選填）</label>
+                  <input
+                    type="date"
+                    value={kr.deadline ?? ""}
+                    onChange={(e) => updateParsedKR(i, "deadline", e.target.value || null)}
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  />
+                </div>
               </div>
             ))}
+
             <button
-              onClick={addKR}
-              className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+              onClick={addParsedKR}
+              className="text-xs text-indigo-500 hover:text-indigo-700 font-medium px-1"
             >
               + 新增 KR
             </button>
@@ -524,7 +669,7 @@ export default function NewOKRPage() {
             </button>
             <button
               onClick={handleConfirmKRs}
-              disabled={krs.filter((k) => k.trim()).length === 0}
+              disabled={parsedKrs.filter((k) => k.title.trim()).length === 0}
               className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
             >
               確認並完成設定 →
