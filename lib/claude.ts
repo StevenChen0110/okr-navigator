@@ -81,11 +81,15 @@ export async function suggestKeyResults(
   language: "zh-TW" | "en",
   objectiveTitle: string,
   objectiveDescription?: string,
-  existingKRs?: string[]
+  existingKRs?: string[],
+  backgroundContext?: string
 ): Promise<string[]> {
   const client = getClient(apiKey);
   const existing = existingKRs?.length
     ? `\nExisting KRs (do NOT duplicate): ${existingKRs.map((k) => `"${k}"`).join(", ")}`
+    : "";
+  const bgSection = backgroundContext
+    ? `\n\nUser's relevant background and skills:\n${backgroundContext}\nUse these to suggest KRs that are realistic and leverage the user's existing strengths.`
     : "";
   const message = await client.messages.create({
     model,
@@ -99,7 +103,7 @@ Output ONLY a JSON array of strings. No markdown fences.`,
     messages: [
       {
         role: "user",
-        content: `Objective: ${objectiveTitle}${objectiveDescription ? `\nContext: ${objectiveDescription}` : ""}${existing}`,
+        content: `Objective: ${objectiveTitle}${objectiveDescription ? `\nContext: ${objectiveDescription}` : ""}${bgSection}${existing}`,
       },
     ],
   });
@@ -299,7 +303,8 @@ export async function analyzeIdea(
   ideaWhy: string,
   ideaOutcome: string,
   ideaNotes: string,
-  objectives: Objective[]
+  objectives: Objective[],
+  backgroundContext?: string
 ): Promise<IdeaAnalysis> {
   const client = getClient(apiKey);
 
@@ -317,7 +322,11 @@ export async function analyzeIdea(
   if (ideaOutcome.trim()) parts.push(`Expected outcome: ${ideaOutcome}`);
   if (ideaNotes.trim()) parts.push(`Additional notes: ${ideaNotes}`);
 
-  const userPrompt = `USER'S OKRs:\n${okrContext}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
+  const bgSection = backgroundContext
+    ? `\n\nUSER'S BACKGROUND & SKILLS:\n${backgroundContext}\nFactor in feasibility based on these backgrounds when scoring risks and execution suggestions.`
+    : "";
+
+  const userPrompt = `USER'S OKRs:\n${okrContext}${bgSection}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
 
   const message = await client.messages.create({
     model,

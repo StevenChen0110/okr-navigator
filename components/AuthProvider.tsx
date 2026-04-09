@@ -80,7 +80,11 @@ function LoginScreen() {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) setError(error.message);
     } else {
-      const { error } = await supabase.auth.signUp({ email, password });
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
       if (error) setError(error.message);
       else setDone(true);
     }
@@ -91,7 +95,7 @@ function LoginScreen() {
     setGoogleBusy(true);
     await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     setGoogleBusy(false);
   }

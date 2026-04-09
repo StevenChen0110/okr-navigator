@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, KeyResult, OKRMeta } from "@/lib/types";
+import { Objective, KeyResult, OKRMeta, Background, BackgroundCategory } from "@/lib/types";
 import { getSettings } from "@/lib/storage";
-import { saveObjective } from "@/lib/db";
+import { saveObjective, fetchBackgrounds, saveBackground } from "@/lib/db";
 import {
   refineObjective,
   suggestKeyResults,
@@ -15,7 +15,9 @@ import {
 } from "@/lib/claude";
 import Markdown from "@/components/Markdown";
 
-type Step = "input" | "confirm-o" | "kr-loading" | "confirm-kr" | "saving" | "done";
+type Step = "input" | "confirm-o" | "background" | "kr-loading" | "confirm-kr" | "saving" | "done";
+
+const BG_CATEGORIES: BackgroundCategory[] = ["技能", "工作經歷", "學習背景", "其他"];
 
 interface RefinedO {
   title: string;
@@ -40,8 +42,19 @@ export default function NewOKRPage() {
   const [savedObjective, setSavedObjective] = useState<Objective | null>(null);
   const [error, setError] = useState("");
 
+  // Background step state
+  const [backgrounds, setBackgrounds] = useState<Background[]>([]);
+  const [selectedBgIds, setSelectedBgIds] = useState<Set<string>>(new Set());
+  const [newBgTitle, setNewBgTitle] = useState("");
+  const [newBgCategory, setNewBgCategory] = useState<BackgroundCategory>("技能");
+  const [bgBusy, setBgBusy] = useState(false);
+
   const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
   const { claudeModel: model, language } = getSettings();
+
+  useEffect(() => {
+    fetchBackgrounds().then(setBackgrounds).catch(() => {});
+  }, []);
 
   // Step 1 → 2: refine the one-liner
   async function handleRefine() {
@@ -57,16 +70,41 @@ export default function NewOKRPage() {
     }
   }
 
-  // Step 2 → 3: propose KRs
-  async function handleConfirmO() {
+  // Step 2 → background
+  function handleConfirmO() {
+    setStep("background");
+  }
+
+  // Add a new background inline
+  async function handleAddBackground() {
+    if (!newBgTitle.trim()) return;
+    setBgBusy(true);
+    try {
+      const created = await saveBackground({ category: newBgCategory, title: newBgTitle.trim() });
+      setBackgrounds((prev) => [created, ...prev]);
+      setSelectedBgIds((prev) => new Set([...prev, created.id]));
+      setNewBgTitle("");
+    } catch {
+      // ignore
+    } finally {
+      setBgBusy(false);
+    }
+  }
+
+  // Background → KR loading
+  async function handleConfirmBackground() {
     setStep("kr-loading");
     try {
-      const suggested = await suggestKeyResults(apiKey, model, language, refined.title, refined.motivation);
+      const selectedBgs = backgrounds.filter((bg) => selectedBgIds.has(bg.id));
+      const bgContext = selectedBgs.length > 0
+        ? selectedBgs.map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`).join("\n")
+        : undefined;
+      const suggested = await suggestKeyResults(apiKey, model, language, refined.title, refined.motivation, undefined, bgContext);
       setKrs(suggested);
       setStep("confirm-kr");
     } catch {
       setError("推薦 KR 失敗，請重試");
-      setStep("confirm-o");
+      setStep("background");
     }
   }
 
@@ -204,19 +242,27 @@ export default function NewOKRPage() {
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10">
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8">
-        {(["input", "confirm-o", "confirm-kr"] as const).map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-              step === s ? "bg-indigo-600 text-white"
-              : (step === "confirm-o" && i === 0) || (step === "confirm-kr" && i <= 1) || (step as string) === "saving" || step === "done"
-              ? "bg-indigo-100 text-indigo-600"
-              : "bg-gray-100 text-gray-400"
-            }`}>{i + 1}</div>
-            {i < 2 && <div className="flex-1 h-px bg-gray-200 w-8" />}
-          </div>
-        ))}
+        {(["input", "confirm-o", "background", "confirm-kr"] as const).map((s, i) => {
+          const stepOrder = ["input", "confirm-o", "background", "confirm-kr", "saving", "done"];
+          const currentIdx = stepOrder.indexOf(step);
+          const done = currentIdx > i;
+          const active = step === s;
+          return (
+            <div key={s} className="flex items-center gap-2">
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                active ? "bg-indigo-600 text-white"
+                : done ? "bg-indigo-100 text-indigo-600"
+                : "bg-gray-100 text-gray-400"
+              }`}>{i + 1}</div>
+              {i < 3 && <div className="flex-1 h-px bg-gray-200 w-6" />}
+            </div>
+          );
+        })}
         <span className="text-xs text-gray-400 ml-1">
-          {step === "input" ? "描述目標" : step === "confirm-o" ? "確認目標" : "設定 KR"}
+          {step === "input" ? "描述目標"
+            : step === "confirm-o" ? "確認目標"
+            : step === "background" ? "背景經歷"
+            : "設定 KR"}
         </span>
       </div>
 
@@ -334,6 +380,100 @@ export default function NewOKRPage() {
               className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
             >
               確認，設定 KR →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 3: Background ── */}
+      {step === "background" && (
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-xl font-semibold mb-1">相關背景經歷</h1>
+            <p className="text-sm text-gray-500">選擇與這個目標相關的背景，幫助 AI 推薦更符合你能力的 KR</p>
+          </div>
+
+          {/* Existing backgrounds */}
+          {backgrounds.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
+              <p className="text-xs font-medium text-gray-500 mb-3">已儲存的背景（勾選相關的）</p>
+              {backgrounds.map((bg) => (
+                <label key={bg.id} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedBgIds.has(bg.id)}
+                    onChange={(e) => {
+                      setSelectedBgIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(bg.id);
+                        else next.delete(bg.id);
+                        return next;
+                      });
+                    }}
+                    className="mt-0.5 accent-indigo-600"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs text-indigo-600 font-medium mr-1.5">[{bg.category}]</span>
+                    <span className="text-sm text-gray-800">{bg.title}</span>
+                    {bg.description && (
+                      <p className="text-xs text-gray-400 mt-0.5">{bg.description}</p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {/* Inline add */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+            <p className="text-xs font-medium text-gray-500">快速新增背景</p>
+            <div className="flex flex-wrap gap-2">
+              {BG_CATEGORIES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setNewBgCategory(c)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    newBgCategory === c
+                      ? "bg-indigo-600 text-white border-indigo-600"
+                      : "border-gray-200 text-gray-600 hover:border-indigo-300"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={newBgTitle}
+                onChange={(e) => setNewBgTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddBackground(); } }}
+                placeholder="例：3 年 Python 開發經驗"
+                className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+              />
+              <button
+                type="button"
+                onClick={handleAddBackground}
+                disabled={bgBusy || !newBgTitle.trim()}
+                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+              >
+                {bgBusy ? "…" : "新增"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setStep("confirm-o")}
+              className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              ← 修改
+            </button>
+            <button
+              onClick={handleConfirmBackground}
+              className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+            >
+              {selectedBgIds.size > 0 ? `帶入 ${selectedBgIds.size} 筆背景，推薦 KR →` : "跳過，直接推薦 KR →"}
             </button>
           </div>
         </div>

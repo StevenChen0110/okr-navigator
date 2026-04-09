@@ -8,6 +8,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: "⊞" },
   { href: "/okr", label: "OKR 目標", icon: "◎" },
   { href: "/idea/new", label: "新增 Idea", icon: "＋" },
+  { href: "/settings/backgrounds", label: "背景經歷", icon: "◈" },
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
