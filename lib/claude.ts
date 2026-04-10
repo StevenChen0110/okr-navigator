@@ -259,6 +259,35 @@ No markdown fences.`,
   return JSON.parse(extractJSON(raw));
 }
 
+// ── KR Title Refinement ──────────────────────────────────────────────────────
+
+export async function refineKRTitle(
+  apiKey: string,
+  model: string,
+  language: "zh-TW" | "en",
+  objectiveTitle: string,
+  currentTitle: string,
+  userInstruction: string
+): Promise<string> {
+  const client = getClient(apiKey);
+  const message = await client.messages.create({
+    model,
+    max_tokens: 200,
+    system: `You are an OKR coach. The user has a Key Result and wants to refine its wording based on their instruction.
+Keep the SMART properties (specific, measurable, time-bound) intact. Apply only what the user asks for.
+${currentDateInstruction()}
+${langInstruction(language)}
+Output ONLY the revised KR title as plain text. No quotes, no markdown.`,
+    messages: [
+      {
+        role: "user",
+        content: `Objective: ${objectiveTitle}\nCurrent KR: ${currentTitle}\nUser instruction: ${userInstruction}`,
+      },
+    ],
+  });
+  return (message.content[0] as { type: string; text: string }).text.trim();
+}
+
 // ── Idea Analysis ─────────────────────────────────────────────────────────────
 
 const IDEA_SYSTEM_PROMPT = `You are an OKR decision navigator. Given a user's Objectives and Key Results (OKRs) and a new Idea they are considering, you must analyze how much this Idea helps achieve each Objective.

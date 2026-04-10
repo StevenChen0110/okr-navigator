@@ -11,6 +11,7 @@ import {
   suggestKeyResults,
   generateSnapshot,
   parseKRMetrics,
+  refineKRTitle,
 } from "@/lib/claude";
 import Markdown from "@/components/Markdown";
 
@@ -27,6 +28,7 @@ interface RefinedO {
 
 interface ParsedKR {
   title: string;
+  originalTitle: string; // AI's original suggestion for reference
   metricName: string;
   targetValue: number | null;
   unit: string;
@@ -48,6 +50,11 @@ export default function NewOKRPage() {
   const [parsedKrs, setParsedKrs] = useState<ParsedKR[]>([]);
   const [savedObjective, setSavedObjective] = useState<Objective | null>(null);
   const [error, setError] = useState("");
+
+  // Inline KR refinement state
+  const [refineOpenIdx, setRefineOpenIdx] = useState<number | null>(null);
+  const [refineInstruction, setRefineInstruction] = useState("");
+  const [refineLoading, setRefineLoading] = useState(false);
 
   // Background step state
   const [backgrounds, setBackgrounds] = useState<Background[]>([]);
@@ -137,13 +144,14 @@ export default function NewOKRPage() {
             const m = await parseKRMetrics(apiKey, model, title);
             return {
               title,
+              originalTitle: title,
               metricName: m.metricName ?? "",
               targetValue: m.targetValue ?? null,
               unit: m.unit ?? "",
               deadline: m.deadline ?? null,
             };
           } catch {
-            return { title, metricName: "", targetValue: null, unit: "", deadline: null };
+            return { title, originalTitle: title, metricName: "", targetValue: null, unit: "", deadline: null };
           }
         })
       );
@@ -220,8 +228,30 @@ export default function NewOKRPage() {
   function addParsedKR() {
     setParsedKrs((prev) => [
       ...prev,
-      { title: "", metricName: "", targetValue: null, unit: "", deadline: null },
+      { title: "", originalTitle: "", metricName: "", targetValue: null, unit: "", deadline: null },
     ]);
+  }
+
+  async function handleRefineKR(index: number) {
+    if (!refineInstruction.trim()) return;
+    setRefineLoading(true);
+    try {
+      const revised = await refineKRTitle(
+        apiKey,
+        model,
+        language,
+        refined.title,
+        parsedKrs[index].title,
+        refineInstruction
+      );
+      updateParsedKR(index, "title", revised);
+      setRefineOpenIdx(null);
+      setRefineInstruction("");
+    } catch {
+      // leave panel open so user can retry
+    } finally {
+      setRefineLoading(false);
+    }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -597,13 +627,71 @@ export default function NewOKRPage() {
 
                 {/* Full KR title */}
                 <div className="space-y-1">
-                  <label className="text-xs text-gray-400">目標描述</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-gray-400">目標描述</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (refineOpenIdx === i) {
+                          setRefineOpenIdx(null);
+                          setRefineInstruction("");
+                        } else {
+                          setRefineOpenIdx(i);
+                          setRefineInstruction("");
+                        }
+                      }}
+                      className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+                    >
+                      {refineOpenIdx === i ? "取消" : "✦ AI 調整"}
+                    </button>
+                  </div>
                   <input
                     value={kr.title}
                     onChange={(e) => updateParsedKR(i, "title", e.target.value)}
                     className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
                   />
+                  {/* Original AI suggestion for reference */}
+                  {kr.originalTitle && kr.title !== kr.originalTitle && (
+                    <p className="text-xs text-gray-400">
+                      AI 原版：
+                      <button
+                        type="button"
+                        onClick={() => updateParsedKR(i, "title", kr.originalTitle)}
+                        className="text-indigo-400 hover:text-indigo-600 underline ml-1"
+                      >
+                        {kr.originalTitle}
+                      </button>
+                    </p>
+                  )}
                 </div>
+
+                {/* Inline AI refinement panel */}
+                {refineOpenIdx === i && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+                    <p className="text-xs text-indigo-600 font-medium">告訴 AI 你想如何調整這條 KR</p>
+                    <textarea
+                      value={refineInstruction}
+                      onChange={(e) => setRefineInstruction(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleRefineKR(i);
+                        }
+                      }}
+                      placeholder="例：把數字改小一點、加上具體截止月份、換成更積極的動詞…"
+                      rows={2}
+                      className="w-full text-xs border border-indigo-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRefineKR(i)}
+                      disabled={refineLoading || !refineInstruction.trim()}
+                      className="w-full py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+                    >
+                      {refineLoading ? "AI 修改中…" : "送出（Enter）"}
+                    </button>
+                  </div>
+                )}
 
                 {/* Structured metric fields */}
                 <div className="grid grid-cols-3 gap-2">
