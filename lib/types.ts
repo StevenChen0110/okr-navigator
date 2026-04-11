@@ -26,7 +26,7 @@ export interface KeyResult {
 
 export interface IdeaKRLink {
   objectiveId: string;
-  krId: string;
+  krId?: string; // optional: absent means linked to the whole objective
 }
 
 export interface OKRMeta {

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Idea, Objective, KeyResult, CheckIn } from "@/lib/types";
-import { fetchIdeas, fetchObjectives, removeIdea, updateIdeaCompletion } from "@/lib/db";
+import { fetchIdeas, fetchObjectives, removeIdea, updateIdeaCompletion, saveIdea } from "@/lib/db";
 import ScoreBar from "@/components/ScoreBar";
 
 type SortKey = "score" | "date";
@@ -20,33 +20,14 @@ function calcOCompletion(o: Objective): number | undefined {
   return Math.round(avg * 100);
 }
 
-function daysUntil(dateStr: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  target.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-}
-
 function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
   if (!kr.checkIns?.length) return undefined;
   return kr.checkIns[kr.checkIns.length - 1];
 }
 
-function getProgressColor(completion: number, deadline?: string): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const isOverdue = deadline ? new Date(deadline) < today : false;
-
-  if (isOverdue && completion < 100) {
-    return "bg-red-400";
-  }
-  if (completion >= 60) {
-    return "bg-green-400";
-  }
-  if (completion >= 30) {
-    return "bg-amber-400";
-  }
+function getProgressColor(completion: number): string {
+  if (completion >= 60) return "bg-green-400";
+  if (completion >= 30) return "bg-amber-400";
   return "bg-gray-400";
 }
 
@@ -77,6 +58,16 @@ export default function DashboardPage() {
     );
   }
 
+  function handleUpdateLinkedObjectives(ideaId: string, objectiveIds: string[]) {
+    const links = objectiveIds.map((objectiveId) => ({ objectiveId }));
+    setIdeas((prev) => {
+      const updated = prev.map((i) => (i.id === ideaId ? { ...i, linkedKRs: links } : i));
+      const idea = updated.find((i) => i.id === ideaId);
+      if (idea) saveIdea(idea).catch(console.error);
+      return updated;
+    });
+  }
+
   // ── Derived metrics ─────────────────────────────────────────────────────────
 
   const allKRs = objectives.flatMap((o) =>
@@ -97,19 +88,9 @@ export default function DashboardPage() {
     ? Math.round(oCompletions.reduce((a, b) => a + b, 0) / oCompletions.length)
     : null;
 
-  // Upcoming deadlines (within 30 days, not 100% complete)
+  // Stale KRs: trackable KRs with no check-in in 7+ days (or created 3+ days ago and never checked in)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const upcomingKRs = allKRs
-    .filter((kr) => {
-      if (!kr.deadline) return false;
-      const days = daysUntil(kr.deadline);
-      const completion = calcKRCompletion(kr);
-      return days >= 0 && days <= 30 && (completion === undefined || completion < 100);
-    })
-    .sort((a, b) => new Date(a.deadline!).getTime() - new Date(b.deadline!).getTime());
-
-  // Stale KRs: trackable KRs with no check-in in 7+ days (or created 3+ days ago and never checked in)
   const staleKRs = allKRs.filter((kr) => {
     if (!kr.targetValue || kr.targetValue <= 0) return false;
     const completion = calcKRCompletion(kr);
@@ -119,7 +100,6 @@ export default function DashboardPage() {
       const diff = Math.round((today.getTime() - new Date(last.date).getTime()) / (1000 * 60 * 60 * 24));
       return diff >= 7;
     }
-    // Never checked in — stale if objective was created 3+ days ago
     const obj = objectives.find((o) => o.keyResults.some((k) => k.id === kr.id));
     if (!obj) return false;
     const ageDays = Math.round((today.getTime() - new Date(obj.createdAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -206,7 +186,6 @@ export default function DashboardPage() {
             <h2 className="text-sm font-semibold text-gray-700">KR 健康狀態</h2>
             <span className="text-xs text-gray-400">{totalKRs - confidenceCounts.unset} / {totalKRs} 已評估</span>
           </div>
-          {/* Stacked bar */}
           <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100 mb-3">
             {confidenceCounts["on-track"] > 0 && (
               <div
@@ -240,46 +219,6 @@ export default function DashboardPage() {
               <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
               需重新思考 {confidenceCounts["needs-rethink"]}
             </span>
-          </div>
-        </div>
-      )}
-
-      {/* ── Upcoming Deadlines ────────────────────────────────────────────────── */}
-      {upcomingKRs.length > 0 && (
-        <div className="bg-white rounded-xl border border-amber-200 p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">
-            即將到期 <span className="text-amber-500 ml-1">({upcomingKRs.length})</span>
-          </h2>
-          <div className="space-y-2">
-            {upcomingKRs.map((kr) => {
-              const days = daysUntil(kr.deadline!);
-              const completion = calcKRCompletion(kr);
-              const urgent = days <= 7;
-              return (
-                <div key={kr.id} className="flex items-center gap-3">
-                  <div className={`shrink-0 text-xs font-bold px-2 py-0.5 rounded-md ${
-                    urgent ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"
-                  }`}>
-                    {days === 0 ? "今天" : `${days}天`}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-700 truncate">{kr.title}</p>
-                    <p className="text-xs text-gray-400 truncate">{kr.objectiveTitle}</p>
-                  </div>
-                  {completion !== undefined && (
-                    <div className="shrink-0 flex items-center gap-1.5">
-                      <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${getProgressColor(completion, kr.deadline)}`}
-                          style={{ width: `${completion}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-gray-500 w-8 text-right">{completion}%</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </div>
         </div>
       )}
@@ -331,13 +270,21 @@ export default function DashboardPage() {
               const completion = calcOCompletion(o);
               if (completion === undefined) return null;
               const krCount = o.keyResults.filter((kr) => kr.targetValue && kr.targetValue > 0).length;
+              const linkedCount = ideas.filter(
+                (i) => i.linkedKRs?.some((l) => l.objectiveId === o.id)
+              ).length;
               return (
                 <div key={o.id}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs text-gray-700 truncate flex-1 mr-3">{o.title}</span>
-                    <span className={`text-xs font-bold shrink-0 ${
-                      completion >= 70 ? "text-green-600" : completion >= 40 ? "text-amber-500" : "text-red-500"
-                    }`}>{completion}%</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {linkedCount > 0 && (
+                        <span className="text-xs text-indigo-400">{linkedCount} idea</span>
+                      )}
+                      <span className={`text-xs font-bold ${
+                        completion >= 70 ? "text-green-600" : completion >= 40 ? "text-amber-500" : "text-red-500"
+                      }`}>{completion}%</span>
+                    </div>
                   </div>
                   <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                     <div
@@ -393,9 +340,11 @@ export default function DashboardPage() {
                 idea={idea}
                 rank={idx + 1}
                 expanded={expandedId === idea.id}
+                objectives={objectives}
                 onToggle={() => setExpandedId(expandedId === idea.id ? null : idea.id)}
                 onDelete={() => handleDelete(idea.id)}
                 onToggleComplete={() => handleToggleComplete(idea.id, idea.completed ?? false)}
+                onUpdateLinkedObjectives={(ids) => handleUpdateLinkedObjectives(idea.id, ids)}
               />
             ))}
           </div>
@@ -409,23 +358,40 @@ function IdeaCard({
   idea,
   rank,
   expanded,
+  objectives,
   onToggle,
   onDelete,
   onToggleComplete,
+  onUpdateLinkedObjectives,
 }: {
   idea: Idea;
   rank: number;
   expanded: boolean;
+  objectives: Objective[];
   onToggle: () => void;
   onDelete: () => void;
   onToggleComplete: () => void;
+  onUpdateLinkedObjectives: (ids: string[]) => void;
 }) {
+  const [showPicker, setShowPicker] = useState(false);
+
   const score = idea.analysis?.finalScore;
   const scoreColor =
     score === undefined ? "text-gray-400"
     : score >= 7 ? "text-indigo-600"
     : score >= 4 ? "text-amber-500"
     : "text-red-500";
+
+  const linkedObjectiveIds = Array.from(
+    new Set((idea.linkedKRs ?? []).map((l) => l.objectiveId))
+  );
+
+  function toggleObjective(objectiveId: string) {
+    const next = linkedObjectiveIds.includes(objectiveId)
+      ? linkedObjectiveIds.filter((id) => id !== objectiveId)
+      : [...linkedObjectiveIds, objectiveId];
+    onUpdateLinkedObjectives(next);
+  }
 
   return (
     <div className={`bg-white rounded-xl border overflow-hidden ${idea.completed ? "border-green-200 opacity-75" : "border-gray-200"}`}>
@@ -445,8 +411,8 @@ function IdeaCard({
         {!idea.completed && score !== undefined && (
           <span className={`text-xl font-bold shrink-0 ${scoreColor}`}>{score.toFixed(1)}</span>
         )}
-        {idea.linkedKRs && idea.linkedKRs.length > 0 && (
-          <span className="text-xs text-gray-400 shrink-0">{idea.linkedKRs.length} KR</span>
+        {linkedObjectiveIds.length > 0 && (
+          <span className="text-xs text-indigo-400 shrink-0">{linkedObjectiveIds.length} 目標</span>
         )}
         <span className="text-gray-300 text-sm">{expanded ? "▲" : "▼"}</span>
       </button>
@@ -478,7 +444,74 @@ function IdeaCard({
             </>
           )}
 
-          <div className="flex items-center justify-between">
+          {/* ── Linked Objectives ─────────────────────────────────────────── */}
+          <div>
+            <div className="text-xs font-medium text-gray-500 mb-2">對應目標</div>
+            {linkedObjectiveIds.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {linkedObjectiveIds.map((id) => {
+                  const obj = objectives.find((o) => o.id === id);
+                  if (!obj) return null;
+                  return (
+                    <span
+                      key={id}
+                      className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md"
+                    >
+                      <span className="max-w-[180px] truncate">{obj.title}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleObjective(id); }}
+                        className="text-indigo-400 hover:text-indigo-700 leading-none ml-0.5"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {showPicker ? (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                {objectives.length === 0 ? (
+                  <p className="text-xs text-gray-400 px-3 py-2">尚無目標</p>
+                ) : (
+                  objectives.map((obj) => {
+                    const linked = linkedObjectiveIds.includes(obj.id);
+                    return (
+                      <button
+                        key={obj.id}
+                        onClick={() => toggleObjective(obj.id)}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors ${
+                          linked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"
+                        }`}
+                      >
+                        <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${
+                          linked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"
+                        }`}>
+                          {linked && "✓"}
+                        </span>
+                        <span className="truncate">{obj.title}</span>
+                      </button>
+                    );
+                  })
+                )}
+                <button
+                  onClick={() => setShowPicker(false)}
+                  className="w-full text-xs text-gray-400 hover:text-gray-600 px-3 py-2 border-t border-gray-100 text-left"
+                >
+                  完成
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowPicker(true)}
+                className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+              >
+                ＋ 指定目標
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
             <button
               onClick={onToggleComplete}
               className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
