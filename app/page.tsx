@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Idea, Objective, KeyResult } from "@/lib/types";
+import { Idea, Objective, KeyResult, CheckIn } from "@/lib/types";
 import { fetchIdeas, fetchObjectives, removeIdea, updateIdeaCompletion } from "@/lib/db";
 import ScoreBar from "@/components/ScoreBar";
 
@@ -26,6 +26,11 @@ function daysUntil(dateStr: string): number {
   const target = new Date(dateStr);
   target.setHours(0, 0, 0, 0);
   return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
+  if (!kr.checkIns?.length) return undefined;
+  return kr.checkIns[kr.checkIns.length - 1];
 }
 
 function getProgressColor(completion: number, deadline?: string): string {
@@ -103,6 +108,23 @@ export default function DashboardPage() {
       return days >= 0 && days <= 30 && (completion === undefined || completion < 100);
     })
     .sort((a, b) => new Date(a.deadline!).getTime() - new Date(b.deadline!).getTime());
+
+  // Stale KRs: trackable KRs with no check-in in 7+ days (or created 3+ days ago and never checked in)
+  const staleKRs = allKRs.filter((kr) => {
+    if (!kr.targetValue || kr.targetValue <= 0) return false;
+    const completion = calcKRCompletion(kr);
+    if (completion !== undefined && completion >= 100) return false;
+    const last = getLastCheckIn(kr);
+    if (last) {
+      const diff = Math.round((today.getTime() - new Date(last.date).getTime()) / (1000 * 60 * 60 * 24));
+      return diff >= 7;
+    }
+    // Never checked in — stale if objective was created 3+ days ago
+    const obj = objectives.find((o) => o.keyResults.some((k) => k.id === kr.id));
+    if (!obj) return false;
+    const ageDays = Math.round((today.getTime() - new Date(obj.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    return ageDays >= 3;
+  });
 
   // Ideas summary
   const completedIdeas = ideas.filter((i) => i.completed).length;
@@ -258,6 +280,41 @@ export default function DashboardPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Stale KRs reminder ───────────────────────────────────────────────── */}
+      {staleKRs.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-gray-700">尚未更新進度</h2>
+            <span className="text-xs text-gray-400">{staleKRs.length} 條 KR 超過 7 天未記錄</span>
+          </div>
+          <div className="space-y-2">
+            {staleKRs.slice(0, 5).map((kr) => {
+              const last = getLastCheckIn(kr);
+              const daysOld = last
+                ? Math.round((today.getTime() - new Date(last.date).getTime()) / (1000 * 60 * 60 * 24))
+                : null;
+              return (
+                <div key={kr.id} className="flex items-center gap-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-700 truncate">{kr.title}</p>
+                    <p className="text-xs text-gray-400 truncate">{kr.objectiveTitle}</p>
+                  </div>
+                  <span className="text-xs text-gray-400 shrink-0">
+                    {daysOld !== null ? `${daysOld}天前` : "從未更新"}
+                  </span>
+                </div>
+              );
+            })}
+            {staleKRs.length > 5 && (
+              <Link href="/okr" className="text-xs text-indigo-500 hover:text-indigo-700 block mt-1">
+                查看全部 {staleKRs.length} 條 →
+              </Link>
+            )}
           </div>
         </div>
       )}

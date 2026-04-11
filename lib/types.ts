@@ -1,5 +1,14 @@
 export type KRConfidence = "on-track" | "at-risk" | "needs-rethink";
 
+export type ObjectiveStatus = "active" | "completed" | "archived";
+
+export interface CheckIn {
+  id: string;
+  date: string; // ISO timestamp
+  value: number;
+  note?: string;
+}
+
 export interface KeyResult {
   id: string;
   title: string;
@@ -12,6 +21,7 @@ export interface KeyResult {
   unit?: string;
   deadline?: string; // YYYY-MM-DD
   currentValue?: number;
+  checkIns?: CheckIn[];
 }
 
 export interface IdeaKRLink {
@@ -32,6 +42,7 @@ export interface Objective {
   description?: string;
   keyResults: KeyResult[];
   createdAt: string;
+  status?: ObjectiveStatus;
   meta?: OKRMeta;
 }
 
