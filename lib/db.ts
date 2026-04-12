@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { Objective, Idea, Background, BackgroundCategory } from "./types";
+import { Objective, Idea, Background, BackgroundCategory, TaskStatus } from "./types";
 
 async function uid(): Promise<string> {
   const {
@@ -63,6 +63,7 @@ export async function fetchIdeas(): Promise<Idea[]> {
     completed: r.completed ?? false,
     completedAt: r.completed_at ?? undefined,
     linkedKRs: r.linked_krs ?? [],
+    taskStatus: (r.task_status as TaskStatus) ?? undefined,
   }));
 }
 
@@ -78,7 +79,15 @@ export async function saveIdea(idea: Idea): Promise<void> {
     completed: idea.completed ?? false,
     completed_at: idea.completedAt ?? null,
     linked_krs: idea.linkedKRs ?? [],
+    task_status: idea.taskStatus ?? null,
   });
+  if (error) throw error;
+}
+
+export async function updateIdeaTaskStatus(id: string, taskStatus: TaskStatus | null): Promise<void> {
+  const { error } = await supabase.from("ideas").update({
+    task_status: taskStatus,
+  }).eq("id", id);
   if (error) throw error;
 }
 

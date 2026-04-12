@@ -69,6 +69,8 @@ export interface IdeaAnalysis {
   analyzedAt: string;
 }
 
+export type TaskStatus = "todo" | "in-progress" | "done";
+
 export interface Idea {
   id: string;
   title: string;
@@ -78,6 +80,7 @@ export interface Idea {
   completed?: boolean;
   completedAt?: string;
   linkedKRs?: IdeaKRLink[];
+  taskStatus?: TaskStatus; // set when idea is promoted to a task
 }
 
 export interface AppSettings {
