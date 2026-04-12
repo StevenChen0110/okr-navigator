@@ -3,23 +3,31 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, KeyResult, OKRMeta } from "@/lib/types";
+import { Objective, KeyResult, OKRMeta, KRType } from "@/lib/types";
 import { saveObjective } from "@/lib/db";
 
 interface KRDraft {
   id: string;
   title: string;
+  krType: KRType;
   metricName: string;
   targetValue: string;
   unit: string;
   deadline: string;
+  incrementPerTask: string;
 }
 
 const TIMEFRAME_OPTIONS = ["本月", "本季", "半年", "全年"];
 
 function newKRDraft(): KRDraft {
-  return { id: uuid(), title: "", metricName: "", targetValue: "", unit: "", deadline: "" };
+  return { id: uuid(), title: "", krType: "cumulative", metricName: "", targetValue: "", unit: "", deadline: "", incrementPerTask: "1" };
 }
+
+const KR_TYPE_OPTIONS: { value: KRType; label: string; desc: string }[] = [
+  { value: "cumulative", label: "累積型", desc: "每完成一個 Task 自動累加（次、本、小時）" },
+  { value: "measurement", label: "測量型", desc: "追蹤變動數值，完成 Task 時手動填入（營收、分數）" },
+  { value: "milestone", label: "里程碑型", desc: "只有完成/未完成，無需數值（取得證照、完成上線）" },
+];
 
 export default function NewOKRPage() {
   const router = useRouter();
@@ -55,10 +63,12 @@ export default function NewOKRPage() {
       const keyResults: KeyResult[] = filledKRs.map((k) => ({
         id: k.id,
         title: k.title.trim(),
+        krType: k.krType,
         ...(k.metricName.trim() ? { metricName: k.metricName.trim() } : {}),
-        ...(k.targetValue ? { targetValue: parseFloat(k.targetValue) } : {}),
+        ...(k.krType !== "milestone" && k.targetValue ? { targetValue: parseFloat(k.targetValue) } : {}),
         ...(k.unit.trim() ? { unit: k.unit.trim() } : {}),
         ...(k.deadline ? { deadline: k.deadline } : {}),
+        ...(k.krType === "cumulative" && k.incrementPerTask ? { incrementPerTask: parseFloat(k.incrementPerTask) || 1 } : {}),
       }));
 
       const meta: OKRMeta = { okrType, timeframe };
@@ -177,37 +187,80 @@ export default function NewOKRPage() {
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <div className="space-y-1">
-                <label className="text-xs text-gray-400">指標名稱</label>
-                <input
-                  value={kr.metricName}
-                  onChange={(e) => updateKR(kr.id, "metricName", e.target.value)}
-                  placeholder="練習次數"
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                />
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">KR 類型</label>
+              <div className="flex gap-1.5 flex-wrap">
+                {KR_TYPE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => updateKR(kr.id, "krType", opt.value)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      kr.krType === opt.value
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "border-gray-200 text-gray-600 hover:border-indigo-300"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-gray-400">目標值</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={kr.targetValue}
-                  onChange={(e) => updateKR(kr.id, "targetValue", e.target.value)}
-                  placeholder="24"
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-gray-400">單位</label>
-                <input
-                  value={kr.unit}
-                  onChange={(e) => updateKR(kr.id, "unit", e.target.value)}
-                  placeholder="次"
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                />
-              </div>
+              <p className="text-xs text-gray-400">
+                {KR_TYPE_OPTIONS.find((o) => o.value === kr.krType)?.desc}
+              </p>
             </div>
+
+            {kr.krType !== "milestone" && (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-400">指標名稱</label>
+                  <input
+                    value={kr.metricName}
+                    onChange={(e) => updateKR(kr.id, "metricName", e.target.value)}
+                    placeholder="練習次數"
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-400">目標值</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={kr.targetValue}
+                    onChange={(e) => updateKR(kr.id, "targetValue", e.target.value)}
+                    placeholder="24"
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-400">單位</label>
+                  <input
+                    value={kr.unit}
+                    onChange={(e) => updateKR(kr.id, "unit", e.target.value)}
+                    placeholder="次"
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  />
+                </div>
+              </div>
+            )}
+
+            {kr.krType === "cumulative" && (
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400">每個 Task 完成貢獻值</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={kr.incrementPerTask}
+                    onChange={(e) => updateKR(kr.id, "incrementPerTask", e.target.value)}
+                    placeholder="1"
+                    className="w-24 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  />
+                  <span className="text-xs text-gray-400">{kr.unit || "單位"} / Task</span>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-1">
               <label className="text-xs text-gray-400">截止日期（選填）</label>

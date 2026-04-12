@@ -2,21 +2,33 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Idea, Objective, KeyResult, CheckIn, TaskStatus } from "@/lib/types";
-import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, updateIdeaTaskStatus } from "@/lib/db";
+import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink } from "@/lib/types";
+import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
 import ScoreBar from "@/components/ScoreBar";
 
 type TaskTab = "priority" | "assign" | "progress";
 
+// Pending measurement inputs: taskId → { krId → value string }
+type MeasurementInputs = Record<string, Record<string, string>>;
+
 function calcKRCompletion(kr: KeyResult): number | undefined {
+  if (kr.krType === "milestone") {
+    return kr.currentValue && kr.currentValue >= 1 ? 100 : 0;
+  }
   if (!kr.targetValue || kr.targetValue <= 0) return undefined;
   return Math.min(100, Math.round(((kr.currentValue ?? 0) / kr.targetValue) * 100));
 }
 
 function calcOCompletion(o: Objective): number | undefined {
-  const krs = o.keyResults.filter((kr) => kr.targetValue && kr.targetValue > 0);
+  const krs = o.keyResults.filter((kr) => {
+    if (kr.krType === "milestone") return true;
+    return kr.targetValue && kr.targetValue > 0;
+  });
   if (krs.length === 0) return undefined;
-  const avg = krs.reduce((sum, kr) => sum + Math.min(1, (kr.currentValue ?? 0) / kr.targetValue!), 0) / krs.length;
+  const avg = krs.reduce((sum, kr) => {
+    if (kr.krType === "milestone") return sum + (kr.currentValue && kr.currentValue >= 1 ? 1 : 0);
+    return sum + Math.min(1, (kr.currentValue ?? 0) / kr.targetValue!);
+  }, 0) / krs.length;
   return Math.round(avg * 100);
 }
 
@@ -50,13 +62,16 @@ export default function DashboardPage() {
   const [taskTab, setTaskTab] = useState<TaskTab>("priority");
   const [expandedIdeaId, setExpandedIdeaId] = useState<string | null>(null);
   const [showObjPickerId, setShowObjPickerId] = useState<string | null>(null);
+  // measurement: taskId that is awaiting measurement input before marking done
+  const [pendingMeasure, setPendingMeasure] = useState<string | null>(null);
+  const [measureInputs, setMeasureInputs] = useState<MeasurementInputs>({});
 
   useEffect(() => {
     fetchIdeas().then(setIdeas).catch(console.error);
     fetchObjectives().then(setObjectives).catch(console.error);
   }, []);
 
-  // ── Ideas helpers ────────────────────────────────────────────────────────────
+  // ── Ideas helpers ───────────────────────────────────────────────────────────
 
   function handleDelete(id: string) {
     if (!confirm("確定要刪除這個 Idea？")) return;
@@ -69,13 +84,7 @@ export default function DashboardPage() {
     setIdeas((prev) => prev.map((i) => i.id === id ? { ...i, taskStatus: "todo" } : i));
   }
 
-  function handleSetTaskStatus(id: string, status: TaskStatus) {
-    updateIdeaTaskStatus(id, status).catch(console.error);
-    setIdeas((prev) => prev.map((i) => i.id === id ? { ...i, taskStatus: status } : i));
-  }
-
-  function handleUpdateLinkedObjectives(ideaId: string, objectiveIds: string[]) {
-    const links = objectiveIds.map((objectiveId) => ({ objectiveId }));
+  function handleUpdateLinkedKRs(ideaId: string, links: IdeaKRLink[]) {
     setIdeas((prev) => {
       const updated = prev.map((i) => (i.id === ideaId ? { ...i, linkedKRs: links } : i));
       const idea = updated.find((i) => i.id === ideaId);
@@ -84,7 +93,123 @@ export default function DashboardPage() {
     });
   }
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
+  // ── Task status + KR progress update ───────────────────────────────────────
+
+  function handleSetTaskStatus(taskId: string, status: TaskStatus) {
+    if (status !== "done") {
+      updateIdeaTaskStatus(taskId, status).catch(console.error);
+      setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i));
+      return;
+    }
+
+    const task = ideas.find((i) => i.id === taskId);
+    if (!task) return;
+    const links = task.linkedKRs ?? [];
+
+    // Collect all linked KRs with their type
+    const linkedKRs = links.flatMap((link) => {
+      const obj = objectives.find((o) => o.id === link.objectiveId);
+      if (!obj) return [];
+      const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) : null;
+      if (!kr) return [];
+      return [{ obj, kr, link }];
+    });
+
+    const hasMeasurement = linkedKRs.some((r) => (r.kr.krType ?? "cumulative") === "measurement");
+
+    if (hasMeasurement) {
+      // Show inline measurement inputs before confirming done
+      const initInputs: Record<string, string> = {};
+      linkedKRs.filter((r) => (r.kr.krType ?? "cumulative") === "measurement").forEach((r) => {
+        initInputs[r.kr.id] = String(r.kr.currentValue ?? "");
+      });
+      setMeasureInputs((prev) => ({ ...prev, [taskId]: initInputs }));
+      setPendingMeasure(taskId);
+      return;
+    }
+
+    applyTaskDone(taskId, task, linkedKRs, {});
+  }
+
+  function confirmMeasurement(taskId: string) {
+    const task = ideas.find((i) => i.id === taskId);
+    if (!task) return;
+    const links = task.linkedKRs ?? [];
+    const linkedKRs = links.flatMap((link) => {
+      const obj = objectives.find((o) => o.id === link.objectiveId);
+      if (!obj) return [];
+      const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) : null;
+      if (!kr) return [];
+      return [{ obj, kr, link }];
+    });
+    applyTaskDone(taskId, task, linkedKRs, measureInputs[taskId] ?? {});
+    setPendingMeasure(null);
+  }
+
+  function applyTaskDone(
+    taskId: string,
+    task: Idea,
+    linkedKRs: Array<{ obj: Objective; kr: KeyResult; link: IdeaKRLink }>,
+    measurements: Record<string, string>
+  ) {
+    // Compute AI score weights for cumulative KRs across the same objective
+    // For each objective, get score weights from task.analysis
+    const updatedObjectives = new Map<string, Objective>();
+
+    for (const { obj, kr } of linkedKRs) {
+      const current = updatedObjectives.get(obj.id) ?? obj;
+      const krType = kr.krType ?? "cumulative";
+
+      let newValue: number | undefined;
+
+      if (krType === "cumulative") {
+        // Weight = this KR's AI score / sum of all linked KR scores in same obj
+        const linkedKRsInObj = linkedKRs.filter((r) => r.obj.id === obj.id);
+        const scores = linkedKRsInObj.map((r) => {
+          const objScore = task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id);
+          return objScore?.keyResultScores.find((ks) => ks.keyResultId === r.kr.id)?.score ?? 1;
+        });
+        const thisScore = (() => {
+          const objScore = task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id);
+          return objScore?.keyResultScores.find((ks) => ks.keyResultId === kr.id)?.score ?? 1;
+        })();
+        const totalScore = scores.reduce((a, b) => a + b, 0) || 1;
+        const weight = thisScore / totalScore;
+        const increment = (kr.incrementPerTask ?? 1) * weight;
+        newValue = Math.min(kr.targetValue ?? Infinity, (kr.currentValue ?? 0) + increment);
+
+      } else if (krType === "measurement") {
+        const raw = measurements[kr.id];
+        if (raw !== undefined && raw !== "") {
+          newValue = parseFloat(raw);
+        }
+
+      } else if (krType === "milestone") {
+        newValue = 1; // 100% complete
+      }
+
+      if (newValue !== undefined) {
+        const updatedKRs = current.keyResults.map((k) =>
+          k.id === kr.id ? { ...k, currentValue: newValue } : k
+        );
+        updatedObjectives.set(obj.id, { ...current, keyResults: updatedKRs });
+      }
+    }
+
+    // Save updated objectives
+    updatedObjectives.forEach((updatedObj) => {
+      saveObjective(updatedObj).catch(console.error);
+    });
+    setObjectives((prev) =>
+      prev.map((o) => updatedObjectives.get(o.id) ?? o)
+    );
+
+    // Mark task done
+    updateIdeaTaskStatus(taskId, "done").catch(console.error);
+    setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: "done" } : i));
+  }
+
+  // ── Derived ─────────────────────────────────────────────────────────────────
 
   const allKRs = objectives.flatMap((o) =>
     o.keyResults.map((kr) => ({ ...kr, objectiveTitle: o.title, objectiveId: o.id }))
@@ -99,6 +224,7 @@ export default function DashboardPage() {
   today.setHours(0, 0, 0, 0);
 
   const staleKRs = allKRs.filter((kr) => {
+    if (kr.krType === "milestone") return false;
     if (!kr.targetValue || kr.targetValue <= 0) return false;
     const completion = calcKRCompletion(kr);
     if (completion !== undefined && completion >= 100) return false;
@@ -115,11 +241,9 @@ export default function DashboardPage() {
 
   const tasks = ideas.filter((i) => i.taskStatus != null);
   const nonTasks = ideas.filter((i) => i.taskStatus == null);
-
   const tasksSortedByScore = [...tasks].sort(
     (a, b) => (b.analysis?.finalScore ?? -1) - (a.analysis?.finalScore ?? -1)
   );
-
   const taskStatusCounts = {
     todo: tasks.filter((t) => t.taskStatus === "todo").length,
     "in-progress": tasks.filter((t) => t.taskStatus === "in-progress").length,
@@ -148,7 +272,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="text-2xl font-bold text-indigo-600">{tasks.length}</div>
           <div className="text-xs text-gray-500 mt-1">Tasks</div>
-          <div className="mt-1 text-xs text-gray-400 space-x-1">
+          <div className="mt-1 text-xs space-x-1">
             {taskStatusCounts["in-progress"] > 0 && <span className="text-amber-500">{taskStatusCounts["in-progress"]} 進行中</span>}
             {taskStatusCounts.done > 0 && <span className="text-green-500">{taskStatusCounts.done} 完成</span>}
           </div>
@@ -156,9 +280,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="text-2xl font-bold text-indigo-600">{ideas.length}</div>
           <div className="text-xs text-gray-500 mt-1">Ideas</div>
-          <div className="mt-1 text-xs text-gray-400">
-            {nonTasks.length > 0 && <span>{nonTasks.length} 待評估</span>}
-          </div>
+          {nonTasks.length > 0 && <div className="mt-1 text-xs text-gray-400">{nonTasks.length} 待評估</div>}
         </div>
       </div>
 
@@ -208,8 +330,8 @@ export default function DashboardPage() {
             {objectives.map((o) => {
               const completion = calcOCompletion(o);
               const isExpanded = expandedObjId === o.id;
-              const linkedCount = ideas.filter(
-                (i) => i.linkedKRs?.some((l) => l.objectiveId === o.id)
+              const linkedTaskCount = tasks.filter(
+                (t) => t.linkedKRs?.some((l) => l.objectiveId === o.id)
               ).length;
               return (
                 <div key={o.id}>
@@ -220,8 +342,8 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-sm text-gray-800 truncate flex-1 mr-3 font-medium">{o.title}</span>
                       <div className="flex items-center gap-2 shrink-0">
-                        {linkedCount > 0 && (
-                          <span className="text-xs text-indigo-400">{linkedCount} task</span>
+                        {linkedTaskCount > 0 && (
+                          <span className="text-xs text-indigo-400">{linkedTaskCount} task</span>
                         )}
                         {completion !== undefined && (
                           <span className={`text-xs font-bold ${
@@ -243,16 +365,19 @@ export default function DashboardPage() {
                       <p className="text-xs text-gray-400">尚無可追蹤的 KR</p>
                     )}
                   </button>
-
                   {isExpanded && (
                     <div className="px-4 pb-3 space-y-2">
                       {o.keyResults.map((kr) => {
                         const krCompletion = calcKRCompletion(kr);
+                        const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
                         return (
                           <div key={kr.id} className="flex items-center gap-3 pl-2">
                             <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0" />
                             <div className="flex-1 min-w-0">
-                              <p className="text-xs text-gray-600 truncate">{kr.title}</p>
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs text-gray-600 truncate">{kr.title}</p>
+                                <span className="text-[10px] text-gray-400 shrink-0">{krTypeLabel}</span>
+                              </div>
                               {krCompletion !== undefined && (
                                 <div className="flex items-center gap-2 mt-1">
                                   <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
@@ -262,12 +387,12 @@ export default function DashboardPage() {
                                     />
                                   </div>
                                   <span className="text-xs text-gray-400 w-8 text-right shrink-0">
-                                    {krCompletion}%
+                                    {kr.krType === "milestone"
+                                      ? (krCompletion === 100 ? "完成" : "未完成")
+                                      : `${kr.currentValue ?? 0}${kr.unit ? ` ${kr.unit}` : ""} / ${kr.targetValue}${kr.unit ? ` ${kr.unit}` : ""}`
+                                    }
                                   </span>
                                 </div>
-                              )}
-                              {krCompletion === undefined && (
-                                <p className="text-xs text-gray-300 mt-0.5">無數值追蹤</p>
                               )}
                             </div>
                           </div>
@@ -306,7 +431,7 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* Promote Ideas section (shown in all tabs when there are non-tasks) */}
+        {/* Promote Ideas */}
         {nonTasks.length > 0 && (
           <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
             <p className="text-xs text-gray-500 mb-2">Ideas 待轉為 Task</p>
@@ -414,10 +539,9 @@ export default function DashboardPage() {
             {taskTab === "assign" && (
               <div className="divide-y divide-gray-50">
                 {tasksSortedByScore.map((task) => {
-                  const linkedObjectiveIds = Array.from(
-                    new Set((task.linkedKRs ?? []).map((l) => l.objectiveId))
-                  );
+                  const links = task.linkedKRs ?? [];
                   const isPicking = showObjPickerId === task.id;
+
                   return (
                     <div key={task.id} className="px-4 py-3 space-y-2">
                       <div className="flex items-start justify-between gap-3">
@@ -435,22 +559,26 @@ export default function DashboardPage() {
                           onClick={() => setShowObjPickerId(isPicking ? null : task.id)}
                           className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
                         >
-                          {isPicking ? "完成" : "指定目標"}
+                          {isPicking ? "完成" : "指定 KR"}
                         </button>
                       </div>
 
-                      {linkedObjectiveIds.length > 0 && (
+                      {/* Current links */}
+                      {links.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
-                          {linkedObjectiveIds.map((id) => {
-                            const obj = objectives.find((o) => o.id === id);
+                          {links.map((link, li) => {
+                            const obj = objectives.find((o) => o.id === link.objectiveId);
+                            const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
                             if (!obj) return null;
                             return (
-                              <span key={id} className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md">
-                                <span className="max-w-[160px] truncate">{obj.title}</span>
+                              <span key={li} className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md">
+                                <span className="max-w-[200px] truncate">
+                                  {kr ? kr.title : obj.title}
+                                </span>
                                 <button
-                                  onClick={() => handleUpdateLinkedObjectives(
+                                  onClick={() => handleUpdateLinkedKRs(
                                     task.id,
-                                    linkedObjectiveIds.filter((oid) => oid !== id)
+                                    links.filter((_, i) => i !== li)
                                   )}
                                   className="text-indigo-400 hover:text-indigo-700 leading-none ml-0.5"
                                 >
@@ -462,34 +590,43 @@ export default function DashboardPage() {
                         </div>
                       )}
 
+                      {/* KR picker: two-level */}
                       {isPicking && (
                         <div className="border border-gray-200 rounded-lg overflow-hidden">
-                          {objectives.map((obj) => {
-                            const linked = linkedObjectiveIds.includes(obj.id);
-                            return (
-                              <button
-                                key={obj.id}
-                                onClick={() =>
-                                  handleUpdateLinkedObjectives(
-                                    task.id,
-                                    linked
-                                      ? linkedObjectiveIds.filter((id) => id !== obj.id)
-                                      : [...linkedObjectiveIds, obj.id]
-                                  )
-                                }
-                                className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors ${
-                                  linked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"
-                                }`}
-                              >
-                                <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${
-                                  linked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"
-                                }`}>
-                                  {linked && "✓"}
-                                </span>
-                                <span className="truncate">{obj.title}</span>
-                              </button>
-                            );
-                          })}
+                          {objectives.map((obj) => (
+                            <div key={obj.id}>
+                              <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">
+                                {obj.title}
+                              </div>
+                              {obj.keyResults.map((kr) => {
+                                const alreadyLinked = links.some((l) => l.krId === kr.id);
+                                const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
+                                return (
+                                  <button
+                                    key={kr.id}
+                                    onClick={() => {
+                                      if (alreadyLinked) {
+                                        handleUpdateLinkedKRs(task.id, links.filter((l) => l.krId !== kr.id));
+                                      } else {
+                                        handleUpdateLinkedKRs(task.id, [...links, { objectiveId: obj.id, krId: kr.id }]);
+                                      }
+                                    }}
+                                    className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${
+                                      alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"
+                                    }`}
+                                  >
+                                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${
+                                      alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"
+                                    }`}>
+                                      {alreadyLinked && "✓"}
+                                    </span>
+                                    <span className="flex-1 truncate">{kr.title}</span>
+                                    <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -513,39 +650,95 @@ export default function DashboardPage() {
                         <span className="text-xs text-gray-400 ml-2">{group.length}</span>
                       </div>
                       <div className="divide-y divide-gray-50">
-                        {group.map((task) => (
-                          <div key={task.id} className="px-4 py-3 flex items-center gap-3">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-gray-800 truncate">{task.title}</p>
-                              {task.linkedKRs && task.linkedKRs.length > 0 && (
-                                <p className="text-xs text-gray-400 truncate mt-0.5">
-                                  {task.linkedKRs
-                                    .map((l) => objectives.find((o) => o.id === l.objectiveId)?.title)
-                                    .filter(Boolean)
-                                    .join("、")}
-                                </p>
+                        {group.map((task) => {
+                          const isMeasurePending = pendingMeasure === task.id;
+                          const links = task.linkedKRs ?? [];
+                          const measureKRs = links.flatMap((link) => {
+                            if (!link.krId) return [];
+                            const obj = objectives.find((o) => o.id === link.objectiveId);
+                            const kr = obj?.keyResults.find((k) => k.id === link.krId);
+                            if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
+                            return [{ obj: obj!, kr }];
+                          });
+
+                          return (
+                            <div key={task.id} className="px-4 py-3 space-y-2">
+                              <div className="flex items-center gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-gray-800 truncate">{task.title}</p>
+                                  {links.length > 0 && (
+                                    <p className="text-xs text-gray-400 truncate mt-0.5">
+                                      {links
+                                        .map((l) => {
+                                          const obj = objectives.find((o) => o.id === l.objectiveId);
+                                          const kr = l.krId ? obj?.keyResults.find((k) => k.id === l.krId) : null;
+                                          return kr?.title ?? obj?.title;
+                                        })
+                                        .filter(Boolean)
+                                        .join("、")}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex gap-1 shrink-0">
+                                  {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                                    <button
+                                      key={s}
+                                      onClick={() => handleSetTaskStatus(task.id, s)}
+                                      className={`text-xs px-2 py-1 rounded transition-colors ${
+                                        task.taskStatus === s
+                                          ? TASK_STATUS_STYLE[s] + " font-medium"
+                                          : "text-gray-400 hover:text-gray-600"
+                                      }`}
+                                    >
+                                      {TASK_STATUS_LABEL[s]}
+                                    </button>
+                                  ))}
+                                </div>
+                                <button onClick={() => handleDelete(task.id)} className="text-xs text-gray-300 hover:text-red-400 shrink-0">
+                                  ×
+                                </button>
+                              </div>
+
+                              {/* Measurement input panel */}
+                              {isMeasurePending && measureKRs.length > 0 && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
+                                  <p className="text-xs font-medium text-amber-700">完成前，請填入目前的數值：</p>
+                                  {measureKRs.map(({ kr }) => (
+                                    <div key={kr.id} className="flex items-center gap-2">
+                                      <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
+                                      <input
+                                        type="number"
+                                        value={measureInputs[task.id]?.[kr.id] ?? ""}
+                                        onChange={(e) =>
+                                          setMeasureInputs((prev) => ({
+                                            ...prev,
+                                            [task.id]: { ...(prev[task.id] ?? {}), [kr.id]: e.target.value },
+                                          }))
+                                        }
+                                        placeholder={`目前 ${kr.metricName ?? "數值"}（${kr.unit ?? ""}）`}
+                                        className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                      />
+                                    </div>
+                                  ))}
+                                  <div className="flex gap-2 pt-1">
+                                    <button
+                                      onClick={() => confirmMeasurement(task.id)}
+                                      className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                                    >
+                                      確認完成
+                                    </button>
+                                    <button
+                                      onClick={() => setPendingMeasure(null)}
+                                      className="text-xs px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50"
+                                    >
+                                      取消
+                                    </button>
+                                  </div>
+                                </div>
                               )}
                             </div>
-                            <div className="flex gap-1 shrink-0">
-                              {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                                <button
-                                  key={s}
-                                  onClick={() => handleSetTaskStatus(task.id, s)}
-                                  className={`text-xs px-2 py-1 rounded transition-colors ${
-                                    task.taskStatus === s
-                                      ? TASK_STATUS_STYLE[s] + " font-medium"
-                                      : "text-gray-400 hover:text-gray-600"
-                                  }`}
-                                >
-                                  {TASK_STATUS_LABEL[s]}
-                                </button>
-                              ))}
-                            </div>
-                            <button onClick={() => handleDelete(task.id)} className="text-xs text-gray-300 hover:text-red-400 transition-colors shrink-0">
-                              ×
-                            </button>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );

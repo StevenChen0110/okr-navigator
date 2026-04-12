@@ -9,6 +9,8 @@ export interface CheckIn {
   note?: string;
 }
 
+export type KRType = "cumulative" | "measurement" | "milestone";
+
 export interface KeyResult {
   id: string;
   title: string;
@@ -16,11 +18,13 @@ export interface KeyResult {
   confidence?: KRConfidence;
   quarterScore?: number; // 0.0–1.0
   // Progress tracking
+  krType?: KRType;
   metricName?: string;
   targetValue?: number;
   unit?: string;
   deadline?: string; // YYYY-MM-DD
   currentValue?: number;
+  incrementPerTask?: number; // cumulative only: units added per task completion
   checkIns?: CheckIn[];
 }
 
