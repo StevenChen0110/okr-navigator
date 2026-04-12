@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, OKRMeta, KRType } from "@/lib/types";
 import { saveObjective } from "@/lib/db";
+import { classifyKR } from "@/lib/claude";
+import { getSettings } from "@/lib/storage";
 
 interface KRDraft {
   id: string;
@@ -15,6 +17,7 @@ interface KRDraft {
   unit: string;
   deadline: string;
   incrementPerTask: string;
+  classifying?: boolean; // AI in progress
 }
 
 const TIMEFRAME_OPTIONS = ["本月", "本季", "半年", "全年"];
@@ -46,8 +49,38 @@ export default function NewOKRPage() {
     setKrs((prev) => prev.filter((k) => k.id !== id));
   }
 
-  function updateKR(id: string, field: keyof KRDraft, value: string) {
+  function updateKR(id: string, field: keyof KRDraft, value: string | boolean) {
     setKrs((prev) => prev.map((k) => (k.id === id ? { ...k, [field]: value } : k)));
+  }
+
+  async function handleKRTitleBlur(kr: KRDraft) {
+    if (!kr.title.trim() || !title.trim()) return;
+    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
+    if (!apiKey) return;
+
+    updateKR(kr.id, "classifying", true);
+    try {
+      const settings = getSettings();
+      const result = await classifyKR(apiKey, settings.claudeModel, settings.language, kr.title, title);
+      setKrs((prev) =>
+        prev.map((k) =>
+          k.id === kr.id
+            ? {
+                ...k,
+                classifying: false,
+                krType: result.krType,
+                metricName: result.metricName ?? "",
+                targetValue: result.targetValue != null ? String(result.targetValue) : "",
+                unit: result.unit ?? "",
+                deadline: result.deadline ?? "",
+                incrementPerTask: result.incrementPerTask != null ? String(result.incrementPerTask) : "1",
+              }
+            : k
+        )
+      );
+    } catch {
+      updateKR(kr.id, "classifying", false);
+    }
   }
 
   async function handleSave() {
@@ -167,14 +200,25 @@ export default function NewOKRPage() {
               <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
                 KR {i + 1}
               </span>
-              {krs.length > 1 && (
-                <button
-                  onClick={() => removeKR(kr.id)}
-                  className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
-                >
-                  ×
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {kr.classifying && (
+                  <span className="text-xs text-indigo-400 flex items-center gap-1">
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    AI 分析中…
+                  </span>
+                )}
+                {krs.length > 1 && (
+                  <button
+                    onClick={() => removeKR(kr.id)}
+                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -182,13 +226,21 @@ export default function NewOKRPage() {
               <input
                 value={kr.title}
                 onChange={(e) => updateKR(kr.id, "title", e.target.value)}
+                onBlur={() => handleKRTitleBlur(kr)}
                 placeholder="例：每週完成 2 次英語練習課程"
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
               />
+              {!kr.classifying && !kr.krType && kr.title.trim() && title.trim() && (
+                <p className="text-xs text-gray-400">離開欄位後 AI 將自動設定類型與測量方式</p>
+              )}
             </div>
 
+            {/* KR Type — shown after AI fills or user edits */}
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">KR 類型</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-gray-400">KR 類型</label>
+                {kr.classifying && <span className="text-xs text-indigo-300">偵測中…</span>}
+              </div>
               <div className="flex gap-1.5 flex-wrap">
                 {KR_TYPE_OPTIONS.map((opt) => (
                   <button

@@ -259,6 +259,59 @@ No markdown fences.`,
   return JSON.parse(extractJSON(raw));
 }
 
+// ── KR Classification ────────────────────────────────────────────────────────
+
+export interface KRClassification {
+  krType: "cumulative" | "measurement" | "milestone";
+  metricName: string;       // empty string for milestone
+  targetValue: number | null; // null for milestone
+  unit: string;             // empty string for milestone
+  deadline: string | null;  // YYYY-MM-DD or null
+  incrementPerTask: number; // for cumulative (default 1); 1 for others
+}
+
+export async function classifyKR(
+  apiKey: string,
+  model: string,
+  language: "zh-TW" | "en",
+  krTitle: string,
+  objectiveTitle: string
+): Promise<KRClassification> {
+  const client = getClient(apiKey);
+  const message = await client.messages.create({
+    model,
+    max_tokens: 300,
+    system: `You are an OKR analyst. Given a Key Result title and its parent Objective, classify the KR into one of three types and extract measurement details.
+
+KR Types:
+- "milestone": binary done/not-done, no tracking number needed (e.g. 取得證照, 完成上線, 發布產品, 通過考試)
+- "cumulative": counting repeated actions; each task completion adds N units (e.g. 完成24次練習, 讀完10本書, 發布12篇文章)
+- "measurement": tracking a changing numeric state; user manually records current value (e.g. 體重降到70kg, 月營收達10萬, 英語閱讀速度200wpm)
+
+${currentDateInstruction()}
+${langInstruction(language)}
+
+Output ONLY valid JSON:
+{
+  "krType": "cumulative"|"measurement"|"milestone",
+  "metricName": "short noun phrase for what is tracked (≤6 words, empty string for milestone)",
+  "targetValue": number or null (null for milestone),
+  "unit": "unit of measurement, empty string for milestone",
+  "deadline": "YYYY-MM-DD or null",
+  "incrementPerTask": number (for cumulative: units per task, e.g. 1; for others: 1)
+}
+No markdown fences.`,
+    messages: [
+      {
+        role: "user",
+        content: `Objective: ${objectiveTitle}\nKR: ${krTitle}`,
+      },
+    ],
+  });
+  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
+  return JSON.parse(extractJSON(raw)) as KRClassification;
+}
+
 // ── KR Title Refinement ──────────────────────────────────────────────────────
 
 export async function refineKRTitle(
