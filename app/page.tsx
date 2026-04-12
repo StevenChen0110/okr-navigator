@@ -49,6 +49,77 @@ const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   done: "完成",
 };
 
+/** Groups IdeaKRLinks by Objective and renders a hierarchy list (read-only). */
+function LinkedObjsReadOnly({ links, objectives }: { links: IdeaKRLink[]; objectives: Objective[] }) {
+  if (links.length === 0) return null;
+  const grouped: { obj: Objective; krs: KeyResult[] }[] = [];
+  for (const link of links) {
+    const obj = objectives.find((o) => o.id === link.objectiveId);
+    if (!obj) continue;
+    let entry = grouped.find((g) => g.obj.id === obj.id);
+    if (!entry) { entry = { obj, krs: [] }; grouped.push(entry); }
+    if (link.krId) {
+      const kr = obj.keyResults.find((k) => k.id === link.krId);
+      if (kr && !entry.krs.find((k) => k.id === kr.id)) entry.krs.push(kr);
+    }
+  }
+  return (
+    <div className="mt-1 space-y-1">
+      {grouped.map(({ obj, krs }) => (
+        <div key={obj.id}>
+          <p className="text-xs text-gray-500 font-medium leading-snug">{obj.title}</p>
+          {krs.map((kr) => (
+            <p key={kr.id} className="text-xs text-gray-400 pl-3 leading-snug">└ {kr.title}</p>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Same but with remove (×) buttons per link — used in assign tab. */
+function LinkedObjsEditable({
+  links,
+  objectives,
+  onRemove,
+}: {
+  links: IdeaKRLink[];
+  objectives: Objective[];
+  onRemove: (index: number) => void;
+}) {
+  if (links.length === 0) return null;
+  // Build grouped display, preserving original index for removal
+  const grouped: { obj: Objective; items: { kr: KeyResult | null; linkIndex: number }[] }[] = [];
+  links.forEach((link, idx) => {
+    const obj = objectives.find((o) => o.id === link.objectiveId);
+    if (!obj) return;
+    let entry = grouped.find((g) => g.obj.id === obj.id);
+    if (!entry) { entry = { obj, items: [] }; grouped.push(entry); }
+    const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) ?? null : null;
+    entry.items.push({ kr, linkIndex: idx });
+  });
+  return (
+    <div className="space-y-1.5">
+      {grouped.map(({ obj, items }) => (
+        <div key={obj.id}>
+          <p className="text-xs text-gray-500 font-medium leading-snug">{obj.title}</p>
+          {items.map(({ kr, linkIndex }) => (
+            <div key={linkIndex} className="flex items-center gap-1 pl-3">
+              <p className="text-xs text-gray-400 flex-1 leading-snug">└ {kr ? kr.title : "（整體目標）"}</p>
+              <button
+                onClick={() => onRemove(linkIndex)}
+                className="text-gray-300 hover:text-red-400 text-sm leading-none shrink-0"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
   todo: "bg-gray-100 text-gray-500",
   "in-progress": "bg-amber-50 text-amber-600",
@@ -479,12 +550,13 @@ export default function DashboardPage() {
                     <div key={task.id}>
                       <button
                         onClick={() => setExpandedIdeaId(isExpanded ? null : task.id)}
-                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors"
+                        className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors"
                       >
-                        <span className="text-xs font-bold text-gray-300 w-4 shrink-0">#{idx + 1}</span>
+                        <span className="text-xs font-bold text-gray-300 w-4 shrink-0 pt-0.5">#{idx + 1}</span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-800 truncate">{task.title}</p>
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${TASK_STATUS_STYLE[task.taskStatus!]}`}>
+                          <p className="text-sm text-gray-800">{task.title}</p>
+                          <LinkedObjsReadOnly links={task.linkedKRs ?? []} objectives={objectives} />
+                          <span className={`inline-block mt-1 text-xs px-1.5 py-0.5 rounded ${TASK_STATUS_STYLE[task.taskStatus!]}`}>
                             {TASK_STATUS_LABEL[task.taskStatus!]}
                           </span>
                         </div>
@@ -564,31 +636,13 @@ export default function DashboardPage() {
                       </div>
 
                       {/* Current links */}
-                      {links.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {links.map((link, li) => {
-                            const obj = objectives.find((o) => o.id === link.objectiveId);
-                            const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
-                            if (!obj) return null;
-                            return (
-                              <span key={li} className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md">
-                                <span className="max-w-[200px] truncate">
-                                  {kr ? kr.title : obj.title}
-                                </span>
-                                <button
-                                  onClick={() => handleUpdateLinkedKRs(
-                                    task.id,
-                                    links.filter((_, i) => i !== li)
-                                  )}
-                                  className="text-indigo-400 hover:text-indigo-700 leading-none ml-0.5"
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <LinkedObjsEditable
+                        links={links}
+                        objectives={objectives}
+                        onRemove={(idx) =>
+                          handleUpdateLinkedKRs(task.id, links.filter((_, i) => i !== idx))
+                        }
+                      />
 
                       {/* KR picker: two-level */}
                       {isPicking && (
@@ -665,19 +719,8 @@ export default function DashboardPage() {
                             <div key={task.id} className="px-4 py-3 space-y-2">
                               <div className="flex items-center gap-3">
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-sm text-gray-800 truncate">{task.title}</p>
-                                  {links.length > 0 && (
-                                    <p className="text-xs text-gray-400 truncate mt-0.5">
-                                      {links
-                                        .map((l) => {
-                                          const obj = objectives.find((o) => o.id === l.objectiveId);
-                                          const kr = l.krId ? obj?.keyResults.find((k) => k.id === l.krId) : null;
-                                          return kr?.title ?? obj?.title;
-                                        })
-                                        .filter(Boolean)
-                                        .join("、")}
-                                    </p>
-                                  )}
+                                  <p className="text-sm text-gray-800">{task.title}</p>
+                                  <LinkedObjsReadOnly links={links} objectives={objectives} />
                                 </div>
                                 <div className="flex gap-1 shrink-0">
                                   {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
