@@ -166,30 +166,36 @@ export default function DashboardPage() {
 
   // ── Task status + KR progress update ───────────────────────────────────────
 
-  function handleSetTaskStatus(taskId: string, status: TaskStatus) {
-    if (status !== "done") {
-      updateIdeaTaskStatus(taskId, status).catch(console.error);
-      setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i));
-      return;
-    }
-
-    const task = ideas.find((i) => i.id === taskId);
-    if (!task) return;
-    const links = task.linkedKRs ?? [];
-
-    // Collect all linked KRs with their type
-    const linkedKRs = links.flatMap((link) => {
+  function collectLinkedKRs(task: Idea) {
+    return (task.linkedKRs ?? []).flatMap((link) => {
       const obj = objectives.find((o) => o.id === link.objectiveId);
       if (!obj) return [];
       const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) : null;
       if (!kr) return [];
       return [{ obj, kr, link }];
     });
+  }
 
+  function handleSetTaskStatus(taskId: string, status: TaskStatus) {
+    const task = ideas.find((i) => i.id === taskId);
+    if (!task || task.taskStatus === status) return; // no-op if same
+
+    const wasDown = task.taskStatus === "done";
+
+    if (status !== "done") {
+      // If reverting from done → undo KR contributions
+      if (wasDown) {
+        applyTaskUndo(task);
+      }
+      updateIdeaTaskStatus(taskId, status).catch(console.error);
+      setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i));
+      return;
+    }
+
+    const linkedKRs = collectLinkedKRs(task);
     const hasMeasurement = linkedKRs.some((r) => (r.kr.krType ?? "cumulative") === "measurement");
 
     if (hasMeasurement) {
-      // Show inline measurement inputs before confirming done
       const initInputs: Record<string, string> = {};
       linkedKRs.filter((r) => (r.kr.krType ?? "cumulative") === "measurement").forEach((r) => {
         initInputs[r.kr.id] = String(r.kr.currentValue ?? "");
@@ -202,18 +208,51 @@ export default function DashboardPage() {
     applyTaskDone(taskId, task, linkedKRs, {});
   }
 
+  function applyTaskUndo(task: Idea) {
+    const linkedKRs = collectLinkedKRs(task);
+    if (linkedKRs.length === 0) return;
+
+    const updatedObjectives = new Map<string, Objective>();
+    for (const { obj, kr } of linkedKRs) {
+      const current = updatedObjectives.get(obj.id) ?? obj;
+      const krType = kr.krType ?? "cumulative";
+      let newValue: number | undefined;
+
+      if (krType === "cumulative") {
+        const linkedKRsInObj = linkedKRs.filter((r) => r.obj.id === obj.id);
+        const scores = linkedKRsInObj.map((r) => {
+          const objScore = task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id);
+          return objScore?.keyResultScores.find((ks) => ks.keyResultId === r.kr.id)?.score ?? 1;
+        });
+        const thisScore = (() => {
+          const objScore = task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id);
+          return objScore?.keyResultScores.find((ks) => ks.keyResultId === kr.id)?.score ?? 1;
+        })();
+        const totalScore = scores.reduce((a, b) => a + b, 0) || 1;
+        const weight = thisScore / totalScore;
+        const increment = (kr.incrementPerTask ?? 1) * weight;
+        newValue = Math.max(0, (kr.currentValue ?? 0) - increment);
+      } else if (krType === "milestone") {
+        newValue = 0;
+      }
+      // measurement: no revert (value was manually set)
+
+      if (newValue !== undefined) {
+        const updatedKRs = current.keyResults.map((k) =>
+          k.id === kr.id ? { ...k, currentValue: newValue } : k
+        );
+        updatedObjectives.set(obj.id, { ...current, keyResults: updatedKRs });
+      }
+    }
+
+    updatedObjectives.forEach((updatedObj) => saveObjective(updatedObj).catch(console.error));
+    setObjectives((prev) => prev.map((o) => updatedObjectives.get(o.id) ?? o));
+  }
+
   function confirmMeasurement(taskId: string) {
     const task = ideas.find((i) => i.id === taskId);
     if (!task) return;
-    const links = task.linkedKRs ?? [];
-    const linkedKRs = links.flatMap((link) => {
-      const obj = objectives.find((o) => o.id === link.objectiveId);
-      if (!obj) return [];
-      const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) : null;
-      if (!kr) return [];
-      return [{ obj, kr, link }];
-    });
-    applyTaskDone(taskId, task, linkedKRs, measureInputs[taskId] ?? {});
+    applyTaskDone(taskId, task, collectLinkedKRs(task), measureInputs[taskId] ?? {});
     setPendingMeasure(null);
   }
 
@@ -717,12 +756,47 @@ export default function DashboardPage() {
 
                           return (
                             <div key={task.id} className="px-4 py-3 space-y-2">
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-start gap-3">
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm text-gray-800">{task.title}</p>
-                                  <LinkedObjsReadOnly links={links} objectives={objectives} />
+
+                                  {/* KR progress inline */}
+                                  {links.length > 0 ? (
+                                    <div className="mt-2 space-y-2">
+                                      {links.map((link) => {
+                                        const obj = objectives.find((o) => o.id === link.objectiveId);
+                                        const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
+                                        if (!obj || !kr) return null;
+                                        const completion = calcKRCompletion(kr);
+                                        return (
+                                          <div key={link.krId ?? link.objectiveId}>
+                                            <p className="text-[11px] text-gray-400 leading-snug truncate">{obj.title}</p>
+                                            <p className="text-xs text-gray-600 leading-snug truncate">{kr.title}</p>
+                                            {completion !== undefined && (
+                                              <div className="flex items-center gap-2 mt-1">
+                                                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                                  <div
+                                                    className={`h-full rounded-full transition-all ${getProgressColor(completion)}`}
+                                                    style={{ width: `${completion}%` }}
+                                                  />
+                                                </div>
+                                                <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
+                                                  {kr.krType === "milestone"
+                                                    ? (completion === 100 ? "完成" : "未完成")
+                                                    : `${(kr.currentValue ?? 0).toFixed(1)} / ${kr.targetValue}${kr.unit ? ` ${kr.unit}` : ""}`}
+                                                </span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <p className="text-xs text-gray-400 mt-1">尚未連結 KR，進度不會自動更新</p>
+                                  )}
                                 </div>
-                                <div className="flex gap-1 shrink-0">
+
+                                <div className="flex flex-col gap-1 shrink-0 items-end">
                                   {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
                                     <button
                                       key={s}
@@ -736,10 +810,10 @@ export default function DashboardPage() {
                                       {TASK_STATUS_LABEL[s]}
                                     </button>
                                   ))}
+                                  <button onClick={() => handleDelete(task.id)} className="text-xs text-gray-300 hover:text-red-400 mt-1">
+                                    ×
+                                  </button>
                                 </div>
-                                <button onClick={() => handleDelete(task.id)} className="text-xs text-gray-300 hover:text-red-400 shrink-0">
-                                  ×
-                                </button>
                               </div>
 
                               {/* Measurement input panel */}
