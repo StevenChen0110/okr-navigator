@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, KRConfidence, CheckIn, ObjectiveStatus } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
+import { classifyKR } from "@/lib/claude";
+import { getSettings } from "@/lib/storage";
 import Markdown from "@/components/Markdown";
 
 const CONFIDENCE_CONFIG: Record<KRConfidence, { label: string; color: string }> = {
@@ -82,6 +84,9 @@ export default function OKRPage() {
 
   // Snapshot expand
   const [expandedSnapshot, setExpandedSnapshot] = useState<string | null>(null);
+
+  // AI classifying KRs in edit mode (set of krId)
+  const [classifyingKRs, setClassifyingKRs] = useState<Set<string>>(new Set());
 
   // Check-in
   const [checkInOpen, setCheckInOpen] = useState<string | null>(null); // krId
@@ -223,6 +228,29 @@ export default function OKRPage() {
       if (!d) return d;
       return { ...d, keyResults: d.keyResults.filter((kr) => kr.id !== krId) };
     });
+  }
+
+  async function handleDraftKRTitleBlur(kr: KeyResult) {
+    if (!kr.title.trim() || !editDraft?.title.trim()) return;
+    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
+    if (!apiKey) return;
+    setClassifyingKRs((prev) => new Set(prev).add(kr.id));
+    try {
+      const settings = getSettings();
+      const result = await classifyKR(apiKey, settings.claudeModel, settings.language, kr.title, editDraft!.title);
+      updateDraftKR(kr.id, {
+        krType: result.krType,
+        metricName: result.metricName ?? "",
+        targetValue: result.targetValue ?? undefined,
+        unit: result.unit ?? "",
+        deadline: result.deadline ?? undefined,
+        incrementPerTask: result.incrementPerTask ?? 1,
+      });
+    } catch {
+      // silently ignore
+    } finally {
+      setClassifyingKRs((prev) => { const next = new Set(prev); next.delete(kr.id); return next; });
+    }
   }
 
   function deleteObjective(id: string) {
@@ -515,9 +543,19 @@ export default function OKRPage() {
                             <input
                               value={kr.title}
                               onChange={(e) => updateDraftKR(kr.id, { title: e.target.value })}
+                              onBlur={() => handleDraftKRTitleBlur(kr)}
                               placeholder="量化指標描述"
                               className="flex-1 text-sm bg-gray-50 rounded-lg px-3 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
                             />
+                            {classifyingKRs.has(kr.id) && (
+                              <span className="text-xs text-indigo-400 flex items-center gap-1 shrink-0 whitespace-nowrap">
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                </svg>
+                                AI
+                              </span>
+                            )}
                             <button
                               onClick={() => removeDraftKR(kr.id)}
                               className="text-gray-300 hover:text-red-400 transition-colors shrink-0"
