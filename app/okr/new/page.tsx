@@ -17,7 +17,7 @@ interface KRDraft {
   unit: string;
   deadline: string;
   incrementPerTask: string;
-  classifying?: boolean; // AI in progress
+  classifying?: boolean;
 }
 
 const TIMEFRAME_OPTIONS = ["本月", "本季", "半年", "全年"];
@@ -34,6 +34,8 @@ const KR_TYPE_OPTIONS: { value: KRType; label: string; desc: string }[] = [
 
 export default function NewOKRPage() {
   const router = useRouter();
+
+  // ── Manual form state ──────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [okrType, setOkrType] = useState<"committed" | "aspirational">("committed");
   const [timeframe, setTimeframe] = useState("本季");
@@ -41,6 +43,16 @@ export default function NewOKRPage() {
   const [krs, setKrs] = useState<KRDraft[]>([newKRDraft()]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // ── AI guided mode state ───────────────────────────────────────────────────
+  const [aiMode, setAiMode] = useState(false);
+  const [aiStep, setAiStep] = useState<0 | 1 | 2 | 3>(0);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [rawGoal, setRawGoal] = useState("");
+  const [suggestedKRs, setSuggestedKRs] = useState<string[]>([]);
+  const [checkedKRs, setCheckedKRs] = useState<Set<number>>(new Set());
+
+  // ── Manual form helpers ────────────────────────────────────────────────────
 
   function addKR() {
     setKrs((prev) => [...prev, newKRDraft()]);
@@ -56,7 +68,6 @@ export default function NewOKRPage() {
 
   async function handleKRTitleBlur(kr: KRDraft) {
     if (!kr.title.trim() || !title.trim()) return;
-
     updateKR(kr.id, "classifying", true);
     try {
       const result = await callAI<KRClassification>("classifyKR", { krTitle: kr.title, objectiveTitle: title });
@@ -122,93 +133,297 @@ export default function NewOKRPage() {
     }
   }
 
-  return (
-    <div className="max-w-2xl mx-auto px-4 py-6 md:px-6 md:py-10">
-      <h1 className="text-xl font-semibold mb-1">新增目標</h1>
-      <p className="text-sm text-gray-500 mb-8">設定你的目標與量化指標</p>
+  // ── AI guided flow handlers ────────────────────────────────────────────────
 
-      {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">
-          {error}
+  async function handleAiStep1() {
+    if (!rawGoal.trim()) return;
+    setAiLoading(true);
+    try {
+      const result = await callAI<{ title: string; motivation: string; okrType: "committed" | "aspirational"; timeframe: string }>(
+        "refineObjective", { rawInput: rawGoal }
+      );
+      setTitle(result.title);
+      setOkrType(result.okrType);
+      setTimeframe(result.timeframe);
+      setAiStep(1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI 分析失敗");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  async function handleAiStep2() {
+    setAiLoading(true);
+    try {
+      const results = await callAI<string[]>("suggestKeyResults", { objectiveTitle: title });
+      setSuggestedKRs(results);
+      setCheckedKRs(new Set(results.map((_, i) => i)));
+      setAiStep(2);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI 建議 KR 失敗");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  async function handleAiStep3() {
+    const selected = suggestedKRs.filter((_, i) => checkedKRs.has(i));
+    if (selected.length === 0) { setError("請至少選擇一條 KR"); return; }
+    setError("");
+
+    const drafts: KRDraft[] = selected.map((t) => ({ ...newKRDraft(), title: t }));
+    setKrs(drafts);
+    setAiStep(3);
+
+    // Auto-classify each KR
+    for (const draft of drafts) {
+      try {
+        updateKR(draft.id, "classifying", true);
+        const result = await callAI<KRClassification>("classifyKR", { krTitle: draft.title, objectiveTitle: title });
+        setKrs((prev) =>
+          prev.map((k) =>
+            k.id === draft.id
+              ? {
+                  ...k,
+                  classifying: false,
+                  krType: result.krType,
+                  metricName: result.metricName ?? "",
+                  targetValue: result.targetValue != null ? String(result.targetValue) : "",
+                  unit: result.unit ?? "",
+                  deadline: result.deadline ?? "",
+                  incrementPerTask: result.incrementPerTask != null ? String(result.incrementPerTask) : "1",
+                }
+              : k
+          )
+        );
+      } catch {
+        updateKR(draft.id, "classifying", false);
+      }
+    }
+  }
+
+  // ── AI Step 0: goal input ──────────────────────────────────────────────────
+
+  if (aiMode && aiStep === 0) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-6 md:px-6 md:py-10">
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="text-xl font-semibold">AI 幫我想目標</h1>
+          <button onClick={() => setAiMode(false)} className="text-xs text-gray-400 hover:text-gray-600">手動填寫</button>
         </div>
-      )}
+        <p className="text-sm text-gray-500 mb-8">用一句話描述你想達成的事，AI 幫你結構化</p>
 
-      {/* Objective */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4 mb-4">
-        <h2 className="text-sm font-semibold text-gray-700">目標（Objective）</h2>
+        {error && <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">{error}</div>}
 
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">目標名稱</label>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="例：提升英語口說能力到能流暢開會的程度"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <textarea
+            value={rawGoal}
+            onChange={(e) => setRawGoal(e.target.value)}
+            placeholder="例：我想在今年內提升英語口說，能流暢地用英文開會和簡報"
+            rows={4}
+            autoFocus
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
           />
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">目標類型</label>
-          <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
-            {(["committed", "aspirational"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setOkrType(t)}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"
-                }`}
-              >
-                {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
-              </button>
-            ))}
+          <div className="flex gap-3">
+            <button onClick={() => router.push("/okr")} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">
+              取消
+            </button>
+            <button
+              onClick={handleAiStep1}
+              disabled={aiLoading || !rawGoal.trim()}
+              className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
+            >
+              {aiLoading ? "AI 分析中…" : "繼續 →"}
+            </button>
           </div>
-          <p className="text-xs text-gray-400">
-            {okrType === "committed"
-              ? "承諾型：預期得分 1.0，未達成需要檢討"
-              : "願景型：預期得分 0.7，鼓勵挑戰極限"}
-          </p>
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">時間範圍</label>
-          <div className="flex gap-2 flex-wrap">
-            {TIMEFRAME_OPTIONS.map((t) => (
-              <button
-                key={t}
-                onClick={() => setTimeframe(t)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  timeframe === t
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">優先級</label>
-          <div className="flex gap-2">
-            {([1, 2, 3] as const).map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setPriority(p)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  priority === p
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                }`}
-              >
-                P{p}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-gray-400">影響 Dashboard Idea 排序的加權係數（P1 最高）</p>
         </div>
       </div>
+    );
+  }
+
+  // ── AI Step 1: review refined objective ────────────────────────────────────
+
+  if (aiMode && aiStep === 1) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-6 md:px-6 md:py-10">
+        <h1 className="text-xl font-semibold mb-1">確認目標</h1>
+        <p className="text-sm text-gray-500 mb-8">AI 已整理你的目標，可以直接修改</p>
+
+        {error && <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">{error}</div>}
+
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4 mb-4">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">目標名稱</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">目標類型</label>
+            <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
+              {(["committed", "aspirational"] as const).map((t) => (
+                <button key={t} onClick={() => setOkrType(t)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"}`}>
+                  {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">時間範圍</label>
+            <div className="flex gap-2 flex-wrap">
+              {TIMEFRAME_OPTIONS.map((t) => (
+                <button key={t} onClick={() => setTimeframe(t)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${timeframe === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">優先級</label>
+            <div className="flex gap-2">
+              {([1, 2, 3] as const).map((p) => (
+                <button key={p} onClick={() => setPriority(p)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${priority === p ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
+                  P{p}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={() => setAiStep(0)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">← 返回</button>
+          <button onClick={handleAiStep2} disabled={aiLoading || !title.trim()}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40">
+            {aiLoading ? "AI 建議 KR 中…" : "建議 Key Results →"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── AI Step 2: pick KRs ────────────────────────────────────────────────────
+
+  if (aiMode && aiStep === 2) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-6 md:px-6 md:py-10">
+        <h1 className="text-xl font-semibold mb-1">選擇 Key Results</h1>
+        <p className="text-sm text-gray-500 mb-2">AI 建議以下 KR，勾選你想採用的</p>
+        <p className="text-xs text-gray-400 mb-6">目標：{title}</p>
+
+        {error && <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">{error}</div>}
+
+        <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-50 mb-4">
+          {suggestedKRs.map((kr, i) => (
+            <label key={i} className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50">
+              <input
+                type="checkbox"
+                checked={checkedKRs.has(i)}
+                onChange={() => setCheckedKRs((prev) => {
+                  const s = new Set(prev);
+                  if (s.has(i)) s.delete(i); else s.add(i);
+                  return s;
+                })}
+                className="mt-0.5 accent-indigo-600 shrink-0"
+              />
+              <span className="text-sm text-gray-700">{kr}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={() => setAiStep(1)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">← 返回</button>
+          <button onClick={handleAiStep3} disabled={checkedKRs.size === 0}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40">
+            確認並分類 KR →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Manual form + AI Step 3 (same KR review form) ─────────────────────────
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-6 md:px-6 md:py-10">
+      <div className="flex items-center justify-between mb-1">
+        <h1 className="text-xl font-semibold">{aiMode ? "確認 Key Results" : "新增目標"}</h1>
+        {!aiMode && (
+          <button onClick={() => { setAiMode(true); setAiStep(0); }} className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
+            AI 幫我想
+          </button>
+        )}
+      </div>
+      <p className="text-sm text-gray-500 mb-8">{aiMode ? `目標：${title}` : "設定你的目標與量化指標"}</p>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">{error}</div>
+      )}
+
+      {/* Objective (manual mode only) */}
+      {!aiMode && (
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4 mb-4">
+          <h2 className="text-sm font-semibold text-gray-700">目標（Objective）</h2>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">目標名稱</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="例：提升英語口說能力到能流暢開會的程度"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">目標類型</label>
+            <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
+              {(["committed", "aspirational"] as const).map((t) => (
+                <button key={t} onClick={() => setOkrType(t)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"}`}>
+                  {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400">
+              {okrType === "committed" ? "承諾型：預期得分 1.0，未達成需要檢討" : "願景型：預期得分 0.7，鼓勵挑戰極限"}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">時間範圍</label>
+            <div className="flex gap-2 flex-wrap">
+              {TIMEFRAME_OPTIONS.map((t) => (
+                <button key={t} onClick={() => setTimeframe(t)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${timeframe === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">優先級</label>
+            <div className="flex gap-2">
+              {([1, 2, 3] as const).map((p) => (
+                <button key={p} type="button" onClick={() => setPriority(p)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${priority === p ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
+                  P{p}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400">影響 Dashboard Idea 排序的加權係數（P1 最高）</p>
+          </div>
+        </div>
+      )}
 
       {/* KRs */}
       <div className="space-y-3 mb-6">
@@ -216,9 +431,7 @@ export default function NewOKRPage() {
         {krs.map((kr, i) => (
           <div key={kr.id} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
-                KR {i + 1}
-              </span>
+              <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">KR {i + 1}</span>
               <div className="flex items-center gap-2">
                 {kr.classifying && (
                   <span className="text-xs text-indigo-400 flex items-center gap-1 whitespace-nowrap">
@@ -230,12 +443,7 @@ export default function NewOKRPage() {
                   </span>
                 )}
                 {krs.length > 1 && (
-                  <button
-                    onClick={() => removeKR(kr.id)}
-                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
-                  >
-                    ×
-                  </button>
+                  <button onClick={() => removeKR(kr.id)} className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none">×</button>
                 )}
               </div>
             </div>
@@ -249,12 +457,8 @@ export default function NewOKRPage() {
                 placeholder="例：每週完成 2 次英語練習課程"
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
               />
-              {!kr.classifying && !kr.krType && kr.title.trim() && title.trim() && (
-                <p className="text-xs text-gray-400">離開欄位後 AI 將自動設定類型與測量方式</p>
-              )}
             </div>
 
-            {/* KR Type — shown after AI fills or user edits */}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <label className="text-xs text-gray-400">KR 類型</label>
@@ -262,55 +466,34 @@ export default function NewOKRPage() {
               </div>
               <div className="flex gap-1.5 flex-wrap">
                 {KR_TYPE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateKR(kr.id, "krType", opt.value)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                      kr.krType === opt.value
-                        ? "bg-indigo-600 text-white border-indigo-600"
-                        : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                    }`}
-                  >
+                  <button key={opt.value} type="button" onClick={() => updateKR(kr.id, "krType", opt.value)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${kr.krType === opt.value ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
                     {opt.label}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-400">
-                {KR_TYPE_OPTIONS.find((o) => o.value === kr.krType)?.desc}
-              </p>
+              <p className="text-xs text-gray-400">{KR_TYPE_OPTIONS.find((o) => o.value === kr.krType)?.desc}</p>
             </div>
 
             {kr.krType !== "milestone" && (
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs text-gray-400">指標名稱</label>
-                  <input
-                    value={kr.metricName}
-                    onChange={(e) => updateKR(kr.id, "metricName", e.target.value)}
+                  <input value={kr.metricName} onChange={(e) => updateKR(kr.id, "metricName", e.target.value)}
                     placeholder="練習次數"
-                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                  />
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-gray-400">目標值</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={kr.targetValue}
-                    onChange={(e) => updateKR(kr.id, "targetValue", e.target.value)}
+                  <input type="number" min={0} value={kr.targetValue} onChange={(e) => updateKR(kr.id, "targetValue", e.target.value)}
                     placeholder="24"
-                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                  />
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-gray-400">單位</label>
-                  <input
-                    value={kr.unit}
-                    onChange={(e) => updateKR(kr.id, "unit", e.target.value)}
+                  <input value={kr.unit} onChange={(e) => updateKR(kr.id, "unit", e.target.value)}
                     placeholder="次"
-                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                  />
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
                 </div>
               </div>
             )}
@@ -319,15 +502,10 @@ export default function NewOKRPage() {
               <div className="space-y-1">
                 <label className="text-xs text-gray-400">每個 Task 完成貢獻值</label>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={0.1}
-                    step={0.1}
-                    value={kr.incrementPerTask}
+                  <input type="number" min={0.1} step={0.1} value={kr.incrementPerTask}
                     onChange={(e) => updateKR(kr.id, "incrementPerTask", e.target.value)}
                     placeholder="1"
-                    className="w-24 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                  />
+                    className="w-24 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
                   <span className="text-xs text-gray-400">{kr.unit || "單位"} / Task</span>
                 </div>
               </div>
@@ -335,29 +513,22 @@ export default function NewOKRPage() {
 
             <div className="space-y-1">
               <label className="text-xs text-gray-400">截止日期（選填）</label>
-              <input
-                type="date"
-                value={kr.deadline}
-                onChange={(e) => updateKR(kr.id, "deadline", e.target.value)}
-                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-              />
+              <input type="date" value={kr.deadline} onChange={(e) => updateKR(kr.id, "deadline", e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
             </div>
           </div>
         ))}
-        <button
-          onClick={addKR}
-          className="text-xs text-indigo-500 hover:text-indigo-700 font-medium px-1"
-        >
-          + 新增 KR
-        </button>
+        {!aiMode && (
+          <button onClick={addKR} className="text-xs text-indigo-500 hover:text-indigo-700 font-medium px-1">+ 新增 KR</button>
+        )}
       </div>
 
       <div className="flex gap-3">
         <button
-          onClick={() => router.push("/okr")}
+          onClick={() => aiMode ? setAiStep(2) : router.push("/okr")}
           className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
         >
-          取消
+          {aiMode ? "← 返回" : "取消"}
         </button>
         <button
           onClick={handleSave}
