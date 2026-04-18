@@ -3,9 +3,8 @@
 import { useState, useEffect } from "react";
 import { v4 as uuid } from "uuid";
 import { Objective, Idea, IdeaKRLink, IdeaAnalysis, Background } from "@/lib/types";
-import { getSettings } from "@/lib/storage";
 import { fetchObjectives, saveIdea, fetchBackgrounds } from "@/lib/db";
-import { analyzeIdea } from "@/lib/claude";
+import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
 import Markdown from "@/components/Markdown";
 import Link from "next/link";
@@ -40,9 +39,6 @@ export default function NewIdeaPage() {
 
   async function handleAnalyze() {
     if (!title.trim()) return;
-    const settings = getSettings();
-    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
-    if (!apiKey) { setErrorMsg("系統尚未設定 API Key"); setStatus("error"); return; }
     if (objectives.length === 0) { setErrorMsg("請先建立至少一個 OKR 目標"); setStatus("error"); return; }
 
     setStatus("analyzing");
@@ -52,7 +48,10 @@ export default function NewIdeaPage() {
       const bgContext = backgrounds.length > 0
         ? backgrounds.map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`).join("\n")
         : undefined;
-      const result = await analyzeIdea(apiKey, settings.claudeModel, settings.language, title, why, outcome, notes, objectives, bgContext);
+      const result = await callAI<IdeaAnalysis>("analyzeIdea", {
+        ideaTitle: title, ideaWhy: why, ideaOutcome: outcome, ideaNotes: notes,
+        objectives, backgroundContext: bgContext,
+      });
       setAnalysis(result);
 
       // Auto-suggest links from KRs with score >= 5

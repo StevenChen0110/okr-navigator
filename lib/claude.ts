@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Objective, IdeaAnalysis, KRConfidence } from "./types";
 
 function getClient(apiKey: string) {
-  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+  return new Anthropic({ apiKey });
 }
 
 function stripFences(text: string): string {

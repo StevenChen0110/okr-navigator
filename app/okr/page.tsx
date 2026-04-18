@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, KRConfidence, CheckIn, ObjectiveStatus } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
-import { classifyKR } from "@/lib/claude";
-import { getSettings } from "@/lib/storage";
+import { KRClassification } from "@/lib/claude";
+import { callAI } from "@/lib/ai-client";
 import Markdown from "@/components/Markdown";
 
 const CONFIDENCE_CONFIG: Record<KRConfidence, { label: string; color: string }> = {
@@ -232,12 +232,9 @@ export default function OKRPage() {
 
   async function handleDraftKRTitleBlur(kr: KeyResult) {
     if (!kr.title.trim() || !editDraft?.title.trim()) return;
-    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
-    if (!apiKey) return;
     setClassifyingKRs((prev) => new Set(prev).add(kr.id));
     try {
-      const settings = getSettings();
-      const result = await classifyKR(apiKey, settings.claudeModel, settings.language, kr.title, editDraft!.title);
+      const result = await callAI<KRClassification>("classifyKR", { krTitle: kr.title, objectiveTitle: editDraft!.title });
       updateDraftKR(kr.id, {
         krType: result.krType,
         metricName: result.metricName ?? "",

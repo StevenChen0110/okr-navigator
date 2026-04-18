@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, OKRMeta, KRType } from "@/lib/types";
 import { saveObjective } from "@/lib/db";
-import { classifyKR } from "@/lib/claude";
-import { getSettings } from "@/lib/storage";
+import { KRClassification } from "@/lib/claude";
+import { callAI } from "@/lib/ai-client";
 
 interface KRDraft {
   id: string;
@@ -55,13 +55,10 @@ export default function NewOKRPage() {
 
   async function handleKRTitleBlur(kr: KRDraft) {
     if (!kr.title.trim() || !title.trim()) return;
-    const apiKey = process.env.NEXT_PUBLIC_CLAUDE_API_KEY ?? "";
-    if (!apiKey) return;
 
     updateKR(kr.id, "classifying", true);
     try {
-      const settings = getSettings();
-      const result = await classifyKR(apiKey, settings.claudeModel, settings.language, kr.title, title);
+      const result = await callAI<KRClassification>("classifyKR", { krTitle: kr.title, objectiveTitle: title });
       setKrs((prev) =>
         prev.map((k) =>
           k.id === kr.id
