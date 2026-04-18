@@ -32,6 +32,17 @@ function calcOCompletion(o: Objective): number | undefined {
   return Math.round(avg * 100);
 }
 
+function calcWeightedScore(idea: Idea, objectives: Objective[]): number | null {
+  if (!idea.analysis) return null;
+  let weightedSum = 0, totalWeight = 0;
+  for (const os of idea.analysis.objectiveScores) {
+    const priority = objectives.find((o) => o.id === os.objectiveId)?.meta?.priority ?? 2;
+    weightedSum += os.overallScore * priority;
+    totalWeight += priority;
+  }
+  return totalWeight > 0 ? weightedSum / totalWeight : idea.analysis.finalScore;
+}
+
 function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
   if (!kr.checkIns?.length) return undefined;
   return kr.checkIns[kr.checkIns.length - 1];
@@ -351,9 +362,12 @@ export default function DashboardPage() {
 
   const tasks = ideas.filter((i) => i.taskStatus != null);
   const nonTasks = ideas.filter((i) => i.taskStatus == null);
-  const tasksSortedByScore = [...tasks].sort(
-    (a, b) => (b.analysis?.finalScore ?? -1) - (a.analysis?.finalScore ?? -1)
-  );
+  const tasksSortedByScore = [...tasks].sort((a, b) => {
+    const aDone = a.taskStatus === "done" ? 1 : 0;
+    const bDone = b.taskStatus === "done" ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1);
+  });
   const taskStatusCounts = {
     todo: tasks.filter((t) => t.taskStatus === "todo").length,
     "in-progress": tasks.filter((t) => t.taskStatus === "in-progress").length,
@@ -584,25 +598,26 @@ export default function DashboardPage() {
               <div className="divide-y divide-gray-50">
                 {tasksSortedByScore.map((task, idx) => {
                   const isExpanded = expandedIdeaId === task.id;
-                  const score = task.analysis?.finalScore;
+                  const wScore = calcWeightedScore(task, objectives);
+                  const isDone = task.taskStatus === "done";
                   return (
                     <div key={task.id}>
                       <button
                         onClick={() => setExpandedIdeaId(isExpanded ? null : task.id)}
-                        className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors"
+                        className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors ${isDone ? "opacity-50" : ""}`}
                       >
                         <span className="text-xs font-bold text-gray-300 w-4 shrink-0 pt-0.5">#{idx + 1}</span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-800">{task.title}</p>
+                          <p className={`text-sm text-gray-800 ${isDone ? "line-through" : ""}`}>{task.title}</p>
                           <LinkedObjsReadOnly links={task.linkedKRs ?? []} objectives={objectives} />
                           <span className={`inline-block mt-1 text-xs px-1.5 py-0.5 rounded ${TASK_STATUS_STYLE[task.taskStatus!]}`}>
                             {TASK_STATUS_LABEL[task.taskStatus!]}
                           </span>
                         </div>
-                        {score !== undefined && (
+                        {wScore !== null && (
                           <span className={`text-lg font-bold shrink-0 ${
-                            score >= 7 ? "text-indigo-600" : score >= 4 ? "text-amber-500" : "text-red-500"
-                          }`}>{score.toFixed(1)}</span>
+                            wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
+                          }`}>{wScore.toFixed(1)}</span>
                         )}
                         <span className="text-gray-300 text-xs">{isExpanded ? "▲" : "▼"}</span>
                       </button>
