@@ -165,12 +165,28 @@ export default function OKRPage() {
 
   // ── Confidence ────────────────────────────────────────────────────────────────
 
+  const [confidenceSuggestions, setConfidenceSuggestions] = useState<Record<string, string>>({});
+
   function updateConfidence(objectiveId: string, krId: string, confidence: KRConfidence) {
     const o = objectives.find((o) => o.id === objectiveId);
     if (!o) return;
     updateObjective(objectiveId, {
       keyResults: o.keyResults.map((kr) => (kr.id === krId ? { ...kr, confidence } : kr)),
     });
+
+    if (confidence === "at-risk" || confidence === "needs-rethink") {
+      const kr = o.keyResults.find((k) => k.id === krId);
+      if (!kr) return;
+      callAI<string>("analyzeConfidenceDrop", {
+        krTitle: kr.title,
+        objectiveTitle: o.title,
+        confidence,
+      }).then((suggestion) => {
+        setConfidenceSuggestions((prev) => ({ ...prev, [krId]: suggestion }));
+      }).catch(() => {});
+    } else {
+      setConfidenceSuggestions((prev) => { const n = { ...prev }; delete n[krId]; return n; });
+    }
   }
 
   // ── Progress (direct input) ───────────────────────────────────────────────────
@@ -863,6 +879,11 @@ export default function OKRPage() {
                               ))}
                             </div>
                           </div>
+                          {confidenceSuggestions[kr.id] && (
+                            <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                              <Markdown>{confidenceSuggestions[kr.id]}</Markdown>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
