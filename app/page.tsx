@@ -571,53 +571,41 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Idea 排行清單 ───────────────────────────────────────────────────── */}
+      {/* ── Ideas 排行 ─────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">Idea 清單</h2>
-          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700">+ 新增 Idea</Link>
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Ideas</h2>
+            <p className="text-xs text-gray-400">依 OKR 貢獻分數排序</p>
+          </div>
+          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
         </div>
 
-        {ideas.length === 0 ? (
+        {nonTasks.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-gray-400">
-            還沒有 Idea，點擊「新增 Idea」開始
+            還沒有 Idea，點擊「新增」開始
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {sortedIdeas.map((idea) => {
+            {[...nonTasks]
+              .sort((a, b) => (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1))
+              .map((idea) => {
               const isExpanded = expandedIdeaId === idea.id;
               const wScore = calcWeightedScore(idea, objectives);
-              const isDone = idea.taskStatus === "done";
-              const isTask = idea.taskStatus != null;
-              const isMeasurePending = pendingMeasure === idea.id;
               const links = idea.linkedKRs ?? [];
               const isPicking = showObjPickerId === idea.id;
-              const measureKRs = links.flatMap((link) => {
-                if (!link.krId) return [];
-                const obj = objectives.find((o) => o.id === link.objectiveId);
-                const kr = obj?.keyResults.find((k) => k.id === link.krId);
-                if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
-                return [{ obj: obj!, kr }];
-              });
 
               return (
-                <div key={idea.id} className={isDone ? "opacity-60" : ""}>
+                <div key={idea.id}>
                   {/* Row header */}
-                  <div className="px-4 py-3 flex items-start gap-3">
+                  <div className="px-4 py-3 flex items-center gap-2">
                     <button
                       onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
-                      className="flex-1 text-left flex items-start gap-3 min-w-0"
+                      className="flex-1 text-left flex items-center gap-2 min-w-0"
                     >
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm text-gray-800 ${isDone ? "line-through" : ""}`}>{idea.title}</p>
-                        {isTask && (
-                          <span className={`inline-block mt-0.5 text-xs px-1.5 py-0.5 rounded ${TASK_STATUS_STYLE[idea.taskStatus!]}`}>
-                            {TASK_STATUS_LABEL[idea.taskStatus!]}
-                          </span>
-                        )}
-                      </div>
+                      <p className="text-sm text-gray-800 flex-1 min-w-0 truncate">{idea.title}</p>
                       {wScore !== null ? (
-                        <span className={`text-lg font-bold shrink-0 ${
+                        <span className={`text-sm font-bold shrink-0 ${
                           wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
                         }`}>{wScore.toFixed(1)}</span>
                       ) : (
@@ -627,20 +615,32 @@ export default function DashboardPage() {
                     </button>
                     {idea.needsReanalysis && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleReanalyze(idea); }}
+                        onClick={() => handleReanalyze(idea)}
                         disabled={reanalyzingIds.has(idea.id)}
                         className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
                       >
                         {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
                       </button>
                     )}
+                    <button
+                      onClick={() => handlePromoteToTask(idea.id)}
+                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                    >
+                      → Task
+                    </button>
+                    <button
+                      onClick={() => handleDelete(idea.id)}
+                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
+                    >
+                      ×
+                    </button>
                   </div>
 
                   {/* Expanded content */}
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
 
-                      {/* 1. Analysis reasoning */}
+                      {/* Analysis reasoning */}
                       {idea.analysis && (
                         <div className="space-y-2 pt-3">
                           {idea.analysis.objectiveScores.map((os) => (
@@ -675,17 +675,14 @@ export default function DashboardPage() {
                         </div>
                       )}
 
-                      {/* 2. KR links (editable) + picker */}
+                      {/* KR links */}
                       <div className="space-y-1.5">
                         <LinkedObjsEditable
                           links={links}
                           objectives={objectives}
                           onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
                         />
-                        <button
-                          onClick={() => setShowObjPickerId(isPicking ? null : idea.id)}
-                          className="text-xs text-indigo-500 hover:text-indigo-700"
-                        >
+                        <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
                           {isPicking ? "完成指定" : "＋ 指定 KR"}
                         </button>
                         {isPicking && (
@@ -697,12 +694,10 @@ export default function DashboardPage() {
                                   const alreadyLinked = links.some((l) => l.krId === kr.id);
                                   const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
                                   return (
-                                    <button
-                                      key={kr.id}
+                                    <button key={kr.id}
                                       onClick={() => alreadyLinked
                                         ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
-                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])
-                                      }
+                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
                                       className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
                                     >
                                       <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
@@ -718,10 +713,90 @@ export default function DashboardPage() {
                           </div>
                         )}
                       </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-                      {/* 3. KR progress bars */}
-                      {isTask && links.length > 0 && (
-                        <div className="space-y-2">
+      {/* ── Tasks ──────────────────────────────────────────────────────────── */}
+      {tasks.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Tasks</h2>
+              <p className="text-xs text-gray-400">
+                {taskStatusCounts["in-progress"] > 0 && `${taskStatusCounts["in-progress"]} 進行中  `}
+                {taskStatusCounts["todo"] > 0 && `${taskStatusCounts["todo"]} 待辦  `}
+                {taskStatusCounts["done"] > 0 && `${taskStatusCounts["done"]} 完成`}
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {[...tasks]
+              .sort((a, b) => {
+                const aDone = a.taskStatus === "done" ? 1 : 0;
+                const bDone = b.taskStatus === "done" ? 1 : 0;
+                if (aDone !== bDone) return aDone - bDone;
+                return (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1);
+              })
+              .map((idea) => {
+              const isExpanded = expandedIdeaId === idea.id;
+              const isDone = idea.taskStatus === "done";
+              const isMeasurePending = pendingMeasure === idea.id;
+              const links = idea.linkedKRs ?? [];
+              const isPicking = showObjPickerId === idea.id;
+              const measureKRs = links.flatMap((link) => {
+                if (!link.krId) return [];
+                const obj = objectives.find((o) => o.id === link.objectiveId);
+                const kr = obj?.keyResults.find((k) => k.id === link.krId);
+                if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
+                return [{ obj: obj!, kr }];
+              });
+
+              return (
+                <div key={idea.id} className={isDone ? "opacity-60" : ""}>
+                  {/* Row header */}
+                  <div className="px-4 py-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm text-gray-800 truncate ${isDone ? "line-through" : ""}`}>{idea.title}</p>
+                      </div>
+                      <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus!]}`}>
+                        {TASK_STATUS_LABEL[idea.taskStatus!]}
+                      </span>
+                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    {idea.needsReanalysis && (
+                      <button
+                        onClick={() => handleReanalyze(idea)}
+                        disabled={reanalyzingIds.has(idea.id)}
+                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                      >
+                        {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDelete(idea.id)}
+                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  {/* Expanded content */}
+                  {isExpanded && (
+                    <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
+
+                      {/* KR progress bars */}
+                      {links.length > 0 && (
+                        <div className="space-y-2 pt-3">
                           {links.map((link) => {
                             const obj = objectives.find((o) => o.id === link.objectiveId);
                             const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
@@ -749,46 +824,68 @@ export default function DashboardPage() {
                         </div>
                       )}
 
-                      {/* 4. Task status buttons OR promote-to-task + delete */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {isTask ? (
-                          <>
-                            {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                              <button
-                                key={s}
-                                onClick={() => handleSetTaskStatus(idea.id, s)}
-                                className={`text-xs px-2.5 py-1 rounded transition-colors ${
-                                  idea.taskStatus === s
-                                    ? TASK_STATUS_STYLE[s] + " font-medium"
-                                    : "text-gray-400 border border-gray-200 hover:border-gray-300"
-                                }`}
-                              >
-                                {TASK_STATUS_LABEL[s]}
-                              </button>
-                            ))}
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => handlePromoteToTask(idea.id)}
-                            className="text-xs px-3 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
-                          >
-                            轉為 Task
-                          </button>
-                        )}
-                        <button onClick={() => handleDelete(idea.id)} className="text-xs text-gray-300 hover:text-red-400 ml-auto">
-                          ×
+                      {/* KR links editable + picker */}
+                      <div className="space-y-1.5">
+                        <LinkedObjsEditable
+                          links={links}
+                          objectives={objectives}
+                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
+                        />
+                        <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
+                          {isPicking ? "完成指定" : "＋ 指定 KR"}
                         </button>
+                        {isPicking && (
+                          <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            {objectives.map((obj) => (
+                              <div key={obj.id}>
+                                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
+                                {obj.keyResults.map((kr) => {
+                                  const alreadyLinked = links.some((l) => l.krId === kr.id);
+                                  const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
+                                  return (
+                                    <button key={kr.id}
+                                      onClick={() => alreadyLinked
+                                        ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
+                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
+                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
+                                    >
+                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
+                                        {alreadyLinked && "✓"}
+                                      </span>
+                                      <span className="flex-1 truncate">{kr.title}</span>
+                                      <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
-                      {/* 5. Measurement input panel */}
+                      {/* Task status buttons */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                          <button key={s} onClick={() => handleSetTaskStatus(idea.id, s)}
+                            className={`text-xs px-2.5 py-1 rounded transition-colors ${
+                              idea.taskStatus === s
+                                ? TASK_STATUS_STYLE[s] + " font-medium"
+                                : "text-gray-400 border border-gray-200 hover:border-gray-300"
+                            }`}
+                          >
+                            {TASK_STATUS_LABEL[s]}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Measurement input panel */}
                       {isMeasurePending && measureKRs.length > 0 && (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
                           <p className="text-xs font-medium text-amber-700">完成前，請填入目前的數值：</p>
                           {measureKRs.map(({ kr }) => (
                             <div key={kr.id} className="flex items-center gap-2">
                               <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
-                              <input
-                                type="number"
+                              <input type="number"
                                 value={measureInputs[idea.id]?.[kr.id] ?? ""}
                                 onChange={(e) => setMeasureInputs((prev) => ({
                                   ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value },
@@ -810,8 +907,8 @@ export default function DashboardPage() {
               );
             })}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
