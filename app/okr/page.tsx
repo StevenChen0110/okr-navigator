@@ -404,6 +404,23 @@ export default function OKRPage() {
                         >
                           {STATUS_CONFIG[currentStatus].label}
                         </button>
+                        {/* Priority picker */}
+                        <div className="flex items-center gap-0.5">
+                          {([1, 2, 3] as const).map((p) => (
+                            <button
+                              key={p}
+                              onClick={() => updateObjective(o.id, { meta: { ...o.meta, priority: p } })}
+                              className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                                (o.meta?.priority ?? 2) === p
+                                  ? "bg-indigo-600 text-white border-indigo-600"
+                                  : "border-gray-200 text-gray-400 hover:border-indigo-300"
+                              }`}
+                              title={`優先級 P${p}`}
+                            >
+                              P{p}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -459,6 +476,26 @@ export default function OKRPage() {
                               {STATUS_CONFIG[s].label}
                             </button>
                           ))}
+                        </div>
+                        {/* Priority in edit mode */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">優先級</span>
+                          <div className="flex gap-1">
+                            {([1, 2, 3] as const).map((p) => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => updateDraft({ meta: { ...draft!.meta, priority: p } })}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                  (draft!.meta?.priority ?? 2) === p
+                                    ? "bg-indigo-600 text-white border-indigo-600"
+                                    : "border-gray-200 text-gray-500 hover:border-indigo-300"
+                                }`}
+                              >
+                                P{p}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}

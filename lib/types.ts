@@ -38,6 +38,7 @@ export interface OKRMeta {
   timeframe?: string;
   motivation?: string;
   snapshot?: string;
+  priority?: 1 | 2 | 3;
 }
 
 export interface Objective {

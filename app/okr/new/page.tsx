@@ -37,6 +37,7 @@ export default function NewOKRPage() {
   const [title, setTitle] = useState("");
   const [okrType, setOkrType] = useState<"committed" | "aspirational">("committed");
   const [timeframe, setTimeframe] = useState("本季");
+  const [priority, setPriority] = useState<1 | 2 | 3>(2);
   const [krs, setKrs] = useState<KRDraft[]>([newKRDraft()]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -101,7 +102,7 @@ export default function NewOKRPage() {
         ...(k.krType === "cumulative" && k.incrementPerTask ? { incrementPerTask: parseFloat(k.incrementPerTask) || 1 } : {}),
       }));
 
-      const meta: OKRMeta = { okrType, timeframe };
+      const meta: OKRMeta = { okrType, timeframe, priority };
 
       const objective: Objective = {
         id: uuid(),
@@ -185,6 +186,27 @@ export default function NewOKRPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-gray-500">優先級</label>
+          <div className="flex gap-2">
+            {([1, 2, 3] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPriority(p)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  priority === p
+                    ? "bg-indigo-600 text-white border-indigo-600"
+                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
+                }`}
+              >
+                P{p}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400">影響 Dashboard Idea 排序的加權係數（P1 最高）</p>
         </div>
       </div>
 
