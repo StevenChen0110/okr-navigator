@@ -571,157 +571,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Ideas 排行 ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700">Ideas</h2>
-            <p className="text-xs text-gray-400">依 OKR 貢獻分數排序</p>
-          </div>
-          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
-        </div>
-
-        {nonTasks.length === 0 ? (
-          <div className="px-4 py-8 text-center text-xs text-gray-400">
-            還沒有 Idea，點擊「新增」開始
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {[...nonTasks]
-              .sort((a, b) => (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1))
-              .map((idea) => {
-              const isExpanded = expandedIdeaId === idea.id;
-              const wScore = calcWeightedScore(idea, objectives);
-              const links = idea.linkedKRs ?? [];
-              const isPicking = showObjPickerId === idea.id;
-
-              return (
-                <div key={idea.id}>
-                  {/* Row header */}
-                  <div className="px-4 py-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
-                      className="flex-1 text-left flex items-center gap-2 min-w-0"
-                    >
-                      <p className="text-sm text-gray-800 flex-1 min-w-0 truncate">{idea.title}</p>
-                      {wScore !== null ? (
-                        <span className={`text-sm font-bold shrink-0 ${
-                          wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
-                        }`}>{wScore.toFixed(1)}</span>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0 whitespace-nowrap">待評估</span>
-                      )}
-                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
-                    </button>
-                    {idea.needsReanalysis && (
-                      <button
-                        onClick={() => handleReanalyze(idea)}
-                        disabled={reanalyzingIds.has(idea.id)}
-                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
-                      >
-                        {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handlePromoteToTask(idea.id)}
-                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
-                    >
-                      → Task
-                    </button>
-                    <button
-                      onClick={() => handleDelete(idea.id)}
-                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
-                    >
-                      ×
-                    </button>
-                  </div>
-
-                  {/* Expanded content */}
-                  {isExpanded && (
-                    <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
-
-                      {/* Analysis reasoning */}
-                      {idea.analysis && (
-                        <div className="space-y-2 pt-3">
-                          {idea.analysis.objectiveScores.map((os) => (
-                            <div key={os.objectiveId}>
-                              <div className="flex justify-between items-center mb-1">
-                                <span className="text-xs font-medium text-gray-600">{os.objectiveTitle}</span>
-                                <span className={`text-xs font-bold ${
-                                  os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"
-                                }`}>{os.overallScore.toFixed(1)}</span>
-                              </div>
-                              <p className="text-xs text-gray-500 mb-1">{os.reasoning}</p>
-                              <div className="space-y-0.5 pl-2">
-                                {os.keyResultScores.map((krs) => (
-                                  <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                          {idea.analysis.risks.length > 0 && (
-                            <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
-                              <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
-                            </div>
-                          )}
-                          {idea.analysis.executionSuggestions.length > 0 && (
-                            <div className="text-xs text-gray-600 bg-white rounded-lg px-3 py-2 border border-gray-100">
-                              <span className="font-medium text-gray-700">執行建議：</span>
-                              <ul className="mt-1 space-y-0.5 list-disc list-inside">
-                                {idea.analysis.executionSuggestions.map((s, i) => <li key={i}>{s}</li>)}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* KR links */}
-                      <div className="space-y-1.5">
-                        <LinkedObjsEditable
-                          links={links}
-                          objectives={objectives}
-                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
-                        />
-                        <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
-                          {isPicking ? "完成指定" : "＋ 指定 KR"}
-                        </button>
-                        {isPicking && (
-                          <div className="border border-gray-200 rounded-lg overflow-hidden">
-                            {objectives.map((obj) => (
-                              <div key={obj.id}>
-                                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
-                                {obj.keyResults.map((kr) => {
-                                  const alreadyLinked = links.some((l) => l.krId === kr.id);
-                                  const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
-                                  return (
-                                    <button key={kr.id}
-                                      onClick={() => alreadyLinked
-                                        ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
-                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
-                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
-                                    >
-                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
-                                        {alreadyLinked && "✓"}
-                                      </span>
-                                      <span className="flex-1 truncate">{kr.title}</span>
-                                      <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       {/* ── Tasks ──────────────────────────────────────────────────────────── */}
       {tasks.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -909,6 +758,157 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* ── Ideas 排行 ─────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Ideas</h2>
+            <p className="text-xs text-gray-400">依 OKR 貢獻分數排序</p>
+          </div>
+          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
+        </div>
+
+        {nonTasks.length === 0 ? (
+          <div className="px-4 py-8 text-center text-xs text-gray-400">
+            還沒有 Idea，點擊「新增」開始
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {[...nonTasks]
+              .sort((a, b) => (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1))
+              .map((idea) => {
+              const isExpanded = expandedIdeaId === idea.id;
+              const wScore = calcWeightedScore(idea, objectives);
+              const links = idea.linkedKRs ?? [];
+              const isPicking = showObjPickerId === idea.id;
+
+              return (
+                <div key={idea.id}>
+                  {/* Row header */}
+                  <div className="px-4 py-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0"
+                    >
+                      <p className="text-sm text-gray-800 flex-1 min-w-0 truncate">{idea.title}</p>
+                      {wScore !== null ? (
+                        <span className={`text-sm font-bold shrink-0 ${
+                          wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
+                        }`}>{wScore.toFixed(1)}</span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0 whitespace-nowrap">待評估</span>
+                      )}
+                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    {idea.needsReanalysis && (
+                      <button
+                        onClick={() => handleReanalyze(idea)}
+                        disabled={reanalyzingIds.has(idea.id)}
+                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                      >
+                        {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handlePromoteToTask(idea.id)}
+                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                    >
+                      → Task
+                    </button>
+                    <button
+                      onClick={() => handleDelete(idea.id)}
+                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  {/* Expanded content */}
+                  {isExpanded && (
+                    <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
+
+                      {/* Analysis reasoning */}
+                      {idea.analysis && (
+                        <div className="space-y-2 pt-3">
+                          {idea.analysis.objectiveScores.map((os) => (
+                            <div key={os.objectiveId}>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs font-medium text-gray-600">{os.objectiveTitle}</span>
+                                <span className={`text-xs font-bold ${
+                                  os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"
+                                }`}>{os.overallScore.toFixed(1)}</span>
+                              </div>
+                              <p className="text-xs text-gray-500 mb-1">{os.reasoning}</p>
+                              <div className="space-y-0.5 pl-2">
+                                {os.keyResultScores.map((krs) => (
+                                  <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                          {idea.analysis.risks.length > 0 && (
+                            <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
+                              <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
+                            </div>
+                          )}
+                          {idea.analysis.executionSuggestions.length > 0 && (
+                            <div className="text-xs text-gray-600 bg-white rounded-lg px-3 py-2 border border-gray-100">
+                              <span className="font-medium text-gray-700">執行建議：</span>
+                              <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                                {idea.analysis.executionSuggestions.map((s, i) => <li key={i}>{s}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* KR links */}
+                      <div className="space-y-1.5">
+                        <LinkedObjsEditable
+                          links={links}
+                          objectives={objectives}
+                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
+                        />
+                        <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
+                          {isPicking ? "完成指定" : "＋ 指定 KR"}
+                        </button>
+                        {isPicking && (
+                          <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            {objectives.map((obj) => (
+                              <div key={obj.id}>
+                                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
+                                {obj.keyResults.map((kr) => {
+                                  const alreadyLinked = links.some((l) => l.krId === kr.id);
+                                  const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
+                                  return (
+                                    <button key={kr.id}
+                                      onClick={() => alreadyLinked
+                                        ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
+                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
+                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
+                                    >
+                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
+                                        {alreadyLinked && "✓"}
+                                      </span>
+                                      <span className="flex-1 truncate">{kr.title}</span>
+                                      <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
