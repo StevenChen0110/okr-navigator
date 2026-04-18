@@ -286,6 +286,8 @@ export default function OKRPage() {
     setScoringId(objectiveId);
   }
 
+  const [quarterVerdict, setQuarterVerdict] = useState<Record<string, { verdict: "complete" | "continue" | "reset"; reasoning: string }>>({});
+
   function saveQuarterScores(objectiveId: string) {
     const o = objectives.find((o) => o.id === objectiveId);
     if (!o) return;
@@ -296,6 +298,14 @@ export default function OKRPage() {
       })),
     });
     setScoringId(null);
+
+    callAI<{ verdict: "complete" | "continue" | "reset"; reasoning: string }>("getQuarterRecommendation", {
+      objectiveTitle: o.title,
+      okrType: o.meta?.okrType ?? "committed",
+      krScores: o.keyResults.map((kr) => ({ title: kr.title, score: krScores[kr.id] ?? kr.quarterScore ?? 0.5 })),
+    }).then((result) => {
+      setQuarterVerdict((prev) => ({ ...prev, [objectiveId]: result }));
+    }).catch(() => {});
   }
 
   // ── Filtered list ─────────────────────────────────────────────────────────────
@@ -968,6 +978,34 @@ export default function OKRPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Quarter verdict */}
+                {quarterVerdict[o.id] && (() => {
+                  const { verdict, reasoning } = quarterVerdict[o.id];
+                  const cfg = {
+                    complete: { label: "目標完成", color: "bg-green-50 border-green-200 text-green-700" },
+                    continue: { label: "繼續推進", color: "bg-indigo-50 border-indigo-200 text-indigo-700" },
+                    reset: { label: "建議重設", color: "bg-red-50 border-red-200 text-red-700" },
+                  }[verdict];
+                  return (
+                    <div className={`mt-3 border rounded-xl px-4 py-3 space-y-2 ${cfg.color}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold">{cfg.label}</span>
+                        <button onClick={() => setQuarterVerdict((prev) => { const n = { ...prev }; delete n[o.id]; return n; })}
+                          className="text-xs opacity-50 hover:opacity-100">×</button>
+                      </div>
+                      <p className="text-xs">{reasoning}</p>
+                      {verdict === "complete" && (
+                        <button
+                          onClick={() => updateObjective(o.id, { status: "completed" })}
+                          className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          標記為完成
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
