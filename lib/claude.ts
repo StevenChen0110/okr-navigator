@@ -341,6 +341,36 @@ Output ONLY the revised KR title as plain text. No quotes, no markdown.`,
   return (message.content[0] as { type: string; text: string }).text.trim();
 }
 
+// ── Idea Clarification Gate ──────────────────────────────────────────────────
+
+export async function clarifyIdea(
+  apiKey: string,
+  model: string,
+  language: "zh-TW" | "en",
+  ideaTitle: string,
+  objectives: Objective[]
+): Promise<{ shouldClarify: boolean; question: string }> {
+  const client = getClient(apiKey);
+  const objList = objectives.map((o) => `- ${o.title}`).join("\n");
+  const message = await client.messages.create({
+    model,
+    max_tokens: 200,
+    system: `You are an OKR coach. A user just typed an idea title. Decide whether you need one clarifying question to score it accurately against their OKRs.
+Only ask if the title is genuinely ambiguous — e.g. "學習新技術" could mean many things. Self-explanatory titles should NOT trigger a question.
+${langInstruction(language)}
+Output ONLY valid JSON: {"shouldClarify":true|false,"question":"one focused question, or empty string if false"}
+No markdown fences.`,
+    messages: [
+      {
+        role: "user",
+        content: `Idea: ${ideaTitle}\n\nUser's OKRs:\n${objList}`,
+      },
+    ],
+  });
+  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
+  return JSON.parse(extractJSON(raw));
+}
+
 // ── Idea Analysis ─────────────────────────────────────────────────────────────
 
 const IDEA_SYSTEM_PROMPT = `You are an OKR decision navigator. Given a user's Objectives and Key Results (OKRs) and a new Idea they are considering, you must analyze how much this Idea helps achieve each Objective.

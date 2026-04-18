@@ -9,7 +9,7 @@ import ScoreBar from "@/components/ScoreBar";
 import Markdown from "@/components/Markdown";
 import Link from "next/link";
 
-type Status = "idle" | "analyzing" | "confirm" | "saving" | "done" | "error";
+type Status = "idle" | "clarifying" | "analyzing" | "confirm" | "saving" | "done" | "error";
 
 interface SuggestedLink {
   objectiveId: string;
@@ -49,6 +49,8 @@ export default function NewIdeaPage() {
   const [suggestedLinks, setSuggestedLinks] = useState<SuggestedLink[]>([]);
   const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
   const [errorMsg, setErrorMsg] = useState("");
+  const [clarifyQuestion, setClarifyQuestion] = useState("");
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
 
   useEffect(() => {
     fetchObjectives().then(setObjectives).catch(console.error);
@@ -58,10 +60,7 @@ export default function NewIdeaPage() {
   const hasDetails = why.trim() || outcome.trim() || notes.trim();
   const isQuickMode = !hasDetails;
 
-  async function handleAnalyze() {
-    if (!title.trim()) return;
-    if (objectives.length === 0) { setErrorMsg("請先建立至少一個 OKR 目標"); setStatus("error"); return; }
-
+  async function runAnalysis(extraNotes?: string) {
     setStatus("analyzing");
     setErrorMsg("");
 
@@ -70,9 +69,10 @@ export default function NewIdeaPage() {
         ? backgrounds.map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`).join("\n")
         : undefined;
       const progressContext = buildProgressContext(objectives);
+      const combinedNotes = [notes, extraNotes].filter(Boolean).join("\n");
 
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
-        ideaTitle: title, ideaWhy: why, ideaOutcome: outcome, ideaNotes: notes,
+        ideaTitle: title, ideaWhy: why, ideaOutcome: outcome, ideaNotes: combinedNotes,
         objectives, backgroundContext: bgContext, progressContext,
       });
       setAnalysis(result);
@@ -99,6 +99,32 @@ export default function NewIdeaPage() {
       setErrorMsg(e instanceof Error ? e.message : "分析失敗，請確認 API Key 是否正確");
       setStatus("error");
     }
+  }
+
+  async function handleAnalyze() {
+    if (!title.trim()) return;
+    if (objectives.length === 0) { setErrorMsg("請先建立至少一個 OKR 目標"); setStatus("error"); return; }
+
+    setErrorMsg("");
+
+    // In quick mode, run clarification gate first
+    if (isQuickMode) {
+      setStatus("clarifying");
+      try {
+        const { shouldClarify, question } = await callAI<{ shouldClarify: boolean; question: string }>(
+          "clarifyIdea", { ideaTitle: title, objectives }
+        );
+        if (shouldClarify && question) {
+          setClarifyQuestion(question);
+          setClarifyAnswer("");
+          return; // wait for user to answer
+        }
+      } catch {
+        // Clarification failed — proceed directly
+      }
+    }
+
+    await runAnalysis();
   }
 
   async function handleConfirm() {
@@ -147,7 +173,57 @@ export default function NewIdeaPage() {
     setAnalysis(null);
     setSuggestedLinks([]);
     setSelectedLinkIds(new Set());
+    setClarifyQuestion(""); setClarifyAnswer("");
     setTitle(""); setWhy(""); setOutcome(""); setNotes(""); setDetailsOpen(false);
+  }
+
+  // ── Clarification gate ───────────────────────────────────────────────────────
+
+  if (status === "clarifying" && clarifyQuestion) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10">
+        <h1 className="text-xl font-semibold mb-1">快速評估</h1>
+        <p className="text-sm text-gray-500 mb-6">{title}</p>
+        <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-gray-700">{clarifyQuestion}</p>
+            <textarea
+              value={clarifyAnswer}
+              onChange={(e) => setClarifyAnswer(e.target.value)}
+              placeholder="簡單說明即可…"
+              rows={3}
+              autoFocus
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            />
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => runAnalysis()}
+              className="text-xs px-3 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors"
+            >
+              跳過
+            </button>
+            <button
+              onClick={() => runAnalysis(clarifyAnswer.trim() || undefined)}
+              disabled={!clarifyAnswer.trim()}
+              className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+            >
+              繼續分析
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting for clarifyIdea response (question not yet received)
+  if (status === "clarifying" && !clarifyQuestion) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-10 text-center">
+        <div className="text-4xl mb-4 animate-pulse">◎</div>
+        <p className="text-sm text-gray-500">思考中…</p>
+      </div>
+    );
   }
 
   // ── Done ─────────────────────────────────────────────────────────────────────

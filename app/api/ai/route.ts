@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   analyzeIdea,
+  clarifyIdea,
   classifyKR,
   refineObjective,
   suggestKeyResults,
@@ -112,6 +113,14 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.currentTitle as string,
           payload.userInstruction as string,
+        );
+        return NextResponse.json(result);
+      }
+      case "clarifyIdea": {
+        const result = await clarifyIdea(
+          apiKey, model, language,
+          payload.ideaTitle as string,
+          payload.objectives as Parameters<typeof clarifyIdea>[4],
         );
         return NextResponse.json(result);
       }
