@@ -6,9 +6,7 @@ import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink } from "@/l
 import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
 import ScoreBar from "@/components/ScoreBar";
 
-type TaskTab = "priority" | "assign" | "progress";
-
-// Pending measurement inputs: taskId → { krId → value string }
+// Pending measurement inputs: ideaId → { krId → value string }
 type MeasurementInputs = Record<string, Record<string, string>>;
 
 function calcKRCompletion(kr: KeyResult): number | undefined {
@@ -141,7 +139,6 @@ export default function DashboardPage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [expandedObjId, setExpandedObjId] = useState<string | null>(null);
-  const [taskTab, setTaskTab] = useState<TaskTab>("priority");
   const [expandedIdeaId, setExpandedIdeaId] = useState<string | null>(null);
   const [showObjPickerId, setShowObjPickerId] = useState<string | null>(null);
   // measurement: taskId that is awaiting measurement input before marking done
@@ -362,7 +359,7 @@ export default function DashboardPage() {
 
   const tasks = ideas.filter((i) => i.taskStatus != null);
   const nonTasks = ideas.filter((i) => i.taskStatus == null);
-  const tasksSortedByScore = [...tasks].sort((a, b) => {
+  const sortedIdeas = [...ideas].sort((a, b) => {
     const aDone = a.taskStatus === "done" ? 1 : 0;
     const bDone = b.taskStatus === "done" ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
@@ -531,99 +528,70 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Task 管理 ────────────────────────────────────────────────────────── */}
+      {/* ── Idea 排行清單 ───────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">Task 管理</h2>
+          <h2 className="text-sm font-semibold text-gray-700">Idea 清單</h2>
           <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700">+ 新增 Idea</Link>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex border-b border-gray-100">
-          {([["priority", "優先級"], ["assign", "分配目標"], ["progress", "追蹤進度"]] as [TaskTab, string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTaskTab(key)}
-              className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                taskTab === key
-                  ? "text-indigo-600 border-b-2 border-indigo-500 -mb-px"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Promote Ideas */}
-        {nonTasks.length > 0 && (
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-            <p className="text-xs text-gray-500 mb-2">Ideas 待轉為 Task</p>
-            <div className="space-y-1.5">
-              {nonTasks.slice(0, 3).map((idea) => (
-                <div key={idea.id} className="flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-700 truncate">{idea.title}</p>
-                    {idea.analysis && (
-                      <span className={`text-xs font-bold ${
-                        idea.analysis.finalScore >= 7 ? "text-indigo-600"
-                        : idea.analysis.finalScore >= 4 ? "text-amber-500"
-                        : "text-red-500"
-                      }`}>{idea.analysis.finalScore.toFixed(1)}</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handlePromoteToTask(idea.id)}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0"
-                  >
-                    轉為 Task
-                  </button>
-                </div>
-              ))}
-              {nonTasks.length > 3 && (
-                <p className="text-xs text-gray-400">還有 {nonTasks.length - 3} 個 Ideas…</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {tasks.length === 0 ? (
+        {ideas.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-gray-400">
-            還沒有 Task，從上方 Ideas 轉入
+            還沒有 Idea，點擊「新增 Idea」開始
           </div>
         ) : (
-          <div>
-            {/* ── 優先級 tab ── */}
-            {taskTab === "priority" && (
-              <div className="divide-y divide-gray-50">
-                {tasksSortedByScore.map((task, idx) => {
-                  const isExpanded = expandedIdeaId === task.id;
-                  const wScore = calcWeightedScore(task, objectives);
-                  const isDone = task.taskStatus === "done";
-                  return (
-                    <div key={task.id}>
-                      <button
-                        onClick={() => setExpandedIdeaId(isExpanded ? null : task.id)}
-                        className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors ${isDone ? "opacity-50" : ""}`}
-                      >
-                        <span className="text-xs font-bold text-gray-300 w-4 shrink-0 pt-0.5">#{idx + 1}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm text-gray-800 ${isDone ? "line-through" : ""}`}>{task.title}</p>
-                          <LinkedObjsReadOnly links={task.linkedKRs ?? []} objectives={objectives} />
-                          <span className={`inline-block mt-1 text-xs px-1.5 py-0.5 rounded ${TASK_STATUS_STYLE[task.taskStatus!]}`}>
-                            {TASK_STATUS_LABEL[task.taskStatus!]}
+          <div className="divide-y divide-gray-50">
+            {sortedIdeas.map((idea) => {
+              const isExpanded = expandedIdeaId === idea.id;
+              const wScore = calcWeightedScore(idea, objectives);
+              const isDone = idea.taskStatus === "done";
+              const isTask = idea.taskStatus != null;
+              const isMeasurePending = pendingMeasure === idea.id;
+              const links = idea.linkedKRs ?? [];
+              const isPicking = showObjPickerId === idea.id;
+              const measureKRs = links.flatMap((link) => {
+                if (!link.krId) return [];
+                const obj = objectives.find((o) => o.id === link.objectiveId);
+                const kr = obj?.keyResults.find((k) => k.id === link.krId);
+                if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
+                return [{ obj: obj!, kr }];
+              });
+
+              return (
+                <div key={idea.id} className={isDone ? "opacity-60" : ""}>
+                  {/* Row header */}
+                  <div className="px-4 py-3 flex items-start gap-3">
+                    <button
+                      onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
+                      className="flex-1 text-left flex items-start gap-3 min-w-0"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm text-gray-800 ${isDone ? "line-through" : ""}`}>{idea.title}</p>
+                        {isTask && (
+                          <span className={`inline-block mt-0.5 text-xs px-1.5 py-0.5 rounded ${TASK_STATUS_STYLE[idea.taskStatus!]}`}>
+                            {TASK_STATUS_LABEL[idea.taskStatus!]}
                           </span>
-                        </div>
-                        {wScore !== null && (
-                          <span className={`text-lg font-bold shrink-0 ${
-                            wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
-                          }`}>{wScore.toFixed(1)}</span>
                         )}
-                        <span className="text-gray-300 text-xs">{isExpanded ? "▲" : "▼"}</span>
-                      </button>
-                      {isExpanded && task.analysis && (
-                        <div className="px-4 pb-3 space-y-2 bg-gray-50">
-                          {task.analysis.objectiveScores.map((os) => (
+                      </div>
+                      {wScore !== null ? (
+                        <span className={`text-lg font-bold shrink-0 ${
+                          wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
+                        }`}>{wScore.toFixed(1)}</span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0 whitespace-nowrap">待評估</span>
+                      )}
+                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                  </div>
+
+                  {/* Expanded content */}
+                  {isExpanded && (
+                    <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
+
+                      {/* 1. Analysis reasoning */}
+                      {idea.analysis && (
+                        <div className="space-y-2 pt-3">
+                          {idea.analysis.objectiveScores.map((os) => (
                             <div key={os.objectiveId}>
                               <div className="flex justify-between items-center mb-1">
                                 <span className="text-xs font-medium text-gray-600">{os.objectiveTitle}</span>
@@ -631,6 +599,7 @@ export default function DashboardPage() {
                                   os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"
                                 }`}>{os.overallScore.toFixed(1)}</span>
                               </div>
+                              <p className="text-xs text-gray-500 mb-1">{os.reasoning}</p>
                               <div className="space-y-0.5 pl-2">
                                 {os.keyResultScores.map((krs) => (
                                   <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
@@ -638,245 +607,156 @@ export default function DashboardPage() {
                               </div>
                             </div>
                           ))}
-                          {task.analysis.risks.length > 0 && (
+                          {idea.analysis.risks.length > 0 && (
                             <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
-                              <span className="font-medium">風險：</span>{task.analysis.risks.join("；")}
+                              <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
                             </div>
                           )}
-                          {task.analysis.executionSuggestions.length > 0 && (
+                          {idea.analysis.executionSuggestions.length > 0 && (
                             <div className="text-xs text-gray-600 bg-white rounded-lg px-3 py-2 border border-gray-100">
                               <span className="font-medium text-gray-700">執行建議：</span>
                               <ul className="mt-1 space-y-0.5 list-disc list-inside">
-                                {task.analysis.executionSuggestions.map((s, i) => (
-                                  <li key={i}>{s}</li>
-                                ))}
+                                {idea.analysis.executionSuggestions.map((s, i) => <li key={i}>{s}</li>)}
                               </ul>
                             </div>
                           )}
                         </div>
                       )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
 
-            {/* ── 分配目標 tab ── */}
-            {taskTab === "assign" && (
-              <div className="divide-y divide-gray-50">
-                {tasksSortedByScore.map((task) => {
-                  const links = task.linkedKRs ?? [];
-                  const isPicking = showObjPickerId === task.id;
-
-                  return (
-                    <div key={task.id} className="px-4 py-3 space-y-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-800 truncate">{task.title}</p>
-                          {task.analysis?.finalScore !== undefined && (
-                            <span className={`text-xs font-bold ${
-                              task.analysis.finalScore >= 7 ? "text-indigo-600"
-                              : task.analysis.finalScore >= 4 ? "text-amber-500"
-                              : "text-red-500"
-                            }`}>{task.analysis.finalScore.toFixed(1)}</span>
-                          )}
-                        </div>
+                      {/* 2. KR links (editable) + picker */}
+                      <div className="space-y-1.5">
+                        <LinkedObjsEditable
+                          links={links}
+                          objectives={objectives}
+                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
+                        />
                         <button
-                          onClick={() => setShowObjPickerId(isPicking ? null : task.id)}
-                          className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
+                          onClick={() => setShowObjPickerId(isPicking ? null : idea.id)}
+                          className="text-xs text-indigo-500 hover:text-indigo-700"
                         >
-                          {isPicking ? "完成" : "指定 KR"}
+                          {isPicking ? "完成指定" : "＋ 指定 KR"}
+                        </button>
+                        {isPicking && (
+                          <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            {objectives.map((obj) => (
+                              <div key={obj.id}>
+                                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
+                                {obj.keyResults.map((kr) => {
+                                  const alreadyLinked = links.some((l) => l.krId === kr.id);
+                                  const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
+                                  return (
+                                    <button
+                                      key={kr.id}
+                                      onClick={() => alreadyLinked
+                                        ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
+                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])
+                                      }
+                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
+                                    >
+                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
+                                        {alreadyLinked && "✓"}
+                                      </span>
+                                      <span className="flex-1 truncate">{kr.title}</span>
+                                      <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. KR progress bars */}
+                      {isTask && links.length > 0 && (
+                        <div className="space-y-2">
+                          {links.map((link) => {
+                            const obj = objectives.find((o) => o.id === link.objectiveId);
+                            const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
+                            if (!obj || !kr) return null;
+                            const completion = calcKRCompletion(kr);
+                            return (
+                              <div key={link.krId ?? link.objectiveId}>
+                                <p className="text-[11px] text-gray-400 leading-snug truncate">{obj.title}</p>
+                                <p className="text-xs text-gray-600 leading-snug truncate">{kr.title}</p>
+                                {completion !== undefined && (
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                      <div className={`h-full rounded-full transition-all ${getProgressColor(completion)}`} style={{ width: `${completion}%` }} />
+                                    </div>
+                                    <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
+                                      {kr.krType === "milestone"
+                                        ? (completion === 100 ? "完成" : "未完成")
+                                        : `${(kr.currentValue ?? 0).toFixed(1)} / ${kr.targetValue}${kr.unit ? ` ${kr.unit}` : ""}`}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* 4. Task status buttons OR promote-to-task + delete */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {isTask ? (
+                          <>
+                            {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                              <button
+                                key={s}
+                                onClick={() => handleSetTaskStatus(idea.id, s)}
+                                className={`text-xs px-2.5 py-1 rounded transition-colors ${
+                                  idea.taskStatus === s
+                                    ? TASK_STATUS_STYLE[s] + " font-medium"
+                                    : "text-gray-400 border border-gray-200 hover:border-gray-300"
+                                }`}
+                              >
+                                {TASK_STATUS_LABEL[s]}
+                              </button>
+                            ))}
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => handlePromoteToTask(idea.id)}
+                            className="text-xs px-3 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                          >
+                            轉為 Task
+                          </button>
+                        )}
+                        <button onClick={() => handleDelete(idea.id)} className="text-xs text-gray-300 hover:text-red-400 ml-auto">
+                          ×
                         </button>
                       </div>
 
-                      {/* Current links */}
-                      <LinkedObjsEditable
-                        links={links}
-                        objectives={objectives}
-                        onRemove={(idx) =>
-                          handleUpdateLinkedKRs(task.id, links.filter((_, i) => i !== idx))
-                        }
-                      />
-
-                      {/* KR picker: two-level */}
-                      {isPicking && (
-                        <div className="border border-gray-200 rounded-lg overflow-hidden">
-                          {objectives.map((obj) => (
-                            <div key={obj.id}>
-                              <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">
-                                {obj.title}
-                              </div>
-                              {obj.keyResults.map((kr) => {
-                                const alreadyLinked = links.some((l) => l.krId === kr.id);
-                                const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
-                                return (
-                                  <button
-                                    key={kr.id}
-                                    onClick={() => {
-                                      if (alreadyLinked) {
-                                        handleUpdateLinkedKRs(task.id, links.filter((l) => l.krId !== kr.id));
-                                      } else {
-                                        handleUpdateLinkedKRs(task.id, [...links, { objectiveId: obj.id, krId: kr.id }]);
-                                      }
-                                    }}
-                                    className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${
-                                      alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"
-                                    }`}
-                                  >
-                                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${
-                                      alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"
-                                    }`}>
-                                      {alreadyLinked && "✓"}
-                                    </span>
-                                    <span className="flex-1 truncate">{kr.title}</span>
-                                    <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
-                                  </button>
-                                );
-                              })}
+                      {/* 5. Measurement input panel */}
+                      {isMeasurePending && measureKRs.length > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
+                          <p className="text-xs font-medium text-amber-700">完成前，請填入目前的數值：</p>
+                          {measureKRs.map(({ kr }) => (
+                            <div key={kr.id} className="flex items-center gap-2">
+                              <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
+                              <input
+                                type="number"
+                                value={measureInputs[idea.id]?.[kr.id] ?? ""}
+                                onChange={(e) => setMeasureInputs((prev) => ({
+                                  ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value },
+                                }))}
+                                placeholder={`目前 ${kr.metricName ?? "數值"}（${kr.unit ?? ""}）`}
+                                className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              />
                             </div>
                           ))}
+                          <div className="flex gap-2 pt-1">
+                            <button onClick={() => confirmMeasurement(idea.id)} className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">確認完成</button>
+                            <button onClick={() => setPendingMeasure(null)} className="text-xs px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50">取消</button>
+                          </div>
                         </div>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* ── 追蹤進度 tab ── */}
-            {taskTab === "progress" && (
-              <div>
-                {(["todo", "in-progress", "done"] as TaskStatus[]).map((status) => {
-                  const group = tasks.filter((t) => t.taskStatus === status);
-                  if (group.length === 0) return null;
-                  return (
-                    <div key={status}>
-                      <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${TASK_STATUS_STYLE[status]}`}>
-                          {TASK_STATUS_LABEL[status]}
-                        </span>
-                        <span className="text-xs text-gray-400 ml-2">{group.length}</span>
-                      </div>
-                      <div className="divide-y divide-gray-50">
-                        {group.map((task) => {
-                          const isMeasurePending = pendingMeasure === task.id;
-                          const links = task.linkedKRs ?? [];
-                          const measureKRs = links.flatMap((link) => {
-                            if (!link.krId) return [];
-                            const obj = objectives.find((o) => o.id === link.objectiveId);
-                            const kr = obj?.keyResults.find((k) => k.id === link.krId);
-                            if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
-                            return [{ obj: obj!, kr }];
-                          });
-
-                          return (
-                            <div key={task.id} className="px-4 py-3 space-y-2">
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm text-gray-800">{task.title}</p>
-
-                                  {/* KR progress inline */}
-                                  {links.length > 0 ? (
-                                    <div className="mt-2 space-y-2">
-                                      {links.map((link) => {
-                                        const obj = objectives.find((o) => o.id === link.objectiveId);
-                                        const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
-                                        if (!obj || !kr) return null;
-                                        const completion = calcKRCompletion(kr);
-                                        return (
-                                          <div key={link.krId ?? link.objectiveId}>
-                                            <p className="text-[11px] text-gray-400 leading-snug truncate">{obj.title}</p>
-                                            <p className="text-xs text-gray-600 leading-snug truncate">{kr.title}</p>
-                                            {completion !== undefined && (
-                                              <div className="flex items-center gap-2 mt-1">
-                                                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                                  <div
-                                                    className={`h-full rounded-full transition-all ${getProgressColor(completion)}`}
-                                                    style={{ width: `${completion}%` }}
-                                                  />
-                                                </div>
-                                                <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
-                                                  {kr.krType === "milestone"
-                                                    ? (completion === 100 ? "完成" : "未完成")
-                                                    : `${(kr.currentValue ?? 0).toFixed(1)} / ${kr.targetValue}${kr.unit ? ` ${kr.unit}` : ""}`}
-                                                </span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : (
-                                    <p className="text-xs text-gray-400 mt-1">尚未連結 KR，進度不會自動更新</p>
-                                  )}
-                                </div>
-
-                                <div className="flex flex-col gap-1 shrink-0 items-end">
-                                  {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                                    <button
-                                      key={s}
-                                      onClick={() => handleSetTaskStatus(task.id, s)}
-                                      className={`text-xs px-2 py-1 rounded transition-colors ${
-                                        task.taskStatus === s
-                                          ? TASK_STATUS_STYLE[s] + " font-medium"
-                                          : "text-gray-400 hover:text-gray-600"
-                                      }`}
-                                    >
-                                      {TASK_STATUS_LABEL[s]}
-                                    </button>
-                                  ))}
-                                  <button onClick={() => handleDelete(task.id)} className="text-xs text-gray-300 hover:text-red-400 mt-1">
-                                    ×
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Measurement input panel */}
-                              {isMeasurePending && measureKRs.length > 0 && (
-                                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
-                                  <p className="text-xs font-medium text-amber-700">完成前，請填入目前的數值：</p>
-                                  {measureKRs.map(({ kr }) => (
-                                    <div key={kr.id} className="flex items-center gap-2">
-                                      <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
-                                      <input
-                                        type="number"
-                                        value={measureInputs[task.id]?.[kr.id] ?? ""}
-                                        onChange={(e) =>
-                                          setMeasureInputs((prev) => ({
-                                            ...prev,
-                                            [task.id]: { ...(prev[task.id] ?? {}), [kr.id]: e.target.value },
-                                          }))
-                                        }
-                                        placeholder={`目前 ${kr.metricName ?? "數值"}（${kr.unit ?? ""}）`}
-                                        className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                      />
-                                    </div>
-                                  ))}
-                                  <div className="flex gap-2 pt-1">
-                                    <button
-                                      onClick={() => confirmMeasurement(task.id)}
-                                      className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                                    >
-                                      確認完成
-                                    </button>
-                                    <button
-                                      onClick={() => setPendingMeasure(null)}
-                                      className="text-xs px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50"
-                                    >
-                                      取消
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
