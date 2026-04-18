@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { v4 as uuid } from "uuid";
-import { Objective, Idea, IdeaKRLink, IdeaAnalysis, Background } from "@/lib/types";
+import { Objective, KeyResult, Idea, IdeaKRLink, IdeaAnalysis, Background } from "@/lib/types";
 import { fetchObjectives, saveIdea, fetchBackgrounds } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
@@ -19,11 +19,29 @@ interface SuggestedLink {
   score: number;
 }
 
+function calcKRCompletion(kr: KeyResult): number | undefined {
+  if (!kr.targetValue) return undefined;
+  if (kr.krType === "milestone") return kr.currentValue ? 100 : 0;
+  return Math.min(100, ((kr.currentValue ?? 0) / kr.targetValue) * 100);
+}
+
+function buildProgressContext(objectives: Objective[]): string {
+  return objectives.map((o) => {
+    const krLines = o.keyResults.map((kr) => {
+      const pct = calcKRCompletion(kr);
+      const pctStr = pct !== undefined ? ` (${Math.round(pct)}% complete)` : "";
+      return `    - ${kr.title}${pctStr}`;
+    }).join("\n");
+    return `${o.title}:\n${krLines}`;
+  }).join("\n\n");
+}
+
 export default function NewIdeaPage() {
   const [title, setTitle] = useState("");
   const [why, setWhy] = useState("");
   const [outcome, setOutcome] = useState("");
   const [notes, setNotes] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [backgrounds, setBackgrounds] = useState<Background[]>([]);
   const [status, setStatus] = useState<Status>("idle");
@@ -37,6 +55,9 @@ export default function NewIdeaPage() {
     fetchBackgrounds().then(setBackgrounds).catch(() => {});
   }, []);
 
+  const hasDetails = why.trim() || outcome.trim() || notes.trim();
+  const isQuickMode = !hasDetails;
+
   async function handleAnalyze() {
     if (!title.trim()) return;
     if (objectives.length === 0) { setErrorMsg("請先建立至少一個 OKR 目標"); setStatus("error"); return; }
@@ -48,13 +69,14 @@ export default function NewIdeaPage() {
       const bgContext = backgrounds.length > 0
         ? backgrounds.map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`).join("\n")
         : undefined;
+      const progressContext = buildProgressContext(objectives);
+
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
         ideaTitle: title, ideaWhy: why, ideaOutcome: outcome, ideaNotes: notes,
-        objectives, backgroundContext: bgContext,
+        objectives, backgroundContext: bgContext, progressContext,
       });
       setAnalysis(result);
 
-      // Auto-suggest links from KRs with score >= 5
       const links: SuggestedLink[] = [];
       for (const os of result.objectiveScores) {
         for (const krs of os.keyResultScores) {
@@ -71,7 +93,6 @@ export default function NewIdeaPage() {
       }
       links.sort((a, b) => b.score - a.score);
       setSuggestedLinks(links);
-      // Pre-select links with score >= 7
       setSelectedLinkIds(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
       setStatus("confirm");
     } catch (e) {
@@ -101,6 +122,7 @@ export default function NewIdeaPage() {
       createdAt: new Date().toISOString(),
       completed: false,
       linkedKRs,
+      quickAnalysis: isQuickMode,
     };
 
     try {
@@ -125,7 +147,7 @@ export default function NewIdeaPage() {
     setAnalysis(null);
     setSuggestedLinks([]);
     setSelectedLinkIds(new Set());
-    setTitle(""); setWhy(""); setOutcome(""); setNotes("");
+    setTitle(""); setWhy(""); setOutcome(""); setNotes(""); setDetailsOpen(false);
   }
 
   // ── Done ─────────────────────────────────────────────────────────────────────
@@ -162,7 +184,6 @@ export default function NewIdeaPage() {
           </div>
         )}
 
-        {/* Header */}
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-xl font-semibold">{title}</h1>
@@ -174,7 +195,6 @@ export default function NewIdeaPage() {
           </div>
         </div>
 
-        {/* Objective scores */}
         <div className="space-y-4">
           {analysis.objectiveScores.map((os) => (
             <div key={os.objectiveId} className="bg-white rounded-xl border border-gray-200 p-5">
@@ -197,7 +217,6 @@ export default function NewIdeaPage() {
           ))}
         </div>
 
-        {/* Risks */}
         {analysis.risks.length > 0 && (
           <div className="bg-red-50 border border-red-100 rounded-xl p-4">
             <h3 className="text-sm font-medium text-red-700 mb-2">風險與副作用</h3>
@@ -209,7 +228,6 @@ export default function NewIdeaPage() {
           </div>
         )}
 
-        {/* Execution suggestions */}
         {analysis.executionSuggestions.length > 0 && (
           <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
             <h3 className="text-sm font-medium text-indigo-700 mb-2">執行建議</h3>
@@ -223,7 +241,6 @@ export default function NewIdeaPage() {
           </div>
         )}
 
-        {/* KR links confirmation */}
         {suggestedLinks.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-xl p-5">
             <h3 className="text-sm font-medium text-gray-700 mb-1">連結至 KR</h3>
@@ -301,43 +318,60 @@ export default function NewIdeaPage() {
           />
         </div>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">
-            為什麼要做？<span className="text-gray-400 font-normal ml-1">（選填）</span>
-          </label>
-          <textarea
-            value={why}
-            onChange={(e) => setWhy(e.target.value)}
-            placeholder="背景、問題、動機…"
-            rows={3}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-          />
-        </div>
+        {/* Collapsible details */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <span className={`transition-transform ${detailsOpen ? "rotate-90" : ""}`}>›</span>
+            補充說明（選填）
+            {hasDetails && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />}
+          </button>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">
-            預期成效<span className="text-gray-400 font-normal ml-1">（選填）</span>
-          </label>
-          <textarea
-            value={outcome}
-            onChange={(e) => setOutcome(e.target.value)}
-            placeholder="做了之後會有什麼改變…"
-            rows={3}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-          />
-        </div>
+          {detailsOpen && (
+            <div className="mt-4 space-y-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  為什麼要做？
+                </label>
+                <textarea
+                  value={why}
+                  onChange={(e) => setWhy(e.target.value)}
+                  placeholder="背景、問題、動機…"
+                  rows={3}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">
-            備註<span className="text-gray-400 font-normal ml-1">（選填）</span>
-          </label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="其他補充…"
-            rows={2}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-          />
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  預期成效
+                </label>
+                <textarea
+                  value={outcome}
+                  onChange={(e) => setOutcome(e.target.value)}
+                  placeholder="做了之後會有什麼改變…"
+                  rows={3}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  備註
+                </label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="其他補充…"
+                  rows={2}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {status === "error" && (
@@ -349,7 +383,7 @@ export default function NewIdeaPage() {
           disabled={status === "analyzing" || !title.trim()}
           className="w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {status === "analyzing" ? "AI 分析中…" : "分析 Idea"}
+          {status === "analyzing" ? "AI 分析中…" : isQuickMode ? "快速評估" : "完整分析"}
         </button>
 
         {status === "analyzing" && (

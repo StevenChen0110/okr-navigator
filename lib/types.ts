@@ -86,6 +86,8 @@ export interface Idea {
   completedAt?: string;
   linkedKRs?: IdeaKRLink[];
   taskStatus?: TaskStatus; // set when idea is promoted to a task
+  quickAnalysis?: boolean;
+  needsReanalysis?: boolean;
 }
 
 export interface AppSettings {

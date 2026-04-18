@@ -375,7 +375,7 @@ Scoring guide:
 - 7-8: Strong contribution
 - 9-10: This idea is central to achieving the objective
 
-The finalScore should reflect overall priority considering all objectives together. Weigh objectives equally unless context suggests otherwise. Output ONLY the JSON object, no markdown fences.`;
+When progress context is provided, reference the current completion % in your reasoning and adjust urgency accordingly — an idea that moves a lagging KR forward should score higher. The finalScore should reflect overall priority considering all objectives together. Weigh objectives equally unless context suggests otherwise. Output ONLY the JSON object, no markdown fences.`;
 
 export async function analyzeIdea(
   apiKey: string,
@@ -386,7 +386,8 @@ export async function analyzeIdea(
   ideaOutcome: string,
   ideaNotes: string,
   objectives: Objective[],
-  backgroundContext?: string
+  backgroundContext?: string,
+  progressContext?: string
 ): Promise<IdeaAnalysis> {
   const client = getClient(apiKey);
 
@@ -408,7 +409,11 @@ export async function analyzeIdea(
     ? `\n\nUSER'S BACKGROUND & SKILLS:\n${backgroundContext}\nFactor in feasibility based on these backgrounds when scoring risks and execution suggestions.`
     : "";
 
-  const userPrompt = `USER'S OKRs:\n${okrContext}${bgSection}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
+  const progressSection = progressContext
+    ? `\n\nCURRENT OKR PROGRESS:\n${progressContext}\nReflect actual progress in urgency and reasoning — ideas that advance lagging KRs should score higher.`
+    : "";
+
+  const userPrompt = `USER'S OKRs:\n${okrContext}${bgSection}${progressSection}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
 
   const message = await client.messages.create({
     model,
