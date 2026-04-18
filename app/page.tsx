@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink } from "@/lib/types";
+import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink, IdeaAnalysis } from "@/lib/types";
 import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
+import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
 
 // Pending measurement inputs: ideaId → { krId → value string }
@@ -161,6 +162,37 @@ export default function DashboardPage() {
   function handlePromoteToTask(id: string) {
     updateIdeaTaskStatus(id, "todo").catch(console.error);
     setIdeas((prev) => prev.map((i) => i.id === id ? { ...i, taskStatus: "todo" } : i));
+  }
+
+  const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
+
+  async function handleReanalyze(idea: Idea) {
+    if (reanalyzingIds.has(idea.id)) return;
+    setReanalyzingIds((prev) => new Set(prev).add(idea.id));
+    try {
+      const result = await callAI<IdeaAnalysis>("analyzeIdea", {
+        ideaTitle: idea.title,
+        ideaWhy: "",
+        ideaOutcome: "",
+        ideaNotes: idea.description ?? "",
+        objectives,
+        progressContext: objectives.map((o) => {
+          const krs = o.keyResults.map((kr) => {
+            if (!kr.targetValue) return `  - ${kr.title}`;
+            const pct = Math.min(100, Math.round(((kr.currentValue ?? 0) / kr.targetValue) * 100));
+            return `  - ${kr.title} (${pct}% complete)`;
+          }).join("\n");
+          return `${o.title}:\n${krs}`;
+        }).join("\n\n"),
+      });
+      const updated: Idea = { ...idea, analysis: result, needsReanalysis: false };
+      setIdeas((prev) => prev.map((i) => i.id === idea.id ? updated : i));
+      saveIdea(updated).catch(console.error);
+    } catch {
+      // silently fail
+    } finally {
+      setReanalyzingIds((prev) => { const s = new Set(prev); s.delete(idea.id); return s; });
+    }
   }
 
   function handleUpdateLinkedKRs(ideaId: string, links: IdeaKRLink[]) {
@@ -324,7 +356,18 @@ export default function DashboardPage() {
 
     // Mark task done
     updateIdeaTaskStatus(taskId, "done").catch(console.error);
-    setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: "done" } : i));
+    setIdeas((prev) => {
+      const updatedKRIds = new Set(linkedKRs.map((r) => r.kr.id));
+      return prev.map((i) => {
+        if (i.id === taskId) return { ...i, taskStatus: "done" };
+        if (i.taskStatus === "done" || !i.analysis) return i;
+        const linked = i.linkedKRs ?? [];
+        if (!linked.some((l) => l.krId && updatedKRIds.has(l.krId))) return i;
+        const updated = { ...i, needsReanalysis: true };
+        saveIdea(updated).catch(console.error);
+        return updated;
+      });
+    });
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -582,6 +625,15 @@ export default function DashboardPage() {
                       )}
                       <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
                     </button>
+                    {idea.needsReanalysis && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleReanalyze(idea); }}
+                        disabled={reanalyzingIds.has(idea.id)}
+                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                      >
+                        {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
+                      </button>
+                    )}
                   </div>
 
                   {/* Expanded content */}
