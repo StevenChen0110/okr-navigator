@@ -7,7 +7,6 @@ import { Objective, KeyResult, CheckIn, ObjectiveStatus, Idea } from "@/lib/type
 import { fetchObjectives, saveObjective, removeObjective, fetchIdeas } from "@/lib/db";
 import { KRClassification } from "@/lib/claude";
 import { callAI } from "@/lib/ai-client";
-import Markdown from "@/components/Markdown";
 
 
 const STATUS_CONFIG: Record<ObjectiveStatus, { label: string; color: string }> = {
@@ -77,9 +76,6 @@ export default function OKRPage() {
   // Quarter scoring
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [krScores, setKrScores] = useState<Record<string, number>>({});
-
-  // Snapshot expand
-  const [expandedSnapshot, setExpandedSnapshot] = useState<string | null>(null);
 
   // AI classifying KRs in edit mode (set of krId)
   const [classifyingKRs, setClassifyingKRs] = useState<Set<string>>(new Set());
@@ -476,31 +472,6 @@ export default function OKRPage() {
                   )}
                 </div>
 
-                {/* Snapshot */}
-                {!isEditing && o.meta?.snapshot && (
-                  <div className="mt-3 ml-8">
-                    <button
-                      onClick={() =>
-                        setExpandedSnapshot(expandedSnapshot === o.id ? null : o.id)
-                      }
-                      className="text-xs text-indigo-400 hover:text-indigo-600 font-medium"
-                    >
-                      {expandedSnapshot === o.id ? "▲ 收起設定背景" : "▼ 查看設定背景"}
-                    </button>
-                    {expandedSnapshot === o.id && (
-                      <div className="mt-2 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
-                        <Markdown className="text-xs text-indigo-700 leading-relaxed">
-                          {o.meta.snapshot}
-                        </Markdown>
-                        {o.meta.motivation && (
-                          <p className="text-xs text-indigo-400 mt-1">
-                            動機：{o.meta.motivation}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* ── KRs ── */}
