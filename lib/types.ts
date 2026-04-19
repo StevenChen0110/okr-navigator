@@ -1,6 +1,6 @@
 export type KRConfidence = "on-track" | "at-risk" | "needs-rethink";
 
-export type ObjectiveStatus = "active" | "completed" | "archived";
+export type ObjectiveStatus = "active" | "completed" | "shelved" | "deleted";
 
 export interface CheckIn {
   id: string;

@@ -12,7 +12,8 @@ import { callAI } from "@/lib/ai-client";
 const STATUS_CONFIG: Record<ObjectiveStatus, { label: string; color: string }> = {
   active: { label: "進行中", color: "text-indigo-600 bg-indigo-50 border-indigo-200" },
   completed: { label: "已完成", color: "text-green-700 bg-green-50 border-green-200" },
-  archived: { label: "已封存", color: "text-gray-500 bg-gray-50 border-gray-200" },
+  shelved: { label: "暫存", color: "text-amber-600 bg-amber-50 border-amber-200" },
+  deleted: { label: "已刪除", color: "text-red-500 bg-red-50 border-red-200" },
 };
 
 const TIMEFRAME_OPTIONS = ["本月", "本季", "半年", "全年"];
@@ -67,7 +68,7 @@ export default function OKRPage() {
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // Status filter
-  const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
+  const [statusFilter, setStatusFilter] = useState<"active" | "completed" | "shelved" | "deleted">("active");
 
   // Edit mode
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -154,8 +155,8 @@ export default function OKRPage() {
   // ── Status ────────────────────────────────────────────────────────────────────
 
   function cycleStatus(objectiveId: string, current: ObjectiveStatus | undefined) {
-    const order: ObjectiveStatus[] = ["active", "completed", "archived"];
-    const idx = order.indexOf(current ?? "active");
+    const order: ObjectiveStatus[] = ["active", "completed", "shelved"];
+    const idx = order.indexOf((current ?? "active") as ObjectiveStatus);
     const next = order[(idx + 1) % order.length];
     updateObjective(objectiveId, { status: next });
   }
@@ -254,10 +255,18 @@ export default function OKRPage() {
   }
 
   function deleteObjective(id: string) {
-    if (!confirm("確定要刪除這個目標嗎？")) return;
+    updateObjective(id, { status: "deleted" });
+    if (editingId === id) cancelEdit();
+  }
+
+  function restoreObjective(id: string) {
+    updateObjective(id, { status: "active" });
+  }
+
+  function permanentDeleteObjective(id: string) {
+    if (!confirm("永久刪除後無法復原，確定嗎？")) return;
     setObjectives((prev) => prev.filter((o) => o.id !== id));
     removeObjective(id).catch(console.error);
-    if (editingId === id) cancelEdit();
   }
 
   // ── Quarter Scoring ───────────────────────────────────────────────────────────
@@ -298,10 +307,12 @@ export default function OKRPage() {
   // ── Filtered list ─────────────────────────────────────────────────────────────
 
   const visibleObjectives = objectives.filter((o) => {
-    const s = o.status ?? "active";
-    if (statusFilter === "active") return s === "active" || s === "completed";
-    if (statusFilter === "archived") return s === "archived";
-    return true;
+    const s = (o.status ?? "active") as ObjectiveStatus;
+    if (statusFilter === "active") return s === "active";
+    if (statusFilter === "completed") return s === "completed";
+    if (statusFilter === "shelved") return s === "shelved" || s === ("archived" as string);
+    if (statusFilter === "deleted") return s === "deleted";
+    return false;
   });
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -323,7 +334,7 @@ export default function OKRPage() {
 
       {/* Status filter tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-fit">
-        {(["active", "archived", "all"] as const).map((f) => (
+        {(["active", "completed", "shelved", "deleted"] as const).map((f) => (
           <button
             key={f}
             onClick={() => setStatusFilter(f)}
@@ -331,7 +342,7 @@ export default function OKRPage() {
               statusFilter === f ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
             }`}
           >
-            {f === "active" ? "進行中" : f === "archived" ? "已封存" : "全部"}
+            {f === "active" ? "進行中" : f === "completed" ? "已完成" : f === "shelved" ? "暫存" : "垃圾桶"}
           </button>
         ))}
       </div>
@@ -340,8 +351,9 @@ export default function OKRPage() {
         <div className="text-center py-20 text-gray-400">
           <div className="text-4xl mb-3">◎</div>
           <p className="text-sm">
-            {statusFilter === "archived"
-              ? "還沒有封存的目標"
+            {statusFilter === "deleted" ? "垃圾桶是空的"
+              : statusFilter === "shelved" ? "沒有暫存的目標"
+              : statusFilter === "completed" ? "還沒有完成的目標"
               : "還沒有目標，點擊「新增目標」開始"}
           </p>
         </div>
@@ -358,7 +370,7 @@ export default function OKRPage() {
             <div
               key={o.id}
               className={`bg-white rounded-xl border overflow-hidden ${
-                currentStatus === "archived" ? "opacity-60" : "border-gray-200"
+                currentStatus === "shelved" || currentStatus === "deleted" ? "opacity-60" : "border-gray-200"
               }`}
             >
               {/* ── Objective header ── */}
@@ -434,7 +446,7 @@ export default function OKRPage() {
                         <div className="flex items-center gap-3">
                           <span className="text-xs text-gray-400 w-8 shrink-0">狀態</span>
                           <div className="flex gap-1.5">
-                            {(["active", "completed", "archived"] as const).map((s) => (
+                            {(["active", "completed", "shelved"] as const).map((s) => (
                               <button
                                 key={s}
                                 onClick={() => updateDraft({ status: s })}
@@ -454,7 +466,7 @@ export default function OKRPage() {
                   </div>
 
                   {/* Action buttons */}
-                  {!isEditing && (
+                  {!isEditing && currentStatus !== "deleted" && (
                     <div className="flex gap-2 shrink-0">
                       <button
                         onClick={() => startEdit(o)}
@@ -467,6 +479,22 @@ export default function OKRPage() {
                         className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
                       >
                         ×
+                      </button>
+                    </div>
+                  )}
+                  {!isEditing && currentStatus === "deleted" && (
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={() => restoreObjective(o.id)}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                      >
+                        還原
+                      </button>
+                      <button
+                        onClick={() => permanentDeleteObjective(o.id)}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-400 hover:bg-red-50 transition-colors"
+                      >
+                        永久刪除
                       </button>
                     </div>
                   )}
