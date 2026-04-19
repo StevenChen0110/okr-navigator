@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink, IdeaAnalysis, TodoItem } from "@/lib/types";
 import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
@@ -158,7 +158,7 @@ export default function DashboardPage() {
   }
 
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
-  const [newTodoInputs, setNewTodoInputs] = useState<Record<string, string>>({});
+  const todoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   async function handleReanalyze(idea: Idea) {
     if (reanalyzingIds.has(idea.id)) return;
@@ -201,26 +201,47 @@ export default function DashboardPage() {
     }));
   }
 
-  function handleAddTodo(ideaId: string) {
-    const title = (newTodoInputs[ideaId] ?? "").trim();
-    if (!title) return;
-    const todo: TodoItem = { id: crypto.randomUUID(), title, done: false };
+  function handleAddTodoAfter(ideaId: string, afterTodoId?: string) {
+    const todo: TodoItem = { id: crypto.randomUUID(), title: "", done: false };
     setIdeas((prev) => prev.map((i) => {
       if (i.id !== ideaId) return i;
-      const updated = { ...i, todos: [...(i.todos ?? []), todo] };
+      const todos = i.todos ?? [];
+      let newTodos: TodoItem[];
+      if (afterTodoId) {
+        const idx = todos.findIndex((t) => t.id === afterTodoId);
+        newTodos = [...todos.slice(0, idx + 1), todo, ...todos.slice(idx + 1)];
+      } else {
+        newTodos = [...todos, todo];
+      }
+      const updated = { ...i, todos: newTodos };
       saveIdea(updated).catch(console.error);
       return updated;
     }));
-    setNewTodoInputs((prev) => ({ ...prev, [ideaId]: "" }));
+    setTimeout(() => todoInputRefs.current[todo.id]?.focus(), 30);
+  }
+
+  function handleUpdateTodoTitle(ideaId: string, todoId: string, title: string) {
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const todos = (i.todos ?? []).map((t) => t.id === todoId ? { ...t, title } : t);
+      const updated = { ...i, todos };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
   }
 
   function handleDeleteTodo(ideaId: string, todoId: string) {
+    const idea = ideas.find((i) => i.id === ideaId);
+    const todos = idea?.todos ?? [];
+    const idx = todos.findIndex((t) => t.id === todoId);
+    const prevId = idx > 0 ? todos[idx - 1].id : null;
     setIdeas((prev) => prev.map((i) => {
       if (i.id !== ideaId) return i;
       const updated = { ...i, todos: (i.todos ?? []).filter((t) => t.id !== todoId) };
       saveIdea(updated).catch(console.error);
       return updated;
     }));
+    if (prevId) setTimeout(() => todoInputRefs.current[prevId]?.focus(), 30);
   }
 
   function handleUpdateLinkedKRs(ideaId: string, links: IdeaKRLink[]) {
@@ -671,20 +692,20 @@ export default function DashboardPage() {
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
 
-                      {/* Todos */}
+                      {/* Todos — Notion-style */}
                       {(() => {
                         const todos = idea.todos ?? [];
                         const doneCount = todos.filter((t) => t.done).length;
                         const allDone = todos.length > 0 && doneCount === todos.length;
                         const pct = todos.length > 0 ? Math.round((doneCount / todos.length) * 100) : 0;
                         return (
-                          <div className="space-y-2 pt-3">
-                            <div className="flex items-center gap-2">
+                          <div className="pt-3">
+                            <div className="flex items-center gap-2 mb-2">
                               <span className="text-xs font-medium text-gray-600">子任務</span>
                               {todos.length > 0 && (
                                 <>
                                   <span className="text-xs text-gray-400">{doneCount}/{todos.length}</span>
-                                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
                                     <div className={`h-full rounded-full transition-all ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
                                   </div>
                                   {allDone && idea.taskStatus !== "done" && (
@@ -698,32 +719,35 @@ export default function DashboardPage() {
                                 </>
                               )}
                             </div>
-                            {todos.map((todo) => (
-                              <div key={todo.id} className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleToggleTodo(idea.id, todo.id)}
-                                  className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}
-                                >
-                                  {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
-                                </button>
-                                <span className={`text-xs flex-1 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}>{todo.title}</span>
-                                <button onClick={() => handleDeleteTodo(idea.id, todo.id)} className="text-gray-300 hover:text-red-400 shrink-0 leading-none">×</button>
-                              </div>
-                            ))}
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                value={newTodoInputs[idea.id] ?? ""}
-                                onChange={(e) => setNewTodoInputs((prev) => ({ ...prev, [idea.id]: e.target.value }))}
-                                onKeyDown={(e) => e.key === "Enter" && handleAddTodo(idea.id)}
-                                placeholder="新增子任務..."
-                                className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
-                              />
+                            <div className="space-y-0.5">
+                              {todos.map((todo) => (
+                                <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
+                                  <button
+                                    onClick={() => handleToggleTodo(idea.id, todo.id)}
+                                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}
+                                  >
+                                    {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
+                                  </button>
+                                  <input
+                                    ref={(el) => { todoInputRefs.current[todo.id] = el; }}
+                                    type="text"
+                                    defaultValue={todo.title}
+                                    onBlur={(e) => handleUpdateTodoTitle(idea.id, todo.id, e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") { e.preventDefault(); handleAddTodoAfter(idea.id, todo.id); }
+                                      if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDeleteTodo(idea.id, todo.id); }
+                                    }}
+                                    className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
+                                    placeholder="待辦事項"
+                                  />
+                                </div>
+                              ))}
                               <button
-                                onClick={() => handleAddTodo(idea.id)}
-                                className="text-xs px-2.5 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shrink-0"
+                                onClick={() => handleAddTodoAfter(idea.id)}
+                                className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white transition-colors"
                               >
-                                新增
+                                <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
+                                新增待辦
                               </button>
                             </div>
                           </div>
@@ -856,13 +880,13 @@ export default function DashboardPage() {
           <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
         </div>
 
-        {nonTasks.length === 0 ? (
+        {ideas.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-gray-400">
             還沒有 Idea，點擊「新增」開始
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {[...nonTasks]
+            {[...ideas]
               .sort((a, b) => (calcScore(b) ?? -1) - (calcScore(a) ?? -1))
               .map((idea) => {
               const isExpanded = expandedIdeaId === idea.id;
@@ -897,12 +921,18 @@ export default function DashboardPage() {
                         {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
                       </button>
                     )}
-                    <button
-                      onClick={() => handlePromoteToTask(idea.id)}
-                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
-                    >
-                      → Task
-                    </button>
+                    {idea.taskStatus ? (
+                      <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus]}`}>
+                        {TASK_STATUS_LABEL[idea.taskStatus]}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handlePromoteToTask(idea.id)}
+                        className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                      >
+                        → Task
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(idea.id)}
                       className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
