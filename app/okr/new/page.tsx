@@ -26,20 +26,12 @@ function newKRDraft(): KRDraft {
   return { id: uuid(), title: "", krType: "cumulative", metricName: "", targetValue: "", unit: "", deadline: "", incrementPerTask: "1" };
 }
 
-const KR_TYPE_OPTIONS: { value: KRType; label: string; desc: string }[] = [
-  { value: "cumulative", label: "累積型", desc: "每完成一個 Task 自動累加（次、本、小時）" },
-  { value: "measurement", label: "測量型", desc: "追蹤變動數值，完成 Task 時手動填入（營收、分數）" },
-  { value: "milestone", label: "里程碑型", desc: "只有完成/未完成，無需數值（取得證照、完成上線）" },
-];
-
 export default function NewOKRPage() {
   const router = useRouter();
 
   // ── Manual form state ──────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
-  const [okrType, setOkrType] = useState<"committed" | "aspirational">("committed");
   const [timeframe, setTimeframe] = useState("本季");
-  const [priority, setPriority] = useState<1 | 2 | 3>(2);
   const [krs, setKrs] = useState<KRDraft[]>([newKRDraft()]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -113,7 +105,7 @@ export default function NewOKRPage() {
         ...(k.krType === "cumulative" && k.incrementPerTask ? { incrementPerTask: parseFloat(k.incrementPerTask) || 1 } : {}),
       }));
 
-      const meta: OKRMeta = { okrType, timeframe, priority };
+      const meta: OKRMeta = { timeframe };
 
       const objective: Objective = {
         id: uuid(),
@@ -139,11 +131,10 @@ export default function NewOKRPage() {
     if (!rawGoal.trim()) return;
     setAiLoading(true);
     try {
-      const result = await callAI<{ title: string; motivation: string; okrType: "committed" | "aspirational"; timeframe: string }>(
+      const result = await callAI<{ title: string; motivation: string; okrType: string; timeframe: string }>(
         "refineObjective", { rawInput: rawGoal }
       );
       setTitle(result.title);
-      setOkrType(result.okrType);
       setTimeframe(result.timeframe);
       setAiStep(1);
     } catch (e) {
@@ -176,7 +167,6 @@ export default function NewOKRPage() {
     setKrs(drafts);
     setAiStep(3);
 
-    // Auto-classify each KR
     for (const draft of drafts) {
       try {
         updateKR(draft.id, "classifying", true);
@@ -263,36 +253,12 @@ export default function NewOKRPage() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">目標類型</label>
-            <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
-              {(["committed", "aspirational"] as const).map((t) => (
-                <button key={t} onClick={() => setOkrType(t)}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"}`}>
-                  {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1">
             <label className="text-xs font-medium text-gray-500">時間範圍</label>
             <div className="flex gap-2 flex-wrap">
               {TIMEFRAME_OPTIONS.map((t) => (
                 <button key={t} onClick={() => setTimeframe(t)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${timeframe === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
                   {t}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">優先級</label>
-            <div className="flex gap-2">
-              {([1, 2, 3] as const).map((p) => (
-                <button key={p} onClick={() => setPriority(p)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${priority === p ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
-                  P{p}
                 </button>
               ))}
             </div>
@@ -362,7 +328,7 @@ export default function NewOKRPage() {
           </button>
         )}
       </div>
-      <p className="text-sm text-gray-500 mb-8">{aiMode ? `目標：${title}` : "設定你的目標與量化指標"}</p>
+      <p className="text-sm text-gray-500 mb-8">{aiMode ? `目標：${title}` : "設定你的目標與完成標準"}</p>
 
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">{error}</div>
@@ -371,8 +337,6 @@ export default function NewOKRPage() {
       {/* Objective (manual mode only) */}
       {!aiMode && (
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4 mb-4">
-          <h2 className="text-sm font-semibold text-gray-700">目標（Objective）</h2>
-
           <div className="space-y-1">
             <label className="text-xs font-medium text-gray-500">目標名稱</label>
             <input
@@ -381,21 +345,6 @@ export default function NewOKRPage() {
               placeholder="例：提升英語口說能力到能流暢開會的程度"
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">目標類型</label>
-            <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
-              {(["committed", "aspirational"] as const).map((t) => (
-                <button key={t} onClick={() => setOkrType(t)}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"}`}>
-                  {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-gray-400">
-              {okrType === "committed" ? "承諾型：預期得分 1.0，未達成需要檢討" : "願景型：預期得分 0.7，鼓勵挑戰極限"}
-            </p>
           </div>
 
           <div className="space-y-1">
@@ -408,19 +357,6 @@ export default function NewOKRPage() {
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">優先級</label>
-            <div className="flex gap-2">
-              {([1, 2, 3] as const).map((p) => (
-                <button key={p} type="button" onClick={() => setPriority(p)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${priority === p ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
-                  P{p}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-gray-400">影響 Dashboard Idea 排序的加權係數（P1 最高）</p>
           </div>
         </div>
       )}

@@ -3,17 +3,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, KeyResult, KRConfidence, CheckIn, ObjectiveStatus, Idea } from "@/lib/types";
+import { Objective, KeyResult, CheckIn, ObjectiveStatus, Idea } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective, fetchIdeas } from "@/lib/db";
 import { KRClassification } from "@/lib/claude";
 import { callAI } from "@/lib/ai-client";
 import Markdown from "@/components/Markdown";
 
-const CONFIDENCE_CONFIG: Record<KRConfidence, { label: string; color: string }> = {
-  "on-track": { label: "順利", color: "text-green-600 bg-green-50 border-green-200" },
-  "at-risk": { label: "卡關", color: "text-amber-600 bg-amber-50 border-amber-200" },
-  "needs-rethink": { label: "需重新思考", color: "text-red-600 bg-red-50 border-red-200" },
-};
 
 const STATUS_CONFIG: Record<ObjectiveStatus, { label: string; color: string }> = {
   active: { label: "進行中", color: "text-indigo-600 bg-indigo-50 border-indigo-200" },
@@ -169,31 +164,6 @@ export default function OKRPage() {
     updateObjective(objectiveId, { status: next });
   }
 
-  // ── Confidence ────────────────────────────────────────────────────────────────
-
-  const [confidenceSuggestions, setConfidenceSuggestions] = useState<Record<string, string>>({});
-
-  function updateConfidence(objectiveId: string, krId: string, confidence: KRConfidence) {
-    const o = objectives.find((o) => o.id === objectiveId);
-    if (!o) return;
-    updateObjective(objectiveId, {
-      keyResults: o.keyResults.map((kr) => (kr.id === krId ? { ...kr, confidence } : kr)),
-    });
-
-    if (confidence === "at-risk" || confidence === "needs-rethink") {
-      const kr = o.keyResults.find((k) => k.id === krId);
-      if (!kr) return;
-      callAI<string>("analyzeConfidenceDrop", {
-        krTitle: kr.title,
-        objectiveTitle: o.title,
-        confidence,
-      }).then((suggestion) => {
-        setConfidenceSuggestions((prev) => ({ ...prev, [krId]: suggestion }));
-      }).catch(() => {});
-    } else {
-      setConfidenceSuggestions((prev) => { const n = { ...prev }; delete n[krId]; return n; });
-    }
-  }
 
   // ── Progress (direct input) ───────────────────────────────────────────────────
 
@@ -416,17 +386,6 @@ export default function OKRPage() {
                         <span className="font-medium text-sm">
                           {o.title || <span className="text-gray-300">未命名目標</span>}
                         </span>
-                        {o.meta?.okrType && (
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full border ${
-                              o.meta.okrType === "committed"
-                                ? "text-indigo-600 bg-indigo-50 border-indigo-200"
-                                : "text-purple-600 bg-purple-50 border-purple-200"
-                            }`}
-                          >
-                            {o.meta.okrType === "committed" ? "承諾" : "願景"}
-                          </span>
-                        )}
                         {o.meta?.timeframe && (
                           <span className="text-xs text-gray-400">{o.meta.timeframe}</span>
                         )}
@@ -473,55 +432,22 @@ export default function OKRPage() {
 
                     {/* Edit mode: meta fields */}
                     {isEditing && (
-                      <div className="space-y-2.5 mb-3 mt-2">
-                        {/* Type */}
-                        <div className="flex gap-1.5 bg-gray-100 rounded-xl p-1">
-                          {(["committed", "aspirational"] as const).map((t) => (
+                      <div className="space-y-2 mb-3 mt-2">
+                        {/* Timeframe */}
+                        <div className="flex gap-1.5">
+                          {TIMEFRAME_OPTIONS.map((t) => (
                             <button
                               key={t}
-                              onClick={() => updateDraft({ meta: { ...draft!.meta, okrType: t } })}
-                              className={`flex-1 py-1 rounded-lg text-xs font-medium transition-colors ${
-                                draft!.meta?.okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"
+                              onClick={() => updateDraft({ meta: { ...draft!.meta, timeframe: t } })}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                draft!.meta?.timeframe === t
+                                  ? "bg-indigo-600 text-white border-indigo-600"
+                                  : "border-gray-200 text-gray-600 hover:border-indigo-300"
                               }`}
                             >
-                              {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
+                              {t}
                             </button>
                           ))}
-                        </div>
-                        {/* Timeframe + Priority on same row */}
-                        <div className="flex items-center gap-3">
-                          <div className="flex gap-1.5">
-                            {TIMEFRAME_OPTIONS.map((t) => (
-                              <button
-                                key={t}
-                                onClick={() => updateDraft({ meta: { ...draft!.meta, timeframe: t } })}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                  draft!.meta?.timeframe === t
-                                    ? "bg-indigo-600 text-white border-indigo-600"
-                                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                                }`}
-                              >
-                                {t}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="h-4 w-px bg-gray-200" />
-                          <div className="flex gap-1">
-                            {([1, 2, 3] as const).map((p) => (
-                              <button
-                                key={p}
-                                type="button"
-                                onClick={() => updateDraft({ meta: { ...draft!.meta, priority: p } })}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                  (draft!.meta?.priority ?? 2) === p
-                                    ? "bg-indigo-600 text-white border-indigo-600"
-                                    : "border-gray-200 text-gray-500 hover:border-indigo-300"
-                                }`}
-                              >
-                                P{p}
-                              </button>
-                            ))}
-                          </div>
                         </div>
                         {/* Status */}
                         <div className="flex gap-1.5">
@@ -840,11 +766,6 @@ export default function OKRPage() {
                             </div>
 
                           </div>
-                          {confidenceSuggestions[kr.id] && (
-                            <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
-                              <Markdown>{confidenceSuggestions[kr.id]}</Markdown>
-                            </div>
-                          )}
                           {/* Linked ideas/tasks for this KR */}
                           {(() => {
                             const linked = ideas.filter(i => (i.linkedKRs ?? []).some(l => l.krId === kr.id));

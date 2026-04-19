@@ -31,15 +31,8 @@ function calcOCompletion(o: Objective): number | undefined {
   return Math.round(avg * 100);
 }
 
-function calcWeightedScore(idea: Idea, objectives: Objective[]): number | null {
-  if (!idea.analysis) return null;
-  let weightedSum = 0, totalWeight = 0;
-  for (const os of idea.analysis.objectiveScores) {
-    const priority = objectives.find((o) => o.id === os.objectiveId)?.meta?.priority ?? 2;
-    weightedSum += os.overallScore * priority;
-    totalWeight += priority;
-  }
-  return totalWeight > 0 ? weightedSum / totalWeight : idea.analysis.finalScore;
+function calcScore(idea: Idea): number | null {
+  return idea.analysis?.finalScore ?? null;
 }
 
 function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
@@ -406,7 +399,7 @@ export default function DashboardPage() {
     const aDone = a.taskStatus === "done" ? 1 : 0;
     const bDone = b.taskStatus === "done" ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
-    return (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1);
+    return (calcScore(b) ?? -1) - (calcScore(a) ?? -1);
   });
   const taskStatusCounts = {
     todo: tasks.filter((t) => t.taskStatus === "todo").length,
@@ -590,7 +583,7 @@ export default function DashboardPage() {
                 const aDone = a.taskStatus === "done" ? 1 : 0;
                 const bDone = b.taskStatus === "done" ? 1 : 0;
                 if (aDone !== bDone) return aDone - bDone;
-                return (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1);
+                return (calcScore(b) ?? -1) - (calcScore(a) ?? -1);
               })
               .map((idea) => {
               const isExpanded = expandedIdeaId === idea.id;
@@ -776,10 +769,10 @@ export default function DashboardPage() {
         ) : (
           <div className="divide-y divide-gray-50">
             {[...nonTasks]
-              .sort((a, b) => (calcWeightedScore(b, objectives) ?? -1) - (calcWeightedScore(a, objectives) ?? -1))
+              .sort((a, b) => (calcScore(b) ?? -1) - (calcScore(a) ?? -1))
               .map((idea) => {
               const isExpanded = expandedIdeaId === idea.id;
-              const wScore = calcWeightedScore(idea, objectives);
+              const wScore = calcScore(idea);
               const links = idea.linkedKRs ?? [];
               const isPicking = showObjPickerId === idea.id;
 
