@@ -74,6 +74,13 @@ export interface IdeaAnalysis {
 
 export type TaskStatus = "todo" | "in-progress" | "done";
 
+export interface TodoItem {
+  id: string;
+  title: string;
+  done: boolean;
+  doneAt?: string;
+}
+
 export interface Idea {
   id: string;
   title: string;
@@ -86,6 +93,7 @@ export interface Idea {
   taskStatus?: TaskStatus; // set when idea is promoted to a task
   quickAnalysis?: boolean;
   needsReanalysis?: boolean;
+  todos?: TodoItem[];
 }
 
 export interface AppSettings {

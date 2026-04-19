@@ -64,6 +64,7 @@ export async function fetchIdeas(): Promise<Idea[]> {
     completedAt: r.completed_at ?? undefined,
     linkedKRs: r.linked_krs ?? [],
     taskStatus: (r.task_status as TaskStatus) ?? undefined,
+    todos: r.todos ?? [],
   }));
 }
 
@@ -80,6 +81,7 @@ export async function saveIdea(idea: Idea): Promise<void> {
     completed_at: idea.completedAt ?? null,
     linked_krs: idea.linkedKRs ?? [],
     task_status: idea.taskStatus ?? null,
+    todos: idea.todos ?? [],
   });
   if (error) throw error;
 }

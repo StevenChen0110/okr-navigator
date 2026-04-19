@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink, IdeaAnalysis } from "@/lib/types";
+import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink, IdeaAnalysis, TodoItem } from "@/lib/types";
 import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
@@ -158,6 +158,7 @@ export default function DashboardPage() {
   }
 
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
+  const [newTodoInputs, setNewTodoInputs] = useState<Record<string, string>>({});
 
   async function handleReanalyze(idea: Idea) {
     if (reanalyzingIds.has(idea.id)) return;
@@ -186,6 +187,40 @@ export default function DashboardPage() {
     } finally {
       setReanalyzingIds((prev) => { const s = new Set(prev); s.delete(idea.id); return s; });
     }
+  }
+
+  function handleToggleTodo(ideaId: string, todoId: string) {
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const todos = (i.todos ?? []).map((t) =>
+        t.id === todoId ? { ...t, done: !t.done, doneAt: !t.done ? new Date().toISOString() : undefined } : t
+      );
+      const updated = { ...i, todos };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
+  }
+
+  function handleAddTodo(ideaId: string) {
+    const title = (newTodoInputs[ideaId] ?? "").trim();
+    if (!title) return;
+    const todo: TodoItem = { id: crypto.randomUUID(), title, done: false };
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const updated = { ...i, todos: [...(i.todos ?? []), todo] };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
+    setNewTodoInputs((prev) => ({ ...prev, [ideaId]: "" }));
+  }
+
+  function handleDeleteTodo(ideaId: string, todoId: string) {
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const updated = { ...i, todos: (i.todos ?? []).filter((t) => t.id !== todoId) };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
   }
 
   function handleUpdateLinkedKRs(ideaId: string, links: IdeaKRLink[]) {
@@ -635,6 +670,65 @@ export default function DashboardPage() {
                   {/* Expanded content */}
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
+
+                      {/* Todos */}
+                      {(() => {
+                        const todos = idea.todos ?? [];
+                        const doneCount = todos.filter((t) => t.done).length;
+                        const allDone = todos.length > 0 && doneCount === todos.length;
+                        const pct = todos.length > 0 ? Math.round((doneCount / todos.length) * 100) : 0;
+                        return (
+                          <div className="space-y-2 pt-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-gray-600">子任務</span>
+                              {todos.length > 0 && (
+                                <>
+                                  <span className="text-xs text-gray-400">{doneCount}/{todos.length}</span>
+                                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                  {allDone && idea.taskStatus !== "done" && (
+                                    <button
+                                      onClick={() => handleSetTaskStatus(idea.id, "done")}
+                                      className="text-xs px-2 py-0.5 bg-green-600 text-white rounded-lg hover:bg-green-700 shrink-0 whitespace-nowrap"
+                                    >
+                                      標記完成
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            {todos.map((todo) => (
+                              <div key={todo.id} className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleToggleTodo(idea.id, todo.id)}
+                                  className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}
+                                >
+                                  {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
+                                </button>
+                                <span className={`text-xs flex-1 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}>{todo.title}</span>
+                                <button onClick={() => handleDeleteTodo(idea.id, todo.id)} className="text-gray-300 hover:text-red-400 shrink-0 leading-none">×</button>
+                              </div>
+                            ))}
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={newTodoInputs[idea.id] ?? ""}
+                                onChange={(e) => setNewTodoInputs((prev) => ({ ...prev, [idea.id]: e.target.value }))}
+                                onKeyDown={(e) => e.key === "Enter" && handleAddTodo(idea.id)}
+                                placeholder="新增子任務..."
+                                className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                              />
+                              <button
+                                onClick={() => handleAddTodo(idea.id)}
+                                className="text-xs px-2.5 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shrink-0"
+                              >
+                                新增
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* KR progress bars */}
                       {links.length > 0 && (
