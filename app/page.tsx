@@ -323,8 +323,9 @@ export default function DashboardPage() {
         newValue = Math.max(0, (kr.currentValue ?? 0) - increment);
       } else if (krType === "milestone") {
         newValue = 0;
+      } else if (krType === "measurement") {
+        newValue = 0;
       }
-      // measurement: no revert (value was manually set)
 
       if (newValue !== undefined) {
         const updatedKRs = current.keyResults.map((k) =>
@@ -663,15 +664,20 @@ export default function DashboardPage() {
                       onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
                       className="flex-1 text-left flex items-center gap-2 min-w-0"
                     >
-                      <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through" : ""}`}>{idea.title}</p>
+                      <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through text-gray-400" : ""}`}>{idea.title}</p>
                       <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
                     </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); const cycle: TaskStatus[] = ["todo", "in-progress", "done"]; const next = cycle[(cycle.indexOf(idea.taskStatus ?? "todo") + 1) % cycle.length]; handleSetTaskStatus(idea.id, next); }}
-                      className={`text-xs px-2 py-0.5 rounded shrink-0 whitespace-nowrap border transition-colors ${TASK_STATUS_STYLE[idea.taskStatus!]}`}
-                    >
-                      {TASK_STATUS_LABEL[idea.taskStatus!]}
-                    </button>
+                    <div className="flex gap-1 shrink-0">
+                      {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                        <button
+                          key={s}
+                          onClick={(e) => { e.stopPropagation(); handleSetTaskStatus(idea.id, s); }}
+                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}
+                        >
+                          {TASK_STATUS_LABEL[s]}
+                        </button>
+                      ))}
+                    </div>
                     {idea.needsReanalysis && (
                       <button
                         onClick={() => handleReanalyze(idea)}
@@ -755,6 +761,32 @@ export default function DashboardPage() {
                         );
                       })()}
 
+                      {/* 任務分析 */}
+                      {idea.analysis && (
+                        <div className="space-y-2 border-t border-gray-100 pt-3">
+                          <p className="text-xs font-medium text-gray-600">任務分析</p>
+                          {idea.analysis.objectiveScores.map((os) => (
+                            <div key={os.objectiveId}>
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className="text-xs text-gray-600 truncate flex-1 mr-2">{os.objectiveTitle}</span>
+                                <span className={`text-xs font-bold shrink-0 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
+                              </div>
+                              <p className="text-xs text-gray-500">{os.reasoning}</p>
+                              <div className="space-y-0.5 pl-2 mt-1">
+                                {os.keyResultScores.map((krs) => (
+                                  <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                          {idea.analysis.risks.length > 0 && (
+                            <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
+                              <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Measurement input panel */}
                       {isMeasurePending && measureKRs.length > 0 && (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
@@ -797,13 +829,13 @@ export default function DashboardPage() {
           <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
         </div>
 
-        {ideas.length === 0 ? (
+        {nonTasks.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-gray-400">
             還沒有 Idea，點擊「新增」開始
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {[...ideas]
+            {[...nonTasks]
               .sort((a, b) => (calcScore(b) ?? -1) - (calcScore(a) ?? -1))
               .map((idea) => {
               const isExpanded = expandedIdeaId === idea.id;
@@ -838,18 +870,12 @@ export default function DashboardPage() {
                         {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
                       </button>
                     )}
-                    {idea.taskStatus ? (
-                      <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus]}`}>
-                        {TASK_STATUS_LABEL[idea.taskStatus]}
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handlePromoteToTask(idea.id)}
-                        className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
-                      >
-                        → Task
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handlePromoteToTask(idea.id)}
+                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                    >
+                      → Task
+                    </button>
                     <button
                       onClick={() => handleDelete(idea.id)}
                       className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
