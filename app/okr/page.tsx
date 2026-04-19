@@ -808,23 +808,6 @@ export default function OKRPage() {
                               )}
                             </div>
 
-                            {/* Confidence selector */}
-                            <div className="flex gap-1 shrink-0">
-                              {(["on-track", "at-risk", "needs-rethink"] as const).map((conf) => (
-                                <button
-                                  key={conf}
-                                  onClick={() => updateConfidence(o.id, kr.id, conf)}
-                                  className={`text-xs px-2 py-1 rounded-lg border cursor-pointer transition-colors ${
-                                    kr.confidence === conf
-                                      ? `${CONFIDENCE_CONFIG[conf].color} border-current`
-                                      : "text-gray-400 bg-gray-50 border-gray-200 hover:border-gray-300"
-                                  }`}
-                                  title={CONFIDENCE_CONFIG[conf].label}
-                                >
-                                  {CONFIDENCE_CONFIG[conf].label}
-                                </button>
-                              ))}
-                            </div>
                           </div>
                           {confidenceSuggestions[kr.id] && (
                             <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
