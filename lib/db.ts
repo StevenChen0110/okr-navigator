@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { Objective, Idea, Background, BackgroundCategory, TaskStatus } from "./types";
+import { Objective, Idea, TaskStatus } from "./types";
 
 async function uid(): Promise<string> {
   const {
@@ -104,58 +104,3 @@ export async function removeIdea(id: string): Promise<void> {
   if (error) throw error;
 }
 
-// Backgrounds
-
-export async function fetchBackgrounds(): Promise<Background[]> {
-  const { data, error } = await supabase
-    .from("user_backgrounds")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((r) => ({
-    id: r.id,
-    category: r.category as BackgroundCategory,
-    title: r.title,
-    description: r.description ?? undefined,
-    createdAt: r.created_at,
-  }));
-}
-
-export async function saveBackground(bg: Omit<Background, "id" | "createdAt">): Promise<Background> {
-  const userId = await uid();
-  const { data, error } = await supabase
-    .from("user_backgrounds")
-    .insert({
-      user_id: userId,
-      category: bg.category,
-      title: bg.title,
-      description: bg.description ?? null,
-    })
-    .select()
-    .single();
-  if (error) throw error;
-  return {
-    id: data.id,
-    category: data.category as BackgroundCategory,
-    title: data.title,
-    description: data.description ?? undefined,
-    createdAt: data.created_at,
-  };
-}
-
-export async function updateBackground(id: string, bg: Partial<Omit<Background, "id" | "createdAt">>): Promise<void> {
-  const { error } = await supabase
-    .from("user_backgrounds")
-    .update({
-      ...(bg.category !== undefined && { category: bg.category }),
-      ...(bg.title !== undefined && { title: bg.title }),
-      ...(bg.description !== undefined && { description: bg.description }),
-    })
-    .eq("id", id);
-  if (error) throw error;
-}
-
-export async function removeBackground(id: string): Promise<void> {
-  const { error } = await supabase.from("user_backgrounds").delete().eq("id", id);
-  if (error) throw error;
-}

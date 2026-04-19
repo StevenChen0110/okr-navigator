@@ -36,8 +36,6 @@ export interface IdeaKRLink {
 export interface OKRMeta {
   okrType?: "committed" | "aspirational";
   timeframe?: string;
-  motivation?: string;
-  snapshot?: string;
   priority?: 1 | 2 | 3;
 }
 
@@ -95,12 +93,3 @@ export interface AppSettings {
   language: "zh-TW" | "en";
 }
 
-export type BackgroundCategory = "技能" | "工作經歷" | "學習背景" | "其他";
-
-export interface Background {
-  id: string;
-  category: BackgroundCategory;
-  title: string;
-  description?: string;
-  createdAt: string;
-}

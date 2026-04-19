@@ -5,7 +5,6 @@ import {
   classifyKR,
   refineObjective,
   suggestKeyResults,
-  generateSnapshot,
   getQuarterRecommendation,
   analyzeConfidenceDrop,
   convertAllToSMART,
@@ -42,7 +41,6 @@ export async function POST(req: NextRequest) {
           payload.ideaOutcome as string,
           payload.ideaNotes as string,
           payload.objectives as Parameters<typeof analyzeIdea>[7],
-          payload.backgroundContext as string | undefined,
           payload.progressContext as string | undefined,
         );
         return NextResponse.json(result);
@@ -65,18 +63,6 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.objectiveDescription as string | undefined,
           payload.existingKRs as string[] | undefined,
-          payload.backgroundContext as string | undefined,
-        );
-        return NextResponse.json(result);
-      }
-      case "generateSnapshot": {
-        const result = await generateSnapshot(
-          apiKey, model, language,
-          payload.objectiveTitle as string,
-          payload.motivation as string,
-          payload.okrType as "committed" | "aspirational",
-          payload.timeframe as string,
-          payload.krs as string[],
         );
         return NextResponse.json(result);
       }

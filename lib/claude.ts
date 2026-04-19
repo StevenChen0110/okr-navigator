@@ -48,24 +48,17 @@ export async function refineObjective(
   model: string,
   language: "zh-TW" | "en",
   rawInput: string
-): Promise<{
-  title: string;
-  motivation: string;
-  okrType: "committed" | "aspirational";
-  timeframe: string;
-}> {
+): Promise<{ title: string; timeframe: string }> {
   const client = getClient(apiKey);
   const message = await client.messages.create({
     model,
-    max_tokens: 512,
+    max_tokens: 256,
     system: `You are an OKR coach. The user describes a goal in one sentence. Infer:
 - title: a concise, action-oriented Objective title (≤15 words)
-- motivation: why they likely want this (1 sentence)
-- okrType: "committed" if it sounds like a must-achieve goal, "aspirational" if it sounds like a stretch goal
 - timeframe: one of "本月", "本季", "半年", "全年"
 
 ${langInstruction(language)}
-Output ONLY valid JSON: {"title":"...","motivation":"...","okrType":"committed"|"aspirational","timeframe":"..."}
+Output ONLY valid JSON: {"title":"...","timeframe":"..."}
 No markdown fences.`,
     messages: [{ role: "user", content: rawInput }],
   });
@@ -81,15 +74,11 @@ export async function suggestKeyResults(
   language: "zh-TW" | "en",
   objectiveTitle: string,
   objectiveDescription?: string,
-  existingKRs?: string[],
-  backgroundContext?: string
+  existingKRs?: string[]
 ): Promise<string[]> {
   const client = getClient(apiKey);
   const existing = existingKRs?.length
     ? `\nExisting KRs (do NOT duplicate): ${existingKRs.map((k) => `"${k}"`).join(", ")}`
-    : "";
-  const bgSection = backgroundContext
-    ? `\n\nUser's relevant background and skills:\n${backgroundContext}\nUse these to suggest KRs that are realistic and leverage the user's existing strengths.`
     : "";
   const message = await client.messages.create({
     model,
@@ -104,7 +93,7 @@ Output ONLY a JSON array of strings. No markdown fences.`,
     messages: [
       {
         role: "user",
-        content: `Objective: ${objectiveTitle}${objectiveDescription ? `\nContext: ${objectiveDescription}` : ""}${bgSection}${existing}`,
+        content: `Objective: ${objectiveTitle}${objectiveDescription ? `\nContext: ${objectiveDescription}` : ""}${existing}`,
       },
     ],
   });
@@ -140,34 +129,6 @@ Output ONLY a JSON array of strings in the same order as input. No markdown fenc
   });
   const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
   return JSON.parse(extractJSON(raw)) as string[];
-}
-
-// ── Stage 3: Generate snapshot summary ──────────────────────────────────────
-
-export async function generateSnapshot(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  objectiveTitle: string,
-  motivation: string,
-  okrType: "committed" | "aspirational",
-  timeframe: string,
-  krs: string[]
-): Promise<string> {
-  const client = getClient(apiKey);
-  const typeLabel = okrType === "committed" ? "承諾型（必達）" : "願景型（挑戰）";
-  const message = await client.messages.create({
-    model,
-    max_tokens: 300,
-    system: `You are an OKR coach. Based on the goal details provided, write a concise setting background that the user can read months later to recall why they set this goal. Use 2-4 short bullet points covering: core motivation, type of commitment, and what success looks like. Keep each bullet to 1 sentence. Do NOT repeat the KRs verbatim. ${langInstruction(language)}`,
-    messages: [
-      {
-        role: "user",
-        content: `目標：${objectiveTitle}\n類型：${typeLabel}\n時間範圍：${timeframe}\n動機：${motivation}\nKR：\n${krs.map((k, i) => `${i + 1}. ${k}`).join("\n")}`,
-      },
-    ],
-  });
-  return (message.content[0] as { type: string; text: string }).text.trim();
 }
 
 // ── Confidence: Analyze why confidence dropped ───────────────────────────────
@@ -417,7 +378,6 @@ export async function analyzeIdea(
   ideaOutcome: string,
   ideaNotes: string,
   objectives: Objective[],
-  backgroundContext?: string,
   progressContext?: string
 ): Promise<IdeaAnalysis> {
   const client = getClient(apiKey);
@@ -425,8 +385,8 @@ export async function analyzeIdea(
   const okrContext = objectives
     .map(
       (o) =>
-        `Objective ID: ${o.id}\nObjective: ${o.title}${o.description ? `\nDescription: ${o.description}` : ""}${o.meta?.okrType ? `\nType: ${o.meta.okrType}` : ""}${o.meta?.timeframe ? `\nTimeframe: ${o.meta.timeframe}` : ""}\nKey Results:\n${o.keyResults
-          .map((kr) => `  - KR ID: ${kr.id}\n    KR: ${kr.title}${kr.confidence ? `\n    Confidence: ${kr.confidence}` : ""}`)
+        `Objective ID: ${o.id}\nObjective: ${o.title}${o.description ? `\nDescription: ${o.description}` : ""}${o.meta?.timeframe ? `\nTimeframe: ${o.meta.timeframe}` : ""}\nKey Results:\n${o.keyResults
+          .map((kr) => `  - KR ID: ${kr.id}\n    KR: ${kr.title}`)
           .join("\n")}`
     )
     .join("\n\n");
@@ -436,15 +396,11 @@ export async function analyzeIdea(
   if (ideaOutcome.trim()) parts.push(`Expected outcome: ${ideaOutcome}`);
   if (ideaNotes.trim()) parts.push(`Additional notes: ${ideaNotes}`);
 
-  const bgSection = backgroundContext
-    ? `\n\nUSER'S BACKGROUND & SKILLS:\n${backgroundContext}\nFactor in feasibility based on these backgrounds when scoring risks and execution suggestions.`
-    : "";
-
   const progressSection = progressContext
     ? `\n\nCURRENT OKR PROGRESS:\n${progressContext}\nReflect actual progress in urgency and reasoning — ideas that advance lagging KRs should score higher.`
     : "";
 
-  const userPrompt = `USER'S OKRs:\n${okrContext}${bgSection}${progressSection}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
+  const userPrompt = `USER'S OKRs:\n${okrContext}${progressSection}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
 
   const message = await client.messages.create({
     model,

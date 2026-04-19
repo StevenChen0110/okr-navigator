@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, KeyResult, Idea, IdeaKRLink, IdeaAnalysis, Background } from "@/lib/types";
-import { fetchObjectives, saveIdea, fetchBackgrounds } from "@/lib/db";
+import { Objective, KeyResult, Idea, IdeaKRLink, IdeaAnalysis } from "@/lib/types";
+import { fetchObjectives, saveIdea } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
 import Markdown from "@/components/Markdown";
@@ -48,7 +48,6 @@ export default function NewIdeaPage() {
   const [notes, setNotes] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const [backgrounds, setBackgrounds] = useState<Background[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [analysis, setAnalysis] = useState<IdeaAnalysis | null>(null);
   const [suggestedLinks, setSuggestedLinks] = useState<SuggestedLink[]>([]);
@@ -59,7 +58,6 @@ export default function NewIdeaPage() {
 
   useEffect(() => {
     fetchObjectives().then(setObjectives).catch(console.error);
-    fetchBackgrounds().then(setBackgrounds).catch(() => {});
   }, []);
 
   const hasDetails = why.trim() || outcome.trim() || notes.trim();
@@ -70,15 +68,12 @@ export default function NewIdeaPage() {
     setErrorMsg("");
 
     try {
-      const bgContext = backgrounds.length > 0
-        ? backgrounds.map((bg) => `[${bg.category}] ${bg.title}${bg.description ? `：${bg.description}` : ""}`).join("\n")
-        : undefined;
       const progressContext = buildProgressContext(objectives);
       const combinedNotes = [notes, extraNotes].filter(Boolean).join("\n");
 
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
         ideaTitle: title, ideaWhy: why, ideaOutcome: outcome, ideaNotes: combinedNotes,
-        objectives, backgroundContext: bgContext, progressContext,
+        objectives, progressContext,
       });
       setAnalysis(result);
 

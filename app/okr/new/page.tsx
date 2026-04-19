@@ -131,7 +131,7 @@ export default function NewOKRPage() {
     if (!rawGoal.trim()) return;
     setAiLoading(true);
     try {
-      const result = await callAI<{ title: string; motivation: string; okrType: string; timeframe: string }>(
+      const result = await callAI<{ title: string; timeframe: string }>(
         "refineObjective", { rawInput: rawGoal }
       );
       setTitle(result.title);

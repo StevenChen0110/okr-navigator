@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { getSettings, saveSettings } from "@/lib/storage";
 import { AppSettings } from "@/lib/types";
 
@@ -83,16 +82,6 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      <Link
-        href="/settings/backgrounds"
-        className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-5 py-4 mt-4 hover:bg-gray-50 transition-colors"
-      >
-        <div>
-          <p className="text-sm font-medium text-gray-800">背景經歷管理</p>
-          <p className="text-xs text-gray-400 mt-0.5">記錄你的技能與經歷，提升 AI 分析準確度</p>
-        </div>
-        <span className="text-gray-300 text-sm">→</span>
-      </Link>
     </div>
   );
 }
