@@ -663,13 +663,14 @@ export default function DashboardPage() {
                       onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
                       className="flex-1 text-left flex items-center gap-2 min-w-0"
                     >
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm text-gray-800 truncate ${isDone ? "line-through" : ""}`}>{idea.title}</p>
-                      </div>
-                      <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus!]}`}>
-                        {TASK_STATUS_LABEL[idea.taskStatus!]}
-                      </span>
+                      <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through" : ""}`}>{idea.title}</p>
                       <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); const cycle: TaskStatus[] = ["todo", "in-progress", "done"]; const next = cycle[(cycle.indexOf(idea.taskStatus ?? "todo") + 1) % cycle.length]; handleSetTaskStatus(idea.id, next); }}
+                      className={`text-xs px-2 py-0.5 rounded shrink-0 whitespace-nowrap border transition-colors ${TASK_STATUS_STYLE[idea.taskStatus!]}`}
+                    >
+                      {TASK_STATUS_LABEL[idea.taskStatus!]}
                     </button>
                     {idea.needsReanalysis && (
                       <button
@@ -753,90 +754,6 @@ export default function DashboardPage() {
                           </div>
                         );
                       })()}
-
-                      {/* KR progress bars */}
-                      {links.length > 0 && (
-                        <div className="space-y-2 pt-3">
-                          {links.map((link) => {
-                            const obj = objectives.find((o) => o.id === link.objectiveId);
-                            const kr = link.krId ? obj?.keyResults.find((k) => k.id === link.krId) : null;
-                            if (!obj || !kr) return null;
-                            const completion = calcKRCompletion(kr);
-                            return (
-                              <div key={link.krId ?? link.objectiveId}>
-                                <p className="text-[11px] text-gray-400 leading-snug truncate">{obj.title}</p>
-                                <p className="text-xs text-gray-600 leading-snug truncate">{kr.title}</p>
-                                {completion !== undefined && (
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                      <div className={`h-full rounded-full transition-all ${getProgressColor(completion)}`} style={{ width: `${completion}%` }} />
-                                    </div>
-                                    <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
-                                      {kr.krType === "milestone"
-                                        ? (completion === 100 ? "完成" : "未完成")
-                                        : `${(kr.currentValue ?? 0).toFixed(1)} / ${kr.targetValue}${kr.unit ? ` ${kr.unit}` : ""}`}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* KR links editable + picker */}
-                      <div className="space-y-1.5">
-                        <LinkedObjsEditable
-                          links={links}
-                          objectives={objectives}
-                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
-                        />
-                        <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
-                          {isPicking ? "完成指定" : "＋ 指定 KR"}
-                        </button>
-                        {isPicking && (
-                          <div className="border border-gray-200 rounded-lg overflow-hidden">
-                            {objectives.map((obj) => (
-                              <div key={obj.id}>
-                                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
-                                {obj.keyResults.map((kr) => {
-                                  const alreadyLinked = links.some((l) => l.krId === kr.id);
-                                  const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
-                                  return (
-                                    <button key={kr.id}
-                                      onClick={() => alreadyLinked
-                                        ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
-                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
-                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
-                                    >
-                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
-                                        {alreadyLinked && "✓"}
-                                      </span>
-                                      <span className="flex-1 truncate">{kr.title}</span>
-                                      <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Task status buttons */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                          <button key={s} onClick={() => handleSetTaskStatus(idea.id, s)}
-                            className={`text-xs px-2.5 py-1 rounded transition-colors ${
-                              idea.taskStatus === s
-                                ? TASK_STATUS_STYLE[s] + " font-medium"
-                                : "text-gray-400 border border-gray-200 hover:border-gray-300"
-                            }`}
-                          >
-                            {TASK_STATUS_LABEL[s]}
-                          </button>
-                        ))}
-                      </div>
 
                       {/* Measurement input panel */}
                       {isMeasurePending && measureKRs.length > 0 && (
