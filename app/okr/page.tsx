@@ -382,50 +382,34 @@ export default function OKRPage() {
                         autoFocus
                       />
                     ) : (
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div>
                         <span className="font-medium text-sm">
                           {o.title || <span className="text-gray-300">未命名目標</span>}
                         </span>
-                        {o.meta?.timeframe && (
-                          <span className="text-xs text-gray-400">{o.meta.timeframe}</span>
-                        )}
-                        {oCompletion !== undefined && (
-                          <span
-                            className={`text-xs font-bold ${
-                              oCompletion >= 70
-                                ? "text-green-600"
-                                : oCompletion >= 40
-                                ? "text-amber-500"
-                                : "text-red-500"
-                            }`}
-                          >
-                            {oCompletion}%
-                          </span>
-                        )}
-                        {/* Status badge — click to cycle */}
-                        <button
-                          onClick={() => cycleStatus(o.id, currentStatus)}
-                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${STATUS_CONFIG[currentStatus].color}`}
-                          title="點擊切換狀態"
-                        >
-                          {STATUS_CONFIG[currentStatus].label}
-                        </button>
-                        {/* Priority picker */}
-                        <div className="flex items-center gap-0.5">
-                          {([1, 2, 3] as const).map((p) => (
-                            <button
-                              key={p}
-                              onClick={() => updateObjective(o.id, { meta: { ...o.meta, priority: p } })}
-                              className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
-                                (o.meta?.priority ?? 2) === p
-                                  ? "bg-indigo-600 text-white border-indigo-600"
-                                  : "border-gray-200 text-gray-400 hover:border-indigo-300"
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          {o.meta?.timeframe && (
+                            <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5">{o.meta.timeframe}</span>
+                          )}
+                          {oCompletion !== undefined && (
+                            <span
+                              className={`text-xs font-bold ${
+                                oCompletion >= 70
+                                  ? "text-green-600"
+                                  : oCompletion >= 40
+                                  ? "text-amber-500"
+                                  : "text-red-500"
                               }`}
-                              title={`優先級 P${p}`}
                             >
-                              P{p}
-                            </button>
-                          ))}
+                              {oCompletion}%
+                            </span>
+                          )}
+                          <button
+                            onClick={() => cycleStatus(o.id, currentStatus)}
+                            className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${STATUS_CONFIG[currentStatus].color}`}
+                            title="點擊切換狀態"
+                          >
+                            {STATUS_CONFIG[currentStatus].label}
+                          </button>
                         </div>
                       </div>
                     )}
@@ -433,37 +417,41 @@ export default function OKRPage() {
                     {/* Edit mode: meta fields */}
                     {isEditing && (
                       <div className="space-y-2 mb-3 mt-2">
-                        {/* Timeframe */}
-                        <div className="flex gap-1.5">
-                          {TIMEFRAME_OPTIONS.map((t) => (
-                            <button
-                              key={t}
-                              onClick={() => updateDraft({ meta: { ...draft!.meta, timeframe: t } })}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                draft!.meta?.timeframe === t
-                                  ? "bg-indigo-600 text-white border-indigo-600"
-                                  : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                              }`}
-                            >
-                              {t}
-                            </button>
-                          ))}
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-400 w-8 shrink-0">時程</span>
+                          <div className="flex gap-1.5">
+                            {TIMEFRAME_OPTIONS.map((t) => (
+                              <button
+                                key={t}
+                                onClick={() => updateDraft({ meta: { ...draft!.meta, timeframe: t } })}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                  draft!.meta?.timeframe === t
+                                    ? "bg-indigo-600 text-white border-indigo-600"
+                                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
+                                }`}
+                              >
+                                {t}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                        {/* Status */}
-                        <div className="flex gap-1.5">
-                          {(["active", "completed", "archived"] as const).map((s) => (
-                            <button
-                              key={s}
-                              onClick={() => updateDraft({ status: s })}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                (draft!.status ?? "active") === s
-                                  ? STATUS_CONFIG[s].color
-                                  : "border-gray-200 text-gray-400"
-                              }`}
-                            >
-                              {STATUS_CONFIG[s].label}
-                            </button>
-                          ))}
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-400 w-8 shrink-0">狀態</span>
+                          <div className="flex gap-1.5">
+                            {(["active", "completed", "archived"] as const).map((s) => (
+                              <button
+                                key={s}
+                                onClick={() => updateDraft({ status: s })}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                  (draft!.status ?? "active") === s
+                                    ? STATUS_CONFIG[s].color
+                                    : "border-gray-200 text-gray-400"
+                                }`}
+                              >
+                                {STATUS_CONFIG[s].label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -611,7 +599,15 @@ export default function OKRPage() {
                               KR{kri + 1}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-gray-800 leading-snug">{kr.title}</p>
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="text-sm text-gray-800 leading-snug flex-1">{kr.title}</p>
+                                <button
+                                  onClick={() => router.push(`/idea/new?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`)}
+                                  className="text-xs text-indigo-400 hover:text-indigo-600 font-medium shrink-0 whitespace-nowrap"
+                                >
+                                  + 新增想法
+                                </button>
+                              </div>
 
                               {/* Progress row */}
                               {kr.targetValue !== undefined && kr.targetValue > 0 && (
@@ -763,32 +759,27 @@ export default function OKRPage() {
                                   ))}
                                 </div>
                               )}
-                            </div>
+                                {/* Linked ideas/tasks for this KR */}
+                              {(() => {
+                                const linked = ideas.filter(i => (i.linkedKRs ?? []).some(l => l.krId === kr.id));
+                                if (linked.length === 0) return null;
+                                return (
+                                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                    {linked.map(idea => (
+                                      <span key={idea.id} className={`text-xs px-2 py-0.5 rounded-full border ${
+                                        idea.taskStatus === "done"
+                                          ? "text-gray-400 bg-gray-50 border-gray-200 line-through"
+                                          : idea.taskStatus
+                                          ? "text-indigo-600 bg-indigo-50 border-indigo-200"
+                                          : "text-gray-600 bg-gray-50 border-gray-200"
+                                      }`}>{idea.title}</span>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+                          </div>
 
                           </div>
-                          {/* Linked ideas/tasks for this KR */}
-                          {(() => {
-                            const linked = ideas.filter(i => (i.linkedKRs ?? []).some(l => l.krId === kr.id));
-                            return (
-                              <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                {linked.map(idea => (
-                                  <span key={idea.id} className={`text-xs px-2 py-0.5 rounded-full border ${
-                                    idea.taskStatus === "done"
-                                      ? "text-gray-400 bg-gray-50 border-gray-200 line-through"
-                                      : idea.taskStatus
-                                      ? "text-indigo-600 bg-indigo-50 border-indigo-200"
-                                      : "text-gray-600 bg-gray-50 border-gray-200"
-                                  }`}>{idea.title}</span>
-                                ))}
-                                <button
-                                  onClick={() => router.push(`/idea/new?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`)}
-                                  className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
-                                >
-                                  + 新增想法
-                                </button>
-                              </div>
-                            );
-                          })()}
                         </div>
                       )}
                     </div>
