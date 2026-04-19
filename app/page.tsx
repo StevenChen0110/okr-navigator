@@ -138,6 +138,7 @@ export default function DashboardPage() {
   // measurement: taskId that is awaiting measurement input before marking done
   const [pendingMeasure, setPendingMeasure] = useState<string | null>(null);
   const [measureInputs, setMeasureInputs] = useState<MeasurementInputs>({});
+  const [expandedAnalysisIds, setExpandedAnalysisIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchIdeas().then(setIdeas).catch(console.error);
@@ -298,45 +299,42 @@ export default function DashboardPage() {
   }
 
   function applyTaskUndo(task: Idea) {
-    const linkedKRs = collectLinkedKRs(task);
-    if (linkedKRs.length === 0) return;
+    const linkedKRLinks = (task.linkedKRs ?? []).filter((l) => l.krId);
+    if (linkedKRLinks.length === 0) return;
 
-    const updatedObjectives = new Map<string, Objective>();
-    for (const { obj, kr } of linkedKRs) {
-      const current = updatedObjectives.get(obj.id) ?? obj;
-      const krType = kr.krType ?? "cumulative";
-      let newValue: number | undefined;
+    setObjectives((prevObjs) => {
+      const updatedMap = new Map<string, Objective>();
 
-      if (krType === "cumulative") {
-        const linkedKRsInObj = linkedKRs.filter((r) => r.obj.id === obj.id);
-        const scores = linkedKRsInObj.map((r) => {
-          const objScore = task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id);
-          return objScore?.keyResultScores.find((ks) => ks.keyResultId === r.kr.id)?.score ?? 1;
-        });
-        const thisScore = (() => {
-          const objScore = task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id);
-          return objScore?.keyResultScores.find((ks) => ks.keyResultId === kr.id)?.score ?? 1;
-        })();
-        const totalScore = scores.reduce((a, b) => a + b, 0) || 1;
-        const weight = thisScore / totalScore;
-        const increment = (kr.incrementPerTask ?? 1) * weight;
-        newValue = Math.max(0, (kr.currentValue ?? 0) - increment);
-      } else if (krType === "milestone") {
-        newValue = 0;
-      } else if (krType === "measurement") {
-        newValue = 0;
-      }
+      for (const link of linkedKRLinks) {
+        const obj = prevObjs.find((o) => o.id === link.objectiveId);
+        if (!obj || !link.krId) continue;
+        const current = updatedMap.get(obj.id) ?? obj;
+        const kr = current.keyResults.find((k) => k.id === link.krId);
+        if (!kr) continue;
+        const krType = kr.krType ?? "cumulative";
+        let newValue: number | undefined;
 
-      if (newValue !== undefined) {
+        if (krType === "cumulative") {
+          const linksInObj = linkedKRLinks.filter((l) => l.objectiveId === obj.id);
+          const getScore = (krId: string) =>
+            task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id)
+              ?.keyResultScores.find((ks) => ks.keyResultId === krId)?.score ?? 1;
+          const totalScore = linksInObj.reduce((sum, l) => sum + getScore(l.krId!), 0) || 1;
+          const weight = getScore(kr.id) / totalScore;
+          newValue = Math.max(0, (kr.currentValue ?? 0) - (kr.incrementPerTask ?? 1) * weight);
+        } else {
+          newValue = 0; // milestone and measurement: reset to 0
+        }
+
         const updatedKRs = current.keyResults.map((k) =>
-          k.id === kr.id ? { ...k, currentValue: newValue } : k
+          k.id === link.krId ? { ...k, currentValue: newValue } : k
         );
-        updatedObjectives.set(obj.id, { ...current, keyResults: updatedKRs });
+        updatedMap.set(obj.id, { ...current, keyResults: updatedKRs });
       }
-    }
 
-    updatedObjectives.forEach((updatedObj) => saveObjective(updatedObj).catch(console.error));
-    setObjectives((prev) => prev.map((o) => updatedObjectives.get(o.id) ?? o));
+      updatedMap.forEach((o) => saveObjective(o).catch(console.error));
+      return prevObjs.map((o) => updatedMap.get(o.id) ?? o);
+    });
   }
 
   function confirmMeasurement(taskId: string) {
@@ -761,31 +759,48 @@ export default function DashboardPage() {
                         );
                       })()}
 
-                      {/* 任務分析 */}
-                      {idea.analysis && (
-                        <div className="space-y-2 border-t border-gray-100 pt-3">
-                          <p className="text-xs font-medium text-gray-600">任務分析</p>
-                          {idea.analysis.objectiveScores.map((os) => (
-                            <div key={os.objectiveId}>
-                              <div className="flex justify-between items-center mb-0.5">
-                                <span className="text-xs text-gray-600 truncate flex-1 mr-2">{os.objectiveTitle}</span>
-                                <span className={`text-xs font-bold shrink-0 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
-                              </div>
-                              <p className="text-xs text-gray-500">{os.reasoning}</p>
-                              <div className="space-y-0.5 pl-2 mt-1">
-                                {os.keyResultScores.map((krs) => (
-                                  <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
+                      {/* 任務分析（可折疊）*/}
+                      {idea.analysis && (() => {
+                        const isAnalysisOpen = expandedAnalysisIds.has(idea.id);
+                        return (
+                          <div className="border-t border-gray-100 pt-3">
+                            <button
+                              onClick={() => setExpandedAnalysisIds((prev) => {
+                                const s = new Set(prev);
+                                isAnalysisOpen ? s.delete(idea.id) : s.add(idea.id);
+                                return s;
+                              })}
+                              className="flex items-center gap-1.5 w-full text-left"
+                            >
+                              <span className="text-xs font-medium text-gray-600">任務分析</span>
+                              <span className="text-gray-300 text-[10px]">{isAnalysisOpen ? "▲" : "▼"}</span>
+                            </button>
+                            {isAnalysisOpen && (
+                              <div className="space-y-2 mt-2">
+                                {idea.analysis.objectiveScores.map((os) => (
+                                  <div key={os.objectiveId}>
+                                    <div className="flex justify-between items-center mb-0.5">
+                                      <span className="text-xs text-gray-600 truncate flex-1 mr-2">{os.objectiveTitle}</span>
+                                      <span className={`text-xs font-bold shrink-0 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
+                                    </div>
+                                    <p className="text-xs text-gray-500">{os.reasoning}</p>
+                                    <div className="space-y-0.5 pl-2 mt-1">
+                                      {os.keyResultScores.map((krs) => (
+                                        <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
+                                      ))}
+                                    </div>
+                                  </div>
                                 ))}
+                                {idea.analysis.risks.length > 0 && (
+                                  <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
+                                    <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          ))}
-                          {idea.analysis.risks.length > 0 && (
-                            <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
-                              <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Measurement input panel */}
                       {isMeasurePending && measureKRs.length > 0 && (
