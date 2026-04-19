@@ -89,6 +89,10 @@ export default function OKRPage() {
   // AI classifying KRs in edit mode (set of krId)
   const [classifyingKRs, setClassifyingKRs] = useState<Set<string>>(new Set());
 
+  // AI KR rewrite suggestions shown in edit mode
+  const [krSuggestions, setKrSuggestions] = useState<Record<string, string>>({});
+  const [krSuggestionOpen, setKrSuggestionOpen] = useState<Set<string>>(new Set());
+
   // Check-in
   const [checkInOpen, setCheckInOpen] = useState<string | null>(null); // krId
   const [checkInVal, setCheckInVal] = useState("");
@@ -206,11 +210,26 @@ export default function OKRPage() {
   function startEdit(o: Objective) {
     setEditingId(o.id);
     setEditDraft(JSON.parse(JSON.stringify(o)));
+    setKrSuggestions({});
+    setKrSuggestionOpen(new Set());
+    // Fetch AI rewrite suggestions for each existing KR
+    o.keyResults.forEach((kr) => {
+      if (!kr.title.trim()) return;
+      callAI<string>("refineKRTitle", {
+        objectiveTitle: o.title,
+        currentTitle: kr.title,
+        userInstruction: "請用「完成後，什麼事情會不一樣？」的角度改寫這個 KR，描述一個可觀察的完成狀態，一句話即可",
+      }).then((suggestion) => {
+        setKrSuggestions((prev) => ({ ...prev, [kr.id]: suggestion }));
+      }).catch(() => {});
+    });
   }
 
   function cancelEdit() {
     setEditingId(null);
     setEditDraft(null);
+    setKrSuggestions({});
+    setKrSuggestionOpen(new Set());
   }
 
   function saveEdit() {
@@ -452,62 +471,41 @@ export default function OKRPage() {
                       </div>
                     )}
 
-                    {/* Edit mode: type + timeframe + status */}
+                    {/* Edit mode: meta fields */}
                     {isEditing && (
-                      <div className="space-y-2 mb-2">
-                        <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
+                      <div className="space-y-2.5 mb-3 mt-2">
+                        {/* Type */}
+                        <div className="flex gap-1.5 bg-gray-100 rounded-xl p-1">
                           {(["committed", "aspirational"] as const).map((t) => (
                             <button
                               key={t}
-                              onClick={() =>
-                                updateDraft({ meta: { ...draft!.meta, okrType: t } })
-                              }
+                              onClick={() => updateDraft({ meta: { ...draft!.meta, okrType: t } })}
                               className={`flex-1 py-1 rounded-lg text-xs font-medium transition-colors ${
-                                draft!.meta?.okrType === t
-                                  ? "bg-white shadow-sm text-gray-900"
-                                  : "text-gray-400"
+                                draft!.meta?.okrType === t ? "bg-white shadow-sm text-gray-900" : "text-gray-400"
                               }`}
                             >
                               {t === "committed" ? "承諾型（必達）" : "願景型（挑戰）"}
                             </button>
                           ))}
                         </div>
-                        <div className="flex gap-2 flex-wrap">
-                          {TIMEFRAME_OPTIONS.map((t) => (
-                            <button
-                              key={t}
-                              onClick={() =>
-                                updateDraft({ meta: { ...draft!.meta, timeframe: t } })
-                              }
-                              className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                draft!.meta?.timeframe === t
-                                  ? "bg-indigo-600 text-white border-indigo-600"
-                                  : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                              }`}
-                            >
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                        {/* Status in edit mode */}
-                        <div className="flex gap-2">
-                          {(["active", "completed", "archived"] as const).map((s) => (
-                            <button
-                              key={s}
-                              onClick={() => updateDraft({ status: s })}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                (draft!.status ?? "active") === s
-                                  ? STATUS_CONFIG[s].color
-                                  : "border-gray-200 text-gray-400"
-                              }`}
-                            >
-                              {STATUS_CONFIG[s].label}
-                            </button>
-                          ))}
-                        </div>
-                        {/* Priority in edit mode */}
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-400">優先級</span>
+                        {/* Timeframe + Priority on same row */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex gap-1.5">
+                            {TIMEFRAME_OPTIONS.map((t) => (
+                              <button
+                                key={t}
+                                onClick={() => updateDraft({ meta: { ...draft!.meta, timeframe: t } })}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                  draft!.meta?.timeframe === t
+                                    ? "bg-indigo-600 text-white border-indigo-600"
+                                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
+                                }`}
+                              >
+                                {t}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="h-4 w-px bg-gray-200" />
                           <div className="flex gap-1">
                             {([1, 2, 3] as const).map((p) => (
                               <button
@@ -525,27 +523,28 @@ export default function OKRPage() {
                             ))}
                           </div>
                         </div>
+                        {/* Status */}
+                        <div className="flex gap-1.5">
+                          {(["active", "completed", "archived"] as const).map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => updateDraft({ status: s })}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                (draft!.status ?? "active") === s
+                                  ? STATUS_CONFIG[s].color
+                                  : "border-gray-200 text-gray-400"
+                              }`}
+                            >
+                              {STATUS_CONFIG[s].label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
 
                   {/* Action buttons */}
-                  {isEditing ? (
-                    <div className="flex gap-2 shrink-0">
-                      <button
-                        onClick={saveEdit}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
-                      >
-                        儲存
-                      </button>
-                      <button
-                        onClick={cancelEdit}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
-                      >
-                        取消
-                      </button>
-                    </div>
-                  ) : (
+                  {!isEditing && (
                     <div className="flex gap-2 shrink-0">
                       <button
                         onClick={() => startEdit(o)}
@@ -643,6 +642,38 @@ export default function OKRPage() {
                                 placeholder="單位"
                                 className="w-14 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none"
                               />
+                            </div>
+                          )}
+                          {/* AI rewrite suggestion (collapsible) */}
+                          {krSuggestions[kr.id] && (
+                            <div className="ml-8">
+                              <button
+                                type="button"
+                                onClick={() => setKrSuggestionOpen((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(kr.id)) next.delete(kr.id); else next.add(kr.id);
+                                  return next;
+                                })}
+                                className="text-xs text-indigo-400 hover:text-indigo-600 flex items-center gap-1"
+                              >
+                                <span className={`transition-transform ${krSuggestionOpen.has(kr.id) ? "rotate-90" : ""}`}>›</span>
+                                AI 建議改寫
+                              </button>
+                              {krSuggestionOpen.has(kr.id) && (
+                                <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 flex items-start justify-between gap-3">
+                                  <p className="text-xs text-indigo-700 flex-1">{krSuggestions[kr.id]}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      updateDraftKR(kr.id, { title: krSuggestions[kr.id] });
+                                      setKrSuggestionOpen((prev) => { const next = new Set(prev); next.delete(kr.id); return next; });
+                                    }}
+                                    className="text-xs text-indigo-600 font-medium hover:text-indigo-800 shrink-0"
+                                  >
+                                    套用
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -843,15 +874,29 @@ export default function OKRPage() {
                   ))}
                 </div>
 
-                {/* Edit mode: add KR */}
+                {/* Edit mode: add KR + save/cancel */}
                 {isEditing && (
-                  <div className="mt-3">
+                  <div className="mt-4 flex items-center justify-between">
                     <button
                       onClick={addDraftKR}
                       className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
                     >
                       + 新增 KR
                     </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={cancelEdit}
+                        className="text-xs px-4 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={saveEdit}
+                        className="text-xs px-4 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
+                      >
+                        儲存
+                      </button>
+                    </div>
                   </div>
                 )}
 
