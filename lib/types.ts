@@ -73,6 +73,7 @@ export interface IdeaAnalysis {
 }
 
 export type TaskStatus = "todo" | "in-progress" | "done";
+export type IdeaStatus = "active" | "shelved" | "deleted";
 
 export interface TodoItem {
   id: string;
@@ -91,6 +92,7 @@ export interface Idea {
   completedAt?: string;
   linkedKRs?: IdeaKRLink[];
   taskStatus?: TaskStatus; // set when idea is promoted to a task
+  ideaStatus?: IdeaStatus; // lifecycle status for ideas and tasks
   quickAnalysis?: boolean;
   needsReanalysis?: boolean;
   todos?: TodoItem[];

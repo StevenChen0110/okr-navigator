@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaKRLink, IdeaAnalysis, TodoItem } from "@/lib/types";
-import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
+import { Idea, Objective, KeyResult, CheckIn, TaskStatus, IdeaStatus, IdeaKRLink, IdeaAnalysis, TodoItem } from "@/lib/types";
+import { fetchIdeas, fetchObjectives, removeIdea, saveIdea, saveObjective, updateIdeaTaskStatus, updateIdeaStatus } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
 
@@ -139,6 +139,8 @@ export default function DashboardPage() {
   const [pendingMeasure, setPendingMeasure] = useState<string | null>(null);
   const [measureInputs, setMeasureInputs] = useState<MeasurementInputs>({});
   const [expandedAnalysisIds, setExpandedAnalysisIds] = useState<Set<string>>(new Set());
+  const [warehouseTab, setWarehouseTab] = useState<"ideas" | "tasks">("ideas");
+  const [taskFilter, setTaskFilter] = useState<"active" | "shelved" | "deleted">("active");
 
   useEffect(() => {
     fetchIdeas().then(setIdeas).catch(console.error);
@@ -149,6 +151,20 @@ export default function DashboardPage() {
 
   function handleDelete(id: string) {
     if (!confirm("確定要刪除這個 Idea？")) return;
+    removeIdea(id).catch(console.error);
+    setIdeas((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  function setIdeaStatus(id: string, status: IdeaStatus) {
+    updateIdeaStatus(id, status).catch(console.error);
+    setIdeas((prev) => prev.map((i) => i.id === id ? { ...i, ideaStatus: status } : i));
+  }
+
+  function handleSoftDelete(id: string) { setIdeaStatus(id, "deleted"); }
+  function handleShelve(id: string) { setIdeaStatus(id, "shelved"); }
+  function handleRestore(id: string) { setIdeaStatus(id, "active"); }
+  function handlePermanentDelete(id: string) {
+    if (!confirm("永久刪除後無法復原，確定嗎？")) return;
     removeIdea(id).catch(console.error);
     setIdeas((prev) => prev.filter((i) => i.id !== id));
   }
@@ -450,17 +466,13 @@ export default function DashboardPage() {
 
   const tasks = ideas.filter((i) => i.taskStatus != null);
   const nonTasks = ideas.filter((i) => i.taskStatus == null);
-  const sortedIdeas = [...ideas].sort((a, b) => {
-    const aDone = a.taskStatus === "done" ? 1 : 0;
-    const bDone = b.taskStatus === "done" ? 1 : 0;
-    if (aDone !== bDone) return aDone - bDone;
-    return (calcScore(b) ?? -1) - (calcScore(a) ?? -1);
-  });
-  const taskStatusCounts = {
-    todo: tasks.filter((t) => t.taskStatus === "todo").length,
-    "in-progress": tasks.filter((t) => t.taskStatus === "in-progress").length,
-    done: tasks.filter((t) => t.taskStatus === "done").length,
-  };
+
+  // warehouse filters
+  const activeIdeas = nonTasks.filter((i) => (i.ideaStatus ?? "active") !== "deleted");
+  const deletedIdeas = nonTasks.filter((i) => i.ideaStatus === "deleted");
+  const activeTasks = tasks.filter((i) => (i.ideaStatus ?? "active") === "active");
+  const shelvedTasks = tasks.filter((i) => i.ideaStatus === "shelved");
+  const deletedTasks = tasks.filter((i) => i.ideaStatus === "deleted");
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
@@ -482,11 +494,11 @@ export default function DashboardPage() {
           )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-indigo-600">{tasks.length}</div>
+          <div className="text-2xl font-bold text-indigo-600">{activeTasks.length}</div>
           <div className="text-xs text-gray-500 mt-1">Tasks</div>
           <div className="mt-1 text-xs space-x-1">
-            {taskStatusCounts["in-progress"] > 0 && <span className="text-amber-500">{taskStatusCounts["in-progress"]} 進行中</span>}
-            {taskStatusCounts.done > 0 && <span className="text-green-500">{taskStatusCounts.done} 完成</span>}
+            {activeTasks.filter(t => t.taskStatus === "in-progress").length > 0 && <span className="text-amber-500">{activeTasks.filter(t => t.taskStatus === "in-progress").length} 進行中</span>}
+            {activeTasks.filter(t => t.taskStatus === "done").length > 0 && <span className="text-green-500">{activeTasks.filter(t => t.taskStatus === "done").length} 完成</span>}
           </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -619,21 +631,79 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Tasks ──────────────────────────────────────────────────────────── */}
-      {tasks.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700">Tasks</h2>
-              <p className="text-xs text-gray-400">
-                {taskStatusCounts["in-progress"] > 0 && `${taskStatusCounts["in-progress"]} 進行中  `}
-                {taskStatusCounts["todo"] > 0 && `${taskStatusCounts["todo"]} 待辦  `}
-                {taskStatusCounts["done"] > 0 && `${taskStatusCounts["done"]} 完成`}
-              </p>
-            </div>
+      {/* ── Ideas / Tasks 倉庫 ──────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        {/* Tab header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <div className="flex gap-1">
+            {(["ideas", "tasks"] as const).map((tab) => (
+              <button key={tab} onClick={() => setWarehouseTab(tab)}
+                className={`text-sm font-semibold px-2.5 py-1 rounded transition-colors ${warehouseTab === tab ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:text-gray-600"}`}>
+                {tab === "ideas" ? `Ideas${activeIdeas.length > 0 ? ` ${activeIdeas.length}` : ""}` : `Tasks${activeTasks.length > 0 ? ` ${activeTasks.length}` : ""}`}
+              </button>
+            ))}
           </div>
+          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增評估</Link>
+        </div>
+
+        {/* ── Tasks tab ─────────────────────────────────────────────────────── */}
+        {warehouseTab === "tasks" && (
+        <div>
+          {/* Sub-filter */}
+          <div className="flex gap-1 px-4 py-2 border-b border-gray-100">
+            {(["active", "shelved", "deleted"] as const).map((f) => {
+              const count = f === "active" ? activeTasks.length : f === "shelved" ? shelvedTasks.length : deletedTasks.length;
+              return (
+                <button key={f} onClick={() => setTaskFilter(f)}
+                  className={`text-xs px-2.5 py-1 rounded transition-colors ${taskFilter === f ? "bg-indigo-50 text-indigo-600 font-medium" : "text-gray-400 hover:text-gray-600"}`}>
+                  {f === "active" ? "進行中" : f === "shelved" ? "暫存" : "垃圾桶"}{count > 0 ? ` ${count}` : ""}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Shelved tasks */}
+          {taskFilter === "shelved" && (
+            shelvedTasks.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-gray-400">沒有暫存的 Task</div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {shelvedTasks.map((idea) => (
+                  <div key={idea.id} className="px-4 py-3 flex items-center gap-2">
+                    <p className="text-sm text-gray-700 flex-1 truncate">{idea.title}</p>
+                    <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus!]}`}>{TASK_STATUS_LABEL[idea.taskStatus!]}</span>
+                    <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
+                    <button onClick={() => handleSoftDelete(idea.id)} className="text-gray-300 hover:text-red-400 text-base leading-none px-1 shrink-0">×</button>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* Deleted tasks */}
+          {taskFilter === "deleted" && (
+            deletedTasks.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-gray-400">垃圾桶是空的</div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {deletedTasks.map((idea) => (
+                  <div key={idea.id} className="px-4 py-3 flex items-center gap-2 opacity-60">
+                    <p className="text-sm text-gray-500 flex-1 truncate line-through">{idea.title}</p>
+                    <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
+                    <button onClick={() => handlePermanentDelete(idea.id)} className="text-xs text-red-400 hover:text-red-600 whitespace-nowrap shrink-0">永久刪除</button>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* Active tasks */}
+          {taskFilter === "active" && (
+          activeTasks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-gray-400">還沒有 Task，從 Ideas 轉換</div>
+          ) : (
           <div className="divide-y divide-gray-50">
-            {[...tasks]
+            {[...activeTasks]
               .sort((a, b) => {
                 const aDone = a.taskStatus === "done" ? 1 : 0;
                 const bDone = b.taskStatus === "done" ? 1 : 0;
@@ -645,7 +715,6 @@ export default function DashboardPage() {
               const isDone = idea.taskStatus === "done";
               const isMeasurePending = pendingMeasure === idea.id;
               const links = idea.linkedKRs ?? [];
-              const isPicking = showObjPickerId === idea.id;
               const measureKRs = links.flatMap((link) => {
                 if (!link.krId) return [];
                 const obj = objectives.find((o) => o.id === link.objectiveId);
@@ -667,30 +736,20 @@ export default function DashboardPage() {
                     </button>
                     <div className="flex gap-1 shrink-0">
                       {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                        <button
-                          key={s}
+                        <button key={s}
                           onClick={(e) => { e.stopPropagation(); handleSetTaskStatus(idea.id, s); }}
                           className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}
-                        >
-                          {TASK_STATUS_LABEL[s]}
-                        </button>
+                        >{TASK_STATUS_LABEL[s]}</button>
                       ))}
                     </div>
                     {idea.needsReanalysis && (
-                      <button
-                        onClick={() => handleReanalyze(idea)}
-                        disabled={reanalyzingIds.has(idea.id)}
-                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
-                      >
+                      <button onClick={() => handleReanalyze(idea)} disabled={reanalyzingIds.has(idea.id)}
+                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50">
                         {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
                       </button>
                     )}
-                    <button
-                      onClick={() => handleDelete(idea.id)}
-                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
-                    >
-                      ×
-                    </button>
+                    <button onClick={() => handleShelve(idea.id)} className="shrink-0 text-gray-300 hover:text-amber-500 transition-colors text-xs px-1" title="暫存">⊸</button>
+                    <button onClick={() => handleSoftDelete(idea.id)} className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1">×</button>
                   </div>
 
                   {/* Expanded content */}
@@ -714,10 +773,8 @@ export default function DashboardPage() {
                                     <div className={`h-full rounded-full transition-all ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
                                   </div>
                                   {allDone && idea.taskStatus !== "done" && (
-                                    <button
-                                      onClick={() => handleSetTaskStatus(idea.id, "done")}
-                                      className="text-xs px-2 py-0.5 bg-green-600 text-white rounded-lg hover:bg-green-700 shrink-0 whitespace-nowrap"
-                                    >
+                                    <button onClick={() => handleSetTaskStatus(idea.id, "done")}
+                                      className="text-xs px-2 py-0.5 bg-green-600 text-white rounded-lg hover:bg-green-700 shrink-0 whitespace-nowrap">
                                       標記完成
                                     </button>
                                   )}
@@ -727,15 +784,11 @@ export default function DashboardPage() {
                             <div className="space-y-0.5">
                               {todos.map((todo) => (
                                 <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
-                                  <button
-                                    onClick={() => handleToggleTodo(idea.id, todo.id)}
-                                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}
-                                  >
+                                  <button onClick={() => handleToggleTodo(idea.id, todo.id)}
+                                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}>
                                     {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
                                   </button>
-                                  <input
-                                    ref={(el) => { todoInputRefs.current[todo.id] = el; }}
-                                    type="text"
+                                  <input ref={(el) => { todoInputRefs.current[todo.id] = el; }} type="text"
                                     defaultValue={todo.title}
                                     onBlur={(e) => handleUpdateTodoTitle(idea.id, todo.id, e.target.value)}
                                     onKeyDown={(e) => {
@@ -743,14 +796,11 @@ export default function DashboardPage() {
                                       if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDeleteTodo(idea.id, todo.id); }
                                     }}
                                     className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
-                                    placeholder="待辦事項"
-                                  />
+                                    placeholder="待辦事項" />
                                 </div>
                               ))}
-                              <button
-                                onClick={() => handleAddTodoAfter(idea.id)}
-                                className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white transition-colors"
-                              >
+                              <button onClick={() => handleAddTodoAfter(idea.id)}
+                                className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white transition-colors">
                                 <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
                                 新增待辦
                               </button>
@@ -764,14 +814,8 @@ export default function DashboardPage() {
                         const isAnalysisOpen = expandedAnalysisIds.has(idea.id);
                         return (
                           <div className="border-t border-gray-100 pt-3">
-                            <button
-                              onClick={() => setExpandedAnalysisIds((prev) => {
-                                const s = new Set(prev);
-                                isAnalysisOpen ? s.delete(idea.id) : s.add(idea.id);
-                                return s;
-                              })}
-                              className="flex items-center gap-1.5 w-full text-left"
-                            >
+                            <button onClick={() => setExpandedAnalysisIds((prev) => { const s = new Set(prev); isAnalysisOpen ? s.delete(idea.id) : s.add(idea.id); return s; })}
+                              className="flex items-center gap-1.5 w-full text-left">
                               <span className="text-xs font-medium text-gray-600">任務分析</span>
                               <span className="text-gray-300 text-[10px]">{isAnalysisOpen ? "▲" : "▼"}</span>
                             </button>
@@ -811,12 +855,9 @@ export default function DashboardPage() {
                               <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
                               <input type="number"
                                 value={measureInputs[idea.id]?.[kr.id] ?? ""}
-                                onChange={(e) => setMeasureInputs((prev) => ({
-                                  ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value },
-                                }))}
+                                onChange={(e) => setMeasureInputs((prev) => ({ ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value } }))}
                                 placeholder={`目前 ${kr.metricName ?? "數值"}（${kr.unit ?? ""}）`}
-                                className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              />
+                                className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                             </div>
                           ))}
                           <div className="flex gap-2 pt-1">
@@ -831,28 +872,18 @@ export default function DashboardPage() {
               );
             })}
           </div>
+          ))}
         </div>
-      )}
+        )}
 
-      {/* ── Ideas 排行 ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700">Ideas</h2>
-            <p className="text-xs text-gray-400">依 OKR 貢獻分數排序</p>
-          </div>
-          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
-        </div>
-
-        {nonTasks.length === 0 ? (
-          <div className="px-4 py-8 text-center text-xs text-gray-400">
-            還沒有 Idea，點擊「新增」開始
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {[...nonTasks]
-              .sort((a, b) => (calcScore(b) ?? -1) - (calcScore(a) ?? -1))
-              .map((idea) => {
+        {/* ── Ideas tab ──────────────────────────────────────────────────────── */}
+        {warehouseTab === "ideas" && (
+        <div>
+          {activeIdeas.length === 0 && deletedIdeas.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-gray-400">還沒有 Idea，點擊「+ 新增評估」開始</div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {[...activeIdeas].sort((a, b) => (calcScore(b) ?? -1) - (calcScore(a) ?? -1)).map((idea) => {
               const isExpanded = expandedIdeaId === idea.id;
               const wScore = calcScore(idea);
               const links = idea.linkedKRs ?? [];
@@ -862,57 +893,40 @@ export default function DashboardPage() {
                 <div key={idea.id}>
                   {/* Row header */}
                   <div className="px-4 py-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
-                      className="flex-1 text-left flex items-center gap-2 min-w-0"
-                    >
+                    <button onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0">
                       <p className="text-sm text-gray-800 flex-1 min-w-0 truncate">{idea.title}</p>
                       {wScore !== null ? (
-                        <span className={`text-sm font-bold shrink-0 ${
-                          wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"
-                        }`}>{wScore.toFixed(1)}</span>
+                        <span className={`text-sm font-bold shrink-0 ${wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{wScore.toFixed(1)}</span>
                       ) : (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0 whitespace-nowrap">待評估</span>
                       )}
                       <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
                     </button>
                     {idea.needsReanalysis && (
-                      <button
-                        onClick={() => handleReanalyze(idea)}
-                        disabled={reanalyzingIds.has(idea.id)}
-                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
-                      >
+                      <button onClick={() => handleReanalyze(idea)} disabled={reanalyzingIds.has(idea.id)}
+                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50">
                         {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
                       </button>
                     )}
-                    <button
-                      onClick={() => handlePromoteToTask(idea.id)}
-                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
-                    >
+                    <button onClick={() => handlePromoteToTask(idea.id)}
+                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap">
                       → Task
                     </button>
-                    <button
-                      onClick={() => handleDelete(idea.id)}
-                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1"
-                    >
-                      ×
-                    </button>
+                    <button onClick={() => handleSoftDelete(idea.id)}
+                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1">×</button>
                   </div>
 
                   {/* Expanded content */}
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
-
-                      {/* Analysis reasoning */}
                       {idea.analysis && (
                         <div className="space-y-2 pt-3">
                           {idea.analysis.objectiveScores.map((os) => (
                             <div key={os.objectiveId}>
                               <div className="flex justify-between items-center mb-1">
                                 <span className="text-xs font-medium text-gray-600">{os.objectiveTitle}</span>
-                                <span className={`text-xs font-bold ${
-                                  os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"
-                                }`}>{os.overallScore.toFixed(1)}</span>
+                                <span className={`text-xs font-bold ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
                               </div>
                               <p className="text-xs text-gray-500 mb-1">{os.reasoning}</p>
                               <div className="space-y-0.5 pl-2">
@@ -937,14 +951,9 @@ export default function DashboardPage() {
                           )}
                         </div>
                       )}
-
-                      {/* KR links */}
                       <div className="space-y-1.5">
-                        <LinkedObjsEditable
-                          links={links}
-                          objectives={objectives}
-                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))}
-                        />
+                        <LinkedObjsEditable links={links} objectives={objectives}
+                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))} />
                         <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
                           {isPicking ? "完成指定" : "＋ 指定 KR"}
                         </button>
@@ -961,8 +970,7 @@ export default function DashboardPage() {
                                       onClick={() => alreadyLinked
                                         ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
                                         : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
-                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}
-                                    >
+                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}>
                                       <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
                                         {alreadyLinked && "✓"}
                                       </span>
@@ -981,7 +989,28 @@ export default function DashboardPage() {
                 </div>
               );
             })}
-          </div>
+            </div>
+          )}
+
+          {/* Deleted ideas */}
+          {deletedIdeas.length > 0 && (
+            <div>
+              <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-medium">垃圾桶</span>
+                <span className="text-xs text-gray-400">{deletedIdeas.length} 個</span>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {deletedIdeas.map((idea) => (
+                  <div key={idea.id} className="px-4 py-3 flex items-center gap-2 opacity-60">
+                    <p className="text-sm text-gray-500 flex-1 truncate line-through">{idea.title}</p>
+                    <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
+                    <button onClick={() => handlePermanentDelete(idea.id)} className="text-xs text-red-400 hover:text-red-600 whitespace-nowrap shrink-0">永久刪除</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         )}
       </div>
     </div>
