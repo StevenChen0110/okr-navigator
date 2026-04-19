@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, KeyResult, KRConfidence, CheckIn, ObjectiveStatus } from "@/lib/types";
-import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
+import { Objective, KeyResult, KRConfidence, CheckIn, ObjectiveStatus, Idea } from "@/lib/types";
+import { fetchObjectives, saveObjective, removeObjective, fetchIdeas } from "@/lib/db";
 import { KRClassification } from "@/lib/claude";
 import { callAI } from "@/lib/ai-client";
 import Markdown from "@/components/Markdown";
@@ -69,6 +69,7 @@ function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
 export default function OKRPage() {
   const router = useRouter();
   const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [ideas, setIdeas] = useState<Idea[]>([]);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // Status filter
@@ -96,6 +97,7 @@ export default function OKRPage() {
 
   useEffect(() => {
     fetchObjectives().then(setObjectives).catch(console.error);
+    fetchIdeas().then(setIdeas).catch(console.error);
   }, []);
 
   function scheduleSave(objective: Objective) {
@@ -604,7 +606,7 @@ export default function OKRPage() {
                               value={kr.title}
                               onChange={(e) => updateDraftKR(kr.id, { title: e.target.value })}
                               onBlur={() => handleDraftKRTitleBlur(kr)}
-                              placeholder="量化指標描述"
+                              placeholder="完成後，什麼事情會不一樣？"
                               className="flex-1 text-sm bg-gray-50 rounded-lg px-3 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
                             />
                             {classifyingKRs.has(kr.id) && (
@@ -623,91 +625,26 @@ export default function OKRPage() {
                               ×
                             </button>
                           </div>
-                          {/* KR Type */}
-                          <div className="ml-8 flex gap-1.5 flex-wrap">
-                            {(["cumulative", "measurement", "milestone"] as const).map((t) => (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => updateDraftKR(kr.id, { krType: t })}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                  (kr.krType ?? "cumulative") === t
-                                    ? "bg-indigo-600 text-white border-indigo-600"
-                                    : "border-gray-200 text-gray-500 hover:border-indigo-300"
-                                }`}
-                              >
-                                {t === "cumulative" ? "累積型" : t === "measurement" ? "測量型" : "里程碑型"}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Edit metric fields */}
-                          {(kr.krType ?? "cumulative") !== "milestone" && (
-                            <div className="ml-8 grid grid-cols-3 gap-2">
-                              <div className="space-y-0.5">
-                                <label className="text-xs text-gray-400">指標名稱</label>
-                                <input
-                                  value={kr.metricName ?? ""}
-                                  onChange={(e) =>
-                                    updateDraftKR(kr.id, { metricName: e.target.value })
-                                  }
-                                  className="w-full text-xs bg-gray-50 rounded-lg px-2 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
-                                />
-                              </div>
-                              <div className="space-y-0.5">
-                                <label className="text-xs text-gray-400">目標值</label>
-                                <input
-                                  type="number"
-                                  value={kr.targetValue ?? ""}
-                                  onChange={(e) =>
-                                    updateDraftKR(kr.id, {
-                                      targetValue: e.target.value ? parseFloat(e.target.value) : undefined,
-                                    })
-                                  }
-                                  className="w-full text-xs bg-gray-50 rounded-lg px-2 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
-                                />
-                              </div>
-                              <div className="space-y-0.5">
-                                <label className="text-xs text-gray-400">單位</label>
-                                <input
-                                  value={kr.unit ?? ""}
-                                  onChange={(e) => updateDraftKR(kr.id, { unit: e.target.value })}
-                                  className="w-full text-xs bg-gray-50 rounded-lg px-2 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
-                                />
-                              </div>
-                            </div>
-                          )}
-
-                          {(kr.krType ?? "cumulative") === "cumulative" && (
+                          {/* Show metric target only when AI has determined a non-milestone type */}
+                          {kr.krType !== "milestone" && (kr.targetValue !== undefined || kr.unit) && (
                             <div className="ml-8 flex items-center gap-2">
-                              <label className="text-xs text-gray-400 shrink-0">每 Task 貢獻</label>
+                              <span className="text-xs text-gray-400">目標</span>
                               <input
                                 type="number"
-                                min={0.1}
-                                step={0.1}
-                                value={kr.incrementPerTask ?? 1}
-                                onChange={(e) =>
-                                  updateDraftKR(kr.id, {
-                                    incrementPerTask: e.target.value ? parseFloat(e.target.value) : undefined,
-                                  })
-                                }
-                                className="w-16 text-xs bg-gray-50 rounded-lg px-2 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
+                                min={0}
+                                value={kr.targetValue ?? ""}
+                                onChange={(e) => updateDraftKR(kr.id, { targetValue: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                placeholder="數值"
+                                className="w-16 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none"
                               />
-                              <span className="text-xs text-gray-400">{kr.unit || "單位"} / Task</span>
+                              <input
+                                value={kr.unit ?? ""}
+                                onChange={(e) => updateDraftKR(kr.id, { unit: e.target.value })}
+                                placeholder="單位"
+                                className="w-14 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none"
+                              />
                             </div>
                           )}
-
-                          <div className="ml-8 space-y-0.5">
-                            <label className="text-xs text-gray-400">截止日期</label>
-                            <input
-                              type="date"
-                              value={kr.deadline ?? ""}
-                              onChange={(e) =>
-                                updateDraftKR(kr.id, { deadline: e.target.value || undefined })
-                              }
-                              className="text-xs bg-gray-50 rounded-lg px-2 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
-                            />
-                          </div>
                         </div>
                       ) : (
                         /* View mode KR row */
@@ -720,10 +657,10 @@ export default function OKRPage() {
                               <p className="text-sm text-gray-800 leading-snug">{kr.title}</p>
 
                               {/* Progress row */}
-                              {kr.metricName && kr.targetValue !== undefined && (
+                              {kr.targetValue !== undefined && kr.targetValue > 0 && (
                                 <div className="mt-1.5 space-y-1">
                                   <div className="flex items-center gap-2">
-                                    <span className="text-xs text-gray-400">{kr.metricName}</span>
+                                    <span className="text-xs text-gray-400">{kr.metricName || "進度"}</span>
                                     <div className="flex items-center gap-1">
                                       <input
                                         type="number"
@@ -894,6 +831,29 @@ export default function OKRPage() {
                               <Markdown>{confidenceSuggestions[kr.id]}</Markdown>
                             </div>
                           )}
+                          {/* Linked ideas/tasks for this KR */}
+                          {(() => {
+                            const linked = ideas.filter(i => (i.linkedKRs ?? []).some(l => l.krId === kr.id));
+                            return (
+                              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                {linked.map(idea => (
+                                  <span key={idea.id} className={`text-xs px-2 py-0.5 rounded-full border ${
+                                    idea.taskStatus === "done"
+                                      ? "text-gray-400 bg-gray-50 border-gray-200 line-through"
+                                      : idea.taskStatus
+                                      ? "text-indigo-600 bg-indigo-50 border-indigo-200"
+                                      : "text-gray-600 bg-gray-50 border-gray-200"
+                                  }`}>{idea.title}</span>
+                                ))}
+                                <button
+                                  onClick={() => router.push(`/idea/new?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`)}
+                                  className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+                                >
+                                  + 新增想法
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>

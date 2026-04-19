@@ -95,8 +95,9 @@ export async function suggestKeyResults(
     model,
     max_tokens: 512,
     system: `You are an OKR expert. Suggest 3-5 Key Results for the given Objective.
-Each KR must be SMART: specific, measurable (include numbers), and time-bound.
-Format: "verb + metric + number + deadline".
+Each KR should describe an observable end state — what will be clearly true when the objective is achieved.
+Use plain, concrete language. Prefer patterns like "不再需要手動做 X" or "從 A 狀態變成 B 狀態".
+Do NOT include deadlines or verbose metric formulas in the KR title. Keep each KR to one sentence.
 ${currentDateInstruction()}
 ${langInstruction(language)}
 Output ONLY a JSON array of strings. No markdown fences.`,

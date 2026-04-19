@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, Idea, IdeaKRLink, IdeaAnalysis, Background } from "@/lib/types";
 import { fetchObjectives, saveIdea, fetchBackgrounds } from "@/lib/db";
@@ -37,6 +38,10 @@ function buildProgressContext(objectives: Objective[]): string {
 }
 
 export default function NewIdeaPage() {
+  const searchParams = useSearchParams();
+  const preselectedKrId = searchParams.get("krId") ?? undefined;
+  const preselectedObjectiveId = searchParams.get("objectiveId") ?? undefined;
+
   const [title, setTitle] = useState("");
   const [why, setWhy] = useState("");
   const [outcome, setOutcome] = useState("");
@@ -92,8 +97,26 @@ export default function NewIdeaPage() {
         }
       }
       links.sort((a, b) => b.score - a.score);
+
+      // Force-include the KR that was preselected from the OKR page (if not already in list)
+      if (preselectedKrId && preselectedObjectiveId) {
+        const obj = objectives.find((o) => o.id === preselectedObjectiveId);
+        const kr = obj?.keyResults.find((k) => k.id === preselectedKrId);
+        if (kr && !links.some((l) => l.krId === preselectedKrId)) {
+          links.push({
+            objectiveId: preselectedObjectiveId,
+            objectiveTitle: obj!.title,
+            krId: preselectedKrId,
+            krTitle: kr.title,
+            score: 0,
+          });
+        }
+      }
+
       setSuggestedLinks(links);
-      setSelectedLinkIds(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
+      const initialSelected = new Set(links.filter((l) => l.score >= 7).map((l) => l.krId));
+      if (preselectedKrId) initialSelected.add(preselectedKrId);
+      setSelectedLinkIds(initialSelected);
       setStatus("confirm");
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "分析失敗，請確認 API Key 是否正確");

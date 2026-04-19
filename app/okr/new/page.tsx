@@ -427,7 +427,7 @@ export default function NewOKRPage() {
 
       {/* KRs */}
       <div className="space-y-3 mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 px-1">量化指標（Key Results）</h2>
+        <h2 className="text-sm font-semibold text-gray-700 px-1">完成標準（Key Results）</h2>
         {krs.map((kr, i) => (
           <div key={kr.id} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -448,74 +448,34 @@ export default function NewOKRPage() {
               </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">描述</label>
-              <input
-                value={kr.title}
-                onChange={(e) => updateKR(kr.id, "title", e.target.value)}
-                onBlur={() => handleKRTitleBlur(kr)}
-                placeholder="例：每週完成 2 次英語練習課程"
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-              />
-            </div>
+            <input
+              value={kr.title}
+              onChange={(e) => updateKR(kr.id, "title", e.target.value)}
+              onBlur={() => handleKRTitleBlur(kr)}
+              placeholder="完成後，什麼事情會不一樣？"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+            />
 
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-gray-400">KR 類型</label>
-                {kr.classifying && <span className="text-xs text-indigo-300">偵測中…</span>}
-              </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {KR_TYPE_OPTIONS.map((opt) => (
-                  <button key={opt.value} type="button" onClick={() => updateKR(kr.id, "krType", opt.value)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${kr.krType === opt.value ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"}`}>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-gray-400">{KR_TYPE_OPTIONS.find((o) => o.value === kr.krType)?.desc}</p>
-            </div>
-
-            {kr.krType !== "milestone" && (
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400">指標名稱</label>
-                  <input value={kr.metricName} onChange={(e) => updateKR(kr.id, "metricName", e.target.value)}
-                    placeholder="練習次數"
-                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400">目標值</label>
-                  <input type="number" min={0} value={kr.targetValue} onChange={(e) => updateKR(kr.id, "targetValue", e.target.value)}
-                    placeholder="24"
-                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400">單位</label>
-                  <input value={kr.unit} onChange={(e) => updateKR(kr.id, "unit", e.target.value)}
-                    placeholder="次"
-                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
-                </div>
+            {/* Show metric target only when AI has determined a non-milestone type */}
+            {kr.krType !== "milestone" && (kr.targetValue || kr.unit) && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">目標</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={kr.targetValue}
+                  onChange={(e) => updateKR(kr.id, "targetValue", e.target.value)}
+                  placeholder="數值"
+                  className="w-16 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                />
+                <input
+                  value={kr.unit}
+                  onChange={(e) => updateKR(kr.id, "unit", e.target.value)}
+                  placeholder="單位"
+                  className="w-16 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                />
               </div>
             )}
-
-            {kr.krType === "cumulative" && (
-              <div className="space-y-1">
-                <label className="text-xs text-gray-400">每個 Task 完成貢獻值</label>
-                <div className="flex items-center gap-2">
-                  <input type="number" min={0.1} step={0.1} value={kr.incrementPerTask}
-                    onChange={(e) => updateKR(kr.id, "incrementPerTask", e.target.value)}
-                    placeholder="1"
-                    className="w-24 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
-                  <span className="text-xs text-gray-400">{kr.unit || "單位"} / Task</span>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">截止日期（選填）</label>
-              <input type="date" value={kr.deadline} onChange={(e) => updateKR(kr.id, "deadline", e.target.value)}
-                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50" />
-            </div>
           </div>
         ))}
         {!aiMode && (
