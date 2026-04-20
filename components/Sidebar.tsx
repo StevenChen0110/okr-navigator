@@ -7,7 +7,7 @@ import { useAuth } from "./AuthProvider";
 const navItems = [
   { href: "/", label: "Dashboard", icon: "⊞" },
   { href: "/okr", label: "OKR 目標", icon: "◎" },
-  { href: "/idea/new", label: "Ideas / Tasks", icon: "◈" },
+  { href: "/tasks", label: "Tasks", icon: "◈" },
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
