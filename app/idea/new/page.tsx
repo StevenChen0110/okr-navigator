@@ -166,6 +166,7 @@ export default function NewIdeaPage() {
       createdAt: new Date().toISOString(),
       completed: false,
       linkedKRs,
+      taskStatus: "todo",
       quickAnalysis: isQuickMode,
     };
 
@@ -250,14 +251,14 @@ export default function NewIdeaPage() {
     return (
       <div className="max-w-xl mx-auto px-4 py-10 text-center space-y-4">
         <div className="text-4xl">✓</div>
-        <h1 className="text-lg font-semibold">Idea 已儲存</h1>
+        <h1 className="text-lg font-semibold">Task 已建立</h1>
         <p className="text-sm text-gray-500">{title}</p>
         <div className="flex gap-3 pt-4">
           <Link href="/" className="flex-1 py-2.5 text-center rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
             回到 Dashboard
           </Link>
           <button onClick={resetForm} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">
-            再分析一個
+            再新增一個
           </button>
         </div>
       </div>
@@ -337,8 +338,8 @@ export default function NewIdeaPage() {
 
         {suggestedLinks.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <h3 className="text-sm font-medium text-gray-700 mb-1">連結至 KR</h3>
-            <p className="text-xs text-gray-400 mb-3">AI 建議此 Idea 對以下 KR 有貢獻，確認或調整</p>
+            <h3 className="text-sm font-medium text-gray-700 mb-1">連結至子目標</h3>
+            <p className="text-xs text-gray-400 mb-3">AI 建議此 Task 對以下子目標有貢獻，確認或調整</p>
             <div className="space-y-2">
               {suggestedLinks.map((l) => (
                 <label key={l.krId} className="flex items-start gap-3 cursor-pointer">
@@ -398,8 +399,8 @@ export default function NewIdeaPage() {
 
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10">
-      <h1 className="text-xl font-semibold mb-1">新增 Idea</h1>
-      <p className="text-sm text-gray-500 mb-8">描述你的想法，AI 將分析它對 OKR 的貢獻</p>
+      <h1 className="text-xl font-semibold mb-1">新增 Task</h1>
+      <p className="text-sm text-gray-500 mb-8">描述你的行動，AI 將分析它對子目標的貢獻</p>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
         <div className="space-y-2">

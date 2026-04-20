@@ -511,8 +511,8 @@ export default function OKRPage() {
                         /* Edit mode KR row */
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400 shrink-0 w-8">
-                              KR{kri + 1}
+                            <span className="text-xs text-gray-400 shrink-0 w-12">
+                              子目標 {kri + 1}
                             </span>
                             <input
                               value={kr.title}
@@ -594,23 +594,49 @@ export default function OKRPage() {
                         /* View mode KR row */
                         <div className="space-y-1.5">
                           <div className="flex items-start gap-2">
-                            <span className="text-xs text-gray-400 shrink-0 w-8 mt-0.5">
-                              KR{kri + 1}
+                            <span className="text-xs text-gray-400 shrink-0 w-12 mt-0.5">
+                              子目標 {kri + 1}
                             </span>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-2">
-                                <p className="text-sm text-gray-800 leading-snug flex-1">{kr.title}</p>
+                                <div className="flex items-start gap-1.5 flex-1 min-w-0">
+                                  <span className="text-sm shrink-0 mt-0.5">
+                                    {(kr.krType ?? "cumulative") === "measurement" ? "📊" : kr.krType === "milestone" ? "✅" : "📈"}
+                                  </span>
+                                  <p className="text-sm text-gray-800 leading-snug flex-1">{kr.title}</p>
+                                </div>
                                 <button
                                   onClick={() => router.push(`/idea/new?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`)}
                                   className="text-xs text-indigo-400 hover:text-indigo-600 font-medium shrink-0 whitespace-nowrap"
                                 >
-                                  + 新增想法
+                                  + 新增 Task
                                 </button>
                               </div>
 
-                              {/* Progress row */}
-                              {kr.targetValue !== undefined && kr.targetValue > 0 && (
-                                <div className="mt-1.5 space-y-1">
+                              {/* Milestone: toggle button */}
+                              {kr.krType === "milestone" && (
+                                <div className="mt-1.5 ml-6">
+                                  <button
+                                    onClick={() => updateKRProgress(o.id, kr.id, kr.currentValue && kr.currentValue >= 1 ? 0 : 1)}
+                                    className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                                      kr.currentValue && kr.currentValue >= 1
+                                        ? "bg-green-50 border-green-300 text-green-700"
+                                        : "bg-gray-50 border-gray-200 text-gray-500 hover:border-green-300"
+                                    }`}
+                                  >
+                                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                                      kr.currentValue && kr.currentValue >= 1 ? "bg-green-500 border-green-500" : "border-gray-300"
+                                    }`}>
+                                      {kr.currentValue && kr.currentValue >= 1 && <span className="text-white text-[8px]">✓</span>}
+                                    </span>
+                                    {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "標記達成"}
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Progress row (cumulative / measurement) */}
+                              {kr.krType !== "milestone" && kr.targetValue !== undefined && kr.targetValue > 0 && (
+                                <div className="mt-1.5 space-y-1 ml-6">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs text-gray-400">{kr.metricName || "進度"}</span>
                                     <div className="flex items-center gap-1">
@@ -651,7 +677,6 @@ export default function OKRPage() {
                                     <span className="text-xs font-medium text-gray-500">
                                       {calcKRCompletion(kr) ?? 0}%
                                     </span>
-                                    {/* Last check-in info */}
                                     {(() => {
                                       const last = getLastCheckIn(kr);
                                       return last ? (
@@ -662,7 +687,6 @@ export default function OKRPage() {
                                         <span className="text-xs text-gray-300">尚未更新</span>
                                       );
                                     })()}
-                                    {/* Check-in button */}
                                     <button
                                       onClick={() =>
                                         checkInOpen === kr.id
@@ -673,7 +697,6 @@ export default function OKRPage() {
                                     >
                                       {checkInOpen === kr.id ? "取消" : "更新進度"}
                                     </button>
-                                    {/* History toggle */}
                                     {(kr.checkIns?.length ?? 0) > 0 && (
                                       <button
                                         onClick={() => toggleHistory(kr.id)}
@@ -792,7 +815,7 @@ export default function OKRPage() {
                       onClick={addDraftKR}
                       className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
                     >
-                      + 新增 KR
+                      + 新增子目標
                     </button>
                     <div className="flex gap-2">
                       <button
@@ -831,7 +854,7 @@ export default function OKRPage() {
                       <div key={kr.id} className="space-y-1">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-xs text-gray-600 flex-1 truncate">
-                            {kr.title || "KR"}
+                            {kr.title || "子目標"}
                           </span>
                           <span
                             className={`text-xs font-bold w-8 text-right ${

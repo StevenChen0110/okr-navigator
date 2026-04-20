@@ -52,35 +52,7 @@ const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   done: "完成",
 };
 
-/** Groups IdeaKRLinks by Objective and renders a hierarchy list (read-only). */
-function LinkedObjsReadOnly({ links, objectives }: { links: IdeaKRLink[]; objectives: Objective[] }) {
-  if (links.length === 0) return null;
-  const grouped: { obj: Objective; krs: KeyResult[] }[] = [];
-  for (const link of links) {
-    const obj = objectives.find((o) => o.id === link.objectiveId);
-    if (!obj) continue;
-    let entry = grouped.find((g) => g.obj.id === obj.id);
-    if (!entry) { entry = { obj, krs: [] }; grouped.push(entry); }
-    if (link.krId) {
-      const kr = obj.keyResults.find((k) => k.id === link.krId);
-      if (kr && !entry.krs.find((k) => k.id === kr.id)) entry.krs.push(kr);
-    }
-  }
-  return (
-    <div className="mt-1 space-y-1">
-      {grouped.map(({ obj, krs }) => (
-        <div key={obj.id}>
-          <p className="text-xs text-gray-500 font-medium leading-snug">{obj.title}</p>
-          {krs.map((kr) => (
-            <p key={kr.id} className="text-xs text-gray-400 pl-3 leading-snug">└ {kr.title}</p>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Same but with remove (×) buttons per link — used in assign tab. */
+/** Renders linked objectives/KRs with remove (×) buttons. */
 function LinkedObjsEditable({
   links,
   objectives,
@@ -139,7 +111,6 @@ export default function DashboardPage() {
   const [pendingMeasure, setPendingMeasure] = useState<string | null>(null);
   const [measureInputs, setMeasureInputs] = useState<MeasurementInputs>({});
   const [expandedAnalysisIds, setExpandedAnalysisIds] = useState<Set<string>>(new Set());
-  const [warehouseTab, setWarehouseTab] = useState<"ideas" | "tasks">("ideas");
   const [taskFilter, setTaskFilter] = useState<"active" | "shelved" | "deleted">("active");
 
   useEffect(() => {
@@ -148,12 +119,6 @@ export default function DashboardPage() {
   }, []);
 
   // ── Ideas helpers ───────────────────────────────────────────────────────────
-
-  function handleDelete(id: string) {
-    if (!confirm("確定要刪除這個 Idea？")) return;
-    removeIdea(id).catch(console.error);
-    setIdeas((prev) => prev.filter((i) => i.id !== id));
-  }
 
   function setIdeaStatus(id: string, status: IdeaStatus) {
     updateIdeaStatus(id, status).catch(console.error);
@@ -167,11 +132,6 @@ export default function DashboardPage() {
     if (!confirm("永久刪除後無法復原，確定嗎？")) return;
     removeIdea(id).catch(console.error);
     setIdeas((prev) => prev.filter((i) => i.id !== id));
-  }
-
-  function handlePromoteToTask(id: string) {
-    updateIdeaTaskStatus(id, "todo").catch(console.error);
-    setIdeas((prev) => prev.map((i) => i.id === id ? { ...i, taskStatus: "todo" } : i));
   }
 
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
@@ -465,14 +425,11 @@ export default function DashboardPage() {
   });
 
   const tasks = ideas.filter((i) => i.taskStatus != null);
-  const nonTasks = ideas.filter((i) => i.taskStatus == null);
 
-  // warehouse filters
-  const activeIdeas = nonTasks.filter((i) => (i.ideaStatus ?? "active") !== "deleted");
-  const deletedIdeas = nonTasks.filter((i) => i.ideaStatus === "deleted");
-  const activeTasks = tasks.filter((i) => (i.ideaStatus ?? "active") === "active");
-  const shelvedTasks = tasks.filter((i) => i.ideaStatus === "shelved");
-  const deletedTasks = tasks.filter((i) => i.ideaStatus === "deleted");
+  // warehouse filters — all ideas are tasks now
+  const activeTasks = ideas.filter((i) => (i.ideaStatus ?? "active") === "active");
+  const shelvedTasks = ideas.filter((i) => i.ideaStatus === "shelved");
+  const deletedTasks = ideas.filter((i) => i.ideaStatus === "deleted");
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
@@ -502,9 +459,9 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-indigo-600">{ideas.length}</div>
-          <div className="text-xs text-gray-500 mt-1">Ideas</div>
-          {nonTasks.length > 0 && <div className="mt-1 text-xs text-gray-400">{nonTasks.length} 待評估</div>}
+          <div className="text-2xl font-bold text-indigo-600">{tasks.filter(t => t.taskStatus === "done").length}</div>
+          <div className="text-xs text-gray-500 mt-1">已完成</div>
+          {staleKRs.length > 0 && <div className="mt-1 text-xs text-amber-500">{staleKRs.length} 子目標待更新</div>}
         </div>
       </div>
 
@@ -513,7 +470,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center gap-2 mb-3">
             <h2 className="text-sm font-semibold text-gray-700">尚未更新進度</h2>
-            <span className="text-xs text-gray-400">{staleKRs.length} 條 KR 超過 7 天未記錄</span>
+            <span className="text-xs text-gray-400">{staleKRs.length} 個子目標超過 7 天未記錄</span>
           </div>
           <div className="space-y-2">
             {staleKRs.slice(0, 5).map((kr) => {
@@ -554,7 +511,7 @@ export default function DashboardPage() {
             {objectives.map((o) => {
               const completion = calcOCompletion(o);
               const isExpanded = expandedObjId === o.id;
-              const linkedTaskCount = tasks.filter(
+              const linkedTaskCount = ideas.filter(
                 (t) => t.linkedKRs?.some((l) => l.objectiveId === o.id)
               ).length;
               return (
@@ -586,38 +543,42 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {completion === undefined && (
-                      <p className="text-xs text-gray-400">尚無可追蹤的 KR</p>
+                      <p className="text-xs text-gray-400">尚無可追蹤的子目標</p>
                     )}
                   </button>
                   {isExpanded && (
                     <div className="px-4 pb-3 space-y-2">
                       {o.keyResults.map((kr) => {
                         const krCompletion = calcKRCompletion(kr);
-                        const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
+                        const krType = kr.krType ?? "cumulative";
+                        const typeIcon = krType === "measurement" ? "📊" : krType === "milestone" ? "✅" : "📈";
                         return (
-                          <div key={kr.id} className="flex items-center gap-3 pl-2">
-                            <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0" />
+                          <div key={kr.id} className="flex items-start gap-2 pl-2">
+                            <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2" />
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <p className="text-xs text-gray-600 truncate">{kr.title}</p>
-                                <span className="text-[10px] text-gray-400 shrink-0">{krTypeLabel}</span>
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className="text-[11px] shrink-0">{typeIcon}</span>
+                                <p className="text-xs text-gray-600 truncate flex-1">{kr.title}</p>
                               </div>
-                              {krCompletion !== undefined && (
-                                <div className="flex items-center gap-2 mt-1">
-                                  <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-full rounded-full ${getProgressColor(krCompletion)}`}
-                                      style={{ width: `${krCompletion}%` }}
-                                    />
+                              {krType === "milestone" ? (
+                                <div className="flex items-center gap-1.5 ml-4">
+                                  <div className={`w-3 h-3 rounded border flex items-center justify-center ${kr.currentValue && kr.currentValue >= 1 ? "bg-green-500 border-green-500" : "border-gray-300"}`}>
+                                    {kr.currentValue && kr.currentValue >= 1 && <span className="text-white text-[8px]">✓</span>}
                                   </div>
-                                  <span className="text-xs text-gray-400 w-8 text-right shrink-0">
-                                    {kr.krType === "milestone"
-                                      ? (krCompletion === 100 ? "完成" : "未完成")
-                                      : `${kr.currentValue ?? 0}${kr.unit ? ` ${kr.unit}` : ""} / ${kr.targetValue}${kr.unit ? ` ${kr.unit}` : ""}`
-                                    }
+                                  <span className={`text-xs ${kr.currentValue && kr.currentValue >= 1 ? "text-green-600 font-medium" : "text-gray-400"}`}>
+                                    {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
                                   </span>
                                 </div>
-                              )}
+                              ) : krCompletion !== undefined ? (
+                                <div className="flex items-center gap-2 ml-4">
+                                  <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
+                                  </div>
+                                  <span className="text-xs text-gray-400 shrink-0">
+                                    {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                                  </span>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         );
@@ -631,386 +592,271 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Ideas / Tasks 倉庫 ──────────────────────────────────────────────── */}
+      {/* ── Tasks 倉庫 ──────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {/* Tab header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <div className="flex gap-1">
-            {(["ideas", "tasks"] as const).map((tab) => (
-              <button key={tab} onClick={() => setWarehouseTab(tab)}
-                className={`text-sm font-semibold px-2.5 py-1 rounded transition-colors ${warehouseTab === tab ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:text-gray-600"}`}>
-                {tab === "ideas" ? `Ideas${activeIdeas.length > 0 ? ` ${activeIdeas.length}` : ""}` : `Tasks${activeTasks.length > 0 ? ` ${activeTasks.length}` : ""}`}
-              </button>
-            ))}
-          </div>
-          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增評估</Link>
+          <span className="text-sm font-semibold text-gray-700">Tasks{activeTasks.length > 0 ? ` ${activeTasks.length}` : ""}</span>
+          <Link href="/idea/new" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">+ 新增</Link>
         </div>
 
-        {/* ── Tasks tab ─────────────────────────────────────────────────────── */}
-        {warehouseTab === "tasks" && (
-        <div>
-          {/* Sub-filter */}
-          <div className="flex gap-1 px-4 py-2 border-b border-gray-100">
-            {(["active", "shelved", "deleted"] as const).map((f) => {
-              const count = f === "active" ? activeTasks.length : f === "shelved" ? shelvedTasks.length : deletedTasks.length;
-              return (
-                <button key={f} onClick={() => setTaskFilter(f)}
-                  className={`text-xs px-2.5 py-1 rounded transition-colors ${taskFilter === f ? "bg-indigo-50 text-indigo-600 font-medium" : "text-gray-400 hover:text-gray-600"}`}>
-                  {f === "active" ? "進行中" : f === "shelved" ? "暫存" : "垃圾桶"}{count > 0 ? ` ${count}` : ""}
-                </button>
-              );
-            })}
-          </div>
+        {/* Sub-filter */}
+        <div className="flex gap-1 px-4 py-2 border-b border-gray-100">
+          {(["active", "shelved", "deleted"] as const).map((f) => {
+            const count = f === "active" ? activeTasks.length : f === "shelved" ? shelvedTasks.length : deletedTasks.length;
+            return (
+              <button key={f} onClick={() => setTaskFilter(f)}
+                className={`text-xs px-2.5 py-1 rounded transition-colors ${taskFilter === f ? "bg-indigo-50 text-indigo-600 font-medium" : "text-gray-400 hover:text-gray-600"}`}>
+                {f === "active" ? "進行中" : f === "shelved" ? "暫存" : "垃圾桶"}{count > 0 ? ` ${count}` : ""}
+              </button>
+            );
+          })}
+        </div>
 
-          {/* Shelved tasks */}
-          {taskFilter === "shelved" && (
-            shelvedTasks.length === 0 ? (
-              <div className="px-4 py-8 text-center text-xs text-gray-400">沒有暫存的 Task</div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {shelvedTasks.map((idea) => (
-                  <div key={idea.id} className="px-4 py-3 flex items-center gap-2">
-                    <p className="text-sm text-gray-700 flex-1 truncate">{idea.title}</p>
-                    <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus!]}`}>{TASK_STATUS_LABEL[idea.taskStatus!]}</span>
-                    <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
-                    <button onClick={() => handleSoftDelete(idea.id)} className="text-gray-300 hover:text-red-400 text-base leading-none px-1 shrink-0">×</button>
-                  </div>
-                ))}
-              </div>
-            )
-          )}
-
-          {/* Deleted tasks */}
-          {taskFilter === "deleted" && (
-            deletedTasks.length === 0 ? (
-              <div className="px-4 py-8 text-center text-xs text-gray-400">垃圾桶是空的</div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {deletedTasks.map((idea) => (
-                  <div key={idea.id} className="px-4 py-3 flex items-center gap-2 opacity-60">
-                    <p className="text-sm text-gray-500 flex-1 truncate line-through">{idea.title}</p>
-                    <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
-                    <button onClick={() => handlePermanentDelete(idea.id)} className="text-xs text-red-400 hover:text-red-600 whitespace-nowrap shrink-0">永久刪除</button>
-                  </div>
-                ))}
-              </div>
-            )
-          )}
-
-          {/* Active tasks */}
-          {taskFilter === "active" && (
-          activeTasks.length === 0 ? (
-            <div className="px-4 py-8 text-center text-xs text-gray-400">還沒有 Task，從 Ideas 轉換</div>
+        {/* Shelved */}
+        {taskFilter === "shelved" && (
+          shelvedTasks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-gray-400">沒有暫存的 Task</div>
           ) : (
-          <div className="divide-y divide-gray-50">
-            {[...activeTasks]
-              .sort((a, b) => {
-                const aDone = a.taskStatus === "done" ? 1 : 0;
-                const bDone = b.taskStatus === "done" ? 1 : 0;
-                if (aDone !== bDone) return aDone - bDone;
-                return (calcScore(b) ?? -1) - (calcScore(a) ?? -1);
-              })
-              .map((idea) => {
-              const isExpanded = expandedIdeaId === idea.id;
-              const isDone = idea.taskStatus === "done";
-              const isMeasurePending = pendingMeasure === idea.id;
-              const links = idea.linkedKRs ?? [];
-              const measureKRs = links.flatMap((link) => {
-                if (!link.krId) return [];
-                const obj = objectives.find((o) => o.id === link.objectiveId);
-                const kr = obj?.keyResults.find((k) => k.id === link.krId);
-                if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
-                return [{ obj: obj!, kr }];
-              });
+            <div className="divide-y divide-gray-50">
+              {shelvedTasks.map((idea) => (
+                <div key={idea.id} className="px-4 py-3 flex items-center gap-2">
+                  <p className="text-sm text-gray-700 flex-1 truncate">{idea.title}</p>
+                  {idea.taskStatus && <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus]}`}>{TASK_STATUS_LABEL[idea.taskStatus]}</span>}
+                  <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
+                  <button onClick={() => handleSoftDelete(idea.id)} className="text-gray-300 hover:text-red-400 text-base leading-none px-1 shrink-0">×</button>
+                </div>
+              ))}
+            </div>
+          )
+        )}
 
-              return (
-                <div key={idea.id} className={isDone ? "opacity-60" : ""}>
-                  {/* Row header */}
-                  <div className="px-4 py-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
-                      className="flex-1 text-left flex items-center gap-2 min-w-0"
-                    >
-                      <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through text-gray-400" : ""}`}>{idea.title}</p>
-                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
-                    </button>
-                    <div className="flex gap-1 shrink-0">
-                      {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                        <button key={s}
-                          onClick={(e) => { e.stopPropagation(); handleSetTaskStatus(idea.id, s); }}
-                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}
-                        >{TASK_STATUS_LABEL[s]}</button>
-                      ))}
-                    </div>
-                    {idea.needsReanalysis && (
-                      <button onClick={() => handleReanalyze(idea)} disabled={reanalyzingIds.has(idea.id)}
-                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50">
-                        {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
-                      </button>
-                    )}
-                    <button onClick={() => handleShelve(idea.id)} className="shrink-0 text-gray-300 hover:text-amber-500 transition-colors text-xs px-1" title="暫存">⊸</button>
-                    <button onClick={() => handleSoftDelete(idea.id)} className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1">×</button>
-                  </div>
+        {/* Deleted */}
+        {taskFilter === "deleted" && (
+          deletedTasks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-gray-400">垃圾桶是空的</div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {deletedTasks.map((idea) => (
+                <div key={idea.id} className="px-4 py-3 flex items-center gap-2 opacity-60">
+                  <p className="text-sm text-gray-500 flex-1 truncate line-through">{idea.title}</p>
+                  <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
+                  <button onClick={() => handlePermanentDelete(idea.id)} className="text-xs text-red-400 hover:text-red-600 whitespace-nowrap shrink-0">永久刪除</button>
+                </div>
+              ))}
+            </div>
+          )
+        )}
 
-                  {/* Expanded content */}
-                  {isExpanded && (
-                    <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
+        {/* Active */}
+        {taskFilter === "active" && (
+          activeTasks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-gray-400">還沒有 Task，點擊「+ 新增」開始</div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {[...activeTasks]
+                .sort((a, b) => {
+                  const aDone = a.taskStatus === "done" ? 1 : 0;
+                  const bDone = b.taskStatus === "done" ? 1 : 0;
+                  if (aDone !== bDone) return aDone - bDone;
+                  return (calcScore(b) ?? -1) - (calcScore(a) ?? -1);
+                })
+                .map((idea) => {
+                  const isExpanded = expandedIdeaId === idea.id;
+                  const isDone = idea.taskStatus === "done";
+                  const isMeasurePending = pendingMeasure === idea.id;
+                  const links = idea.linkedKRs ?? [];
+                  const isPicking = showObjPickerId === idea.id;
+                  const measureKRs = links.flatMap((link) => {
+                    if (!link.krId) return [];
+                    const obj = objectives.find((o) => o.id === link.objectiveId);
+                    const kr = obj?.keyResults.find((k) => k.id === link.krId);
+                    if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
+                    return [{ obj: obj!, kr }];
+                  });
 
-                      {/* Todos — Notion-style */}
-                      {(() => {
-                        const todos = idea.todos ?? [];
-                        const doneCount = todos.filter((t) => t.done).length;
-                        const allDone = todos.length > 0 && doneCount === todos.length;
-                        const pct = todos.length > 0 ? Math.round((doneCount / todos.length) * 100) : 0;
-                        return (
-                          <div className="pt-3">
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="text-xs font-medium text-gray-600">子任務</span>
-                              {todos.length > 0 && (
-                                <>
-                                  <span className="text-xs text-gray-400">{doneCount}/{todos.length}</span>
-                                  <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full transition-all ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
-                                  </div>
-                                  {allDone && idea.taskStatus !== "done" && (
-                                    <button onClick={() => handleSetTaskStatus(idea.id, "done")}
-                                      className="text-xs px-2 py-0.5 bg-green-600 text-white rounded-lg hover:bg-green-700 shrink-0 whitespace-nowrap">
-                                      標記完成
-                                    </button>
+                  return (
+                    <div key={idea.id} className={isDone ? "opacity-60" : ""}>
+                      {/* Row */}
+                      <div className="px-4 py-3 flex items-center gap-2">
+                        <button onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
+                          className="flex-1 text-left flex items-center gap-2 min-w-0">
+                          <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through text-gray-400" : ""}`}>{idea.title}</p>
+                          <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                        </button>
+                        <div className="flex gap-1 shrink-0">
+                          {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                            <button key={s}
+                              onClick={(e) => { e.stopPropagation(); handleSetTaskStatus(idea.id, s); }}
+                              className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}
+                            >{TASK_STATUS_LABEL[s]}</button>
+                          ))}
+                        </div>
+                        {idea.needsReanalysis && (
+                          <button onClick={() => handleReanalyze(idea)} disabled={reanalyzingIds.has(idea.id)}
+                            className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50">
+                            {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
+                          </button>
+                        )}
+                        <button onClick={() => handleShelve(idea.id)} className="shrink-0 text-gray-300 hover:text-amber-500 transition-colors text-xs px-1" title="暫存">⊸</button>
+                        <button onClick={() => handleSoftDelete(idea.id)} className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1">×</button>
+                      </div>
+
+                      {/* Expanded */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
+
+                          {/* Todos */}
+                          {(() => {
+                            const todos = idea.todos ?? [];
+                            const doneCount = todos.filter((t) => t.done).length;
+                            const allDone = todos.length > 0 && doneCount === todos.length;
+                            const pct = todos.length > 0 ? Math.round((doneCount / todos.length) * 100) : 0;
+                            return (
+                              <div className="pt-3">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-xs font-medium text-gray-600">子任務</span>
+                                  {todos.length > 0 && (
+                                    <>
+                                      <span className="text-xs text-gray-400">{doneCount}/{todos.length}</span>
+                                      <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full transition-all ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
+                                      </div>
+                                      {allDone && idea.taskStatus !== "done" && (
+                                        <button onClick={() => handleSetTaskStatus(idea.id, "done")}
+                                          className="text-xs px-2 py-0.5 bg-green-600 text-white rounded-lg hover:bg-green-700 shrink-0 whitespace-nowrap">
+                                          標記完成
+                                        </button>
+                                      )}
+                                    </>
                                   )}
-                                </>
-                              )}
-                            </div>
-                            <div className="space-y-0.5">
-                              {todos.map((todo) => (
-                                <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
-                                  <button onClick={() => handleToggleTodo(idea.id, todo.id)}
-                                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}>
-                                    {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
-                                  </button>
-                                  <input ref={(el) => { todoInputRefs.current[todo.id] = el; }} type="text"
-                                    defaultValue={todo.title}
-                                    onBlur={(e) => handleUpdateTodoTitle(idea.id, todo.id, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") { e.preventDefault(); handleAddTodoAfter(idea.id, todo.id); }
-                                      if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDeleteTodo(idea.id, todo.id); }
-                                    }}
-                                    className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
-                                    placeholder="待辦事項" />
                                 </div>
-                              ))}
-                              <button onClick={() => handleAddTodoAfter(idea.id)}
-                                className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white transition-colors">
-                                <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
-                                新增待辦
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })()}
+                                <div className="space-y-0.5">
+                                  {todos.map((todo) => (
+                                    <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
+                                      <button onClick={() => handleToggleTodo(idea.id, todo.id)}
+                                        className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}>
+                                        {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
+                                      </button>
+                                      <input ref={(el) => { todoInputRefs.current[todo.id] = el; }} type="text"
+                                        defaultValue={todo.title}
+                                        onBlur={(e) => handleUpdateTodoTitle(idea.id, todo.id, e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") { e.preventDefault(); handleAddTodoAfter(idea.id, todo.id); }
+                                          if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDeleteTodo(idea.id, todo.id); }
+                                        }}
+                                        className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
+                                        placeholder="待辦事項" />
+                                    </div>
+                                  ))}
+                                  <button onClick={() => handleAddTodoAfter(idea.id)}
+                                    className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white transition-colors">
+                                    <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
+                                    新增待辦
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
 
-                      {/* 任務分析（可折疊）*/}
-                      {idea.analysis && (() => {
-                        const isAnalysisOpen = expandedAnalysisIds.has(idea.id);
-                        return (
-                          <div className="border-t border-gray-100 pt-3">
-                            <button onClick={() => setExpandedAnalysisIds((prev) => { const s = new Set(prev); isAnalysisOpen ? s.delete(idea.id) : s.add(idea.id); return s; })}
-                              className="flex items-center gap-1.5 w-full text-left">
-                              <span className="text-xs font-medium text-gray-600">任務分析</span>
-                              <span className="text-gray-300 text-[10px]">{isAnalysisOpen ? "▲" : "▼"}</span>
-                            </button>
-                            {isAnalysisOpen && (
-                              <div className="space-y-2 mt-2">
-                                {idea.analysis.objectiveScores.map((os) => (
-                                  <div key={os.objectiveId}>
-                                    <div className="flex justify-between items-center mb-0.5">
-                                      <span className="text-xs text-gray-600 truncate flex-1 mr-2">{os.objectiveTitle}</span>
-                                      <span className={`text-xs font-bold shrink-0 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
-                                    </div>
-                                    <p className="text-xs text-gray-500">{os.reasoning}</p>
-                                    <div className="space-y-0.5 pl-2 mt-1">
-                                      {os.keyResultScores.map((krs) => (
-                                        <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
-                                      ))}
-                                    </div>
-                                  </div>
-                                ))}
-                                {idea.analysis.risks.length > 0 && (
-                                  <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
-                                    <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
+                          {/* 任務分析（可折疊）*/}
+                          {idea.analysis && (() => {
+                            const isAnalysisOpen = expandedAnalysisIds.has(idea.id);
+                            return (
+                              <div className="border-t border-gray-100 pt-3">
+                                <button onClick={() => setExpandedAnalysisIds((prev) => { const s = new Set(prev); isAnalysisOpen ? s.delete(idea.id) : s.add(idea.id); return s; })}
+                                  className="flex items-center gap-1.5 w-full text-left">
+                                  <span className="text-xs font-medium text-gray-600">任務分析</span>
+                                  <span className="text-gray-300 text-[10px]">{isAnalysisOpen ? "▲" : "▼"}</span>
+                                </button>
+                                {isAnalysisOpen && (
+                                  <div className="space-y-2 mt-2">
+                                    {idea.analysis.objectiveScores.map((os) => (
+                                      <div key={os.objectiveId}>
+                                        <div className="flex justify-between items-center mb-0.5">
+                                          <span className="text-xs text-gray-600 truncate flex-1 mr-2">{os.objectiveTitle}</span>
+                                          <span className={`text-xs font-bold shrink-0 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
+                                        </div>
+                                        <p className="text-xs text-gray-500">{os.reasoning}</p>
+                                        <div className="space-y-0.5 pl-2 mt-1">
+                                          {os.keyResultScores.map((krs) => (
+                                            <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ))}
+                                    {idea.analysis.risks.length > 0 && (
+                                      <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
+                                        <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                            );
+                          })()}
 
-                      {/* Measurement input panel */}
-                      {isMeasurePending && measureKRs.length > 0 && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
-                          <p className="text-xs font-medium text-amber-700">完成前，請填入目前的數值：</p>
-                          {measureKRs.map(({ kr }) => (
-                            <div key={kr.id} className="flex items-center gap-2">
-                              <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
-                              <input type="number"
-                                value={measureInputs[idea.id]?.[kr.id] ?? ""}
-                                onChange={(e) => setMeasureInputs((prev) => ({ ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value } }))}
-                                placeholder={`目前 ${kr.metricName ?? "數值"}（${kr.unit ?? ""}）`}
-                                className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                            </div>
-                          ))}
-                          <div className="flex gap-2 pt-1">
-                            <button onClick={() => confirmMeasurement(idea.id)} className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">確認完成</button>
-                            <button onClick={() => setPendingMeasure(null)} className="text-xs px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50">取消</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          ))}
-        </div>
-        )}
-
-        {/* ── Ideas tab ──────────────────────────────────────────────────────── */}
-        {warehouseTab === "ideas" && (
-        <div>
-          {activeIdeas.length === 0 && deletedIdeas.length === 0 ? (
-            <div className="px-4 py-8 text-center text-xs text-gray-400">還沒有 Idea，點擊「+ 新增評估」開始</div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {[...activeIdeas].sort((a, b) => (calcScore(b) ?? -1) - (calcScore(a) ?? -1)).map((idea) => {
-              const isExpanded = expandedIdeaId === idea.id;
-              const wScore = calcScore(idea);
-              const links = idea.linkedKRs ?? [];
-              const isPicking = showObjPickerId === idea.id;
-
-              return (
-                <div key={idea.id}>
-                  {/* Row header */}
-                  <div className="px-4 py-3 flex items-center gap-2">
-                    <button onClick={() => setExpandedIdeaId(isExpanded ? null : idea.id)}
-                      className="flex-1 text-left flex items-center gap-2 min-w-0">
-                      <p className="text-sm text-gray-800 flex-1 min-w-0 truncate">{idea.title}</p>
-                      {wScore !== null ? (
-                        <span className={`text-sm font-bold shrink-0 ${wScore >= 7 ? "text-indigo-600" : wScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{wScore.toFixed(1)}</span>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0 whitespace-nowrap">待評估</span>
-                      )}
-                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
-                    </button>
-                    {idea.needsReanalysis && (
-                      <button onClick={() => handleReanalyze(idea)} disabled={reanalyzingIds.has(idea.id)}
-                        className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-300 hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50">
-                        {reanalyzingIds.has(idea.id) ? "評估中…" : "重新評估"}
-                      </button>
-                    )}
-                    <button onClick={() => handlePromoteToTask(idea.id)}
-                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors whitespace-nowrap">
-                      → Task
-                    </button>
-                    <button onClick={() => handleSoftDelete(idea.id)}
-                      className="shrink-0 text-gray-300 hover:text-red-400 transition-colors text-base leading-none px-1">×</button>
-                  </div>
-
-                  {/* Expanded content */}
-                  {isExpanded && (
-                    <div className="px-4 pb-4 space-y-3 bg-gray-50 border-t border-gray-100">
-                      {idea.analysis && (
-                        <div className="space-y-2 pt-3">
-                          {idea.analysis.objectiveScores.map((os) => (
-                            <div key={os.objectiveId}>
-                              <div className="flex justify-between items-center mb-1">
-                                <span className="text-xs font-medium text-gray-600">{os.objectiveTitle}</span>
-                                <span className={`text-xs font-bold ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-500"}`}>{os.overallScore.toFixed(1)}</span>
-                              </div>
-                              <p className="text-xs text-gray-500 mb-1">{os.reasoning}</p>
-                              <div className="space-y-0.5 pl-2">
-                                {os.keyResultScores.map((krs) => (
-                                  <ScoreBar key={krs.keyResultId} score={krs.score} label={krs.keyResultTitle} />
+                          {/* 指定子目標 */}
+                          <div className="border-t border-gray-100 pt-3 space-y-1.5">
+                            <LinkedObjsEditable links={links} objectives={objectives}
+                              onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))} />
+                            <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
+                              {isPicking ? "完成指定" : "＋ 指定子目標"}
+                            </button>
+                            {isPicking && (
+                              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                {objectives.map((obj) => (
+                                  <div key={obj.id}>
+                                    <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
+                                    {obj.keyResults.map((kr) => {
+                                      const alreadyLinked = links.some((l) => l.krId === kr.id);
+                                      const typeIcon = (kr.krType ?? "cumulative") === "measurement" ? "📊" : kr.krType === "milestone" ? "✅" : "📈";
+                                      return (
+                                        <button key={kr.id}
+                                          onClick={() => alreadyLinked
+                                            ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
+                                            : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
+                                          className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}>
+                                          <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
+                                            {alreadyLinked && "✓"}
+                                          </span>
+                                          <span className="flex-1 truncate">{kr.title}</span>
+                                          <span className="text-gray-400 shrink-0">{typeIcon}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
                                 ))}
                               </div>
-                            </div>
-                          ))}
-                          {idea.analysis.risks.length > 0 && (
-                            <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
-                              <span className="font-medium">風險：</span>{idea.analysis.risks.join("；")}
-                            </div>
-                          )}
-                          {idea.analysis.executionSuggestions.length > 0 && (
-                            <div className="text-xs text-gray-600 bg-white rounded-lg px-3 py-2 border border-gray-100">
-                              <span className="font-medium text-gray-700">執行建議：</span>
-                              <ul className="mt-1 space-y-0.5 list-disc list-inside">
-                                {idea.analysis.executionSuggestions.map((s, i) => <li key={i}>{s}</li>)}
-                              </ul>
+                            )}
+                          </div>
+
+                          {/* Measurement input */}
+                          {isMeasurePending && measureKRs.length > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
+                              <p className="text-xs font-medium text-amber-700">完成前，請填入目前的數值：</p>
+                              {measureKRs.map(({ kr }) => (
+                                <div key={kr.id} className="flex items-center gap-2">
+                                  <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
+                                  <input type="number"
+                                    value={measureInputs[idea.id]?.[kr.id] ?? ""}
+                                    onChange={(e) => setMeasureInputs((prev) => ({ ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value } }))}
+                                    placeholder={`目前 ${kr.metricName ?? "數值"}（${kr.unit ?? ""}）`}
+                                    className="w-32 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                              ))}
+                              <div className="flex gap-2 pt-1">
+                                <button onClick={() => confirmMeasurement(idea.id)} className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">確認完成</button>
+                                <button onClick={() => setPendingMeasure(null)} className="text-xs px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50">取消</button>
+                              </div>
                             </div>
                           )}
                         </div>
                       )}
-                      <div className="space-y-1.5">
-                        <LinkedObjsEditable links={links} objectives={objectives}
-                          onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))} />
-                        <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)} className="text-xs text-indigo-500 hover:text-indigo-700">
-                          {isPicking ? "完成指定" : "＋ 指定 KR"}
-                        </button>
-                        {isPicking && (
-                          <div className="border border-gray-200 rounded-lg overflow-hidden">
-                            {objectives.map((obj) => (
-                              <div key={obj.id}>
-                                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
-                                {obj.keyResults.map((kr) => {
-                                  const alreadyLinked = links.some((l) => l.krId === kr.id);
-                                  const krTypeLabel = kr.krType === "measurement" ? "測量" : kr.krType === "milestone" ? "里程碑" : "累積";
-                                  return (
-                                    <button key={kr.id}
-                                      onClick={() => alreadyLinked
-                                        ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
-                                        : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
-                                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}>
-                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
-                                        {alreadyLinked && "✓"}
-                                      </span>
-                                      <span className="flex-1 truncate">{kr.title}</span>
-                                      <span className="text-gray-400 shrink-0">{krTypeLabel}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
             </div>
-          )}
-
-          {/* Deleted ideas */}
-          {deletedIdeas.length > 0 && (
-            <div>
-              <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center gap-2">
-                <span className="text-xs text-gray-500 font-medium">垃圾桶</span>
-                <span className="text-xs text-gray-400">{deletedIdeas.length} 個</span>
-              </div>
-              <div className="divide-y divide-gray-50">
-                {deletedIdeas.map((idea) => (
-                  <div key={idea.id} className="px-4 py-3 flex items-center gap-2 opacity-60">
-                    <p className="text-sm text-gray-500 flex-1 truncate line-through">{idea.title}</p>
-                    <button onClick={() => handleRestore(idea.id)} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 whitespace-nowrap shrink-0">還原</button>
-                    <button onClick={() => handlePermanentDelete(idea.id)} className="text-xs text-red-400 hover:text-red-600 whitespace-nowrap shrink-0">永久刪除</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+          )
         )}
       </div>
     </div>
