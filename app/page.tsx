@@ -462,26 +462,26 @@ export default function DashboardPage() {
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
             onClick={(e) => { if (e.target === e.currentTarget) setKrTasksPopup(null); }}>
-            <div className="bg-gray-900 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden border border-gray-700">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden border border-gray-200">
 
               {/* Header */}
-              <div className="px-5 py-4 bg-gradient-to-br from-indigo-950 to-gray-800 border-b border-gray-700">
-                <p className="text-[10px] text-indigo-400 font-bold tracking-widest uppercase mb-2">子目標任務</p>
-                <p className="text-sm font-semibold text-white leading-snug">{krTasksPopup.krTitle}</p>
-                <p className="text-xs text-gray-400 mt-1">{krTasksPopup.objTitle}</p>
+              <div className="px-5 py-4 bg-indigo-50 border-b border-indigo-100">
+                <p className="text-[10px] text-indigo-500 font-bold tracking-widest uppercase mb-2">子目標任務</p>
+                <p className="text-sm font-semibold text-gray-900 leading-snug">{krTasksPopup.krTitle}</p>
+                <p className="text-xs text-gray-500 mt-1">{krTasksPopup.objTitle}</p>
                 {krCompletion !== undefined && (
                   <div className="mt-3 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] text-gray-500 uppercase tracking-wider">進度</span>
-                      <span className={`text-xs font-bold font-mono ${krCompletion >= 60 ? "text-green-400" : krCompletion >= 30 ? "text-amber-400" : "text-red-400"}`}>
+                      <span className={`text-xs font-bold font-mono ${krCompletion >= 60 ? "text-green-600" : krCompletion >= 30 ? "text-amber-500" : "text-red-500"}`}>
                         {krCompletion}%
                       </span>
                     </div>
-                    <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
+                    <div className="h-2 bg-white rounded-full overflow-hidden border border-gray-200">
+                      <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%`, minWidth: "3px" }} />
                     </div>
                     {kr && kr.targetValue && (
-                      <p className="text-[10px] text-gray-500 text-right font-mono">
+                      <p className="text-[10px] text-gray-400 text-right font-mono">
                         {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
                       </p>
                     )}
@@ -489,30 +489,30 @@ export default function DashboardPage() {
                 )}
                 {relatedTasks.length > 0 && (
                   <div className="mt-2 flex items-center gap-1.5">
-                    <span className="text-[10px] text-gray-500">任務完成</span>
-                    <span className="text-[10px] font-mono text-gray-400">{doneCount} / {relatedTasks.length}</span>
+                    <span className="text-[10px] text-gray-400">任務完成</span>
+                    <span className="text-[10px] font-mono text-gray-500">{doneCount} / {relatedTasks.length}</span>
                   </div>
                 )}
               </div>
 
               {/* Task list */}
-              <div className="divide-y divide-gray-800 max-h-64 overflow-y-auto">
+              <div className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
                 {relatedTasks.length === 0 ? (
-                  <p className="px-5 py-8 text-xs text-gray-500 text-center">尚無相關任務</p>
+                  <p className="px-5 py-8 text-xs text-gray-400 text-center">尚無相關任務</p>
                 ) : (
                   relatedTasks.map((task) => (
                     <div key={task.id} className="px-5 py-3 flex items-center gap-3">
                       <div className={`w-2 h-2 rounded-full shrink-0 ${
                         task.taskStatus === "done" ? "bg-green-400" :
-                        task.taskStatus === "in-progress" ? "bg-amber-400" : "bg-gray-600"
+                        task.taskStatus === "in-progress" ? "bg-amber-400" : "bg-gray-300"
                       }`} />
-                      <p className={`text-sm flex-1 min-w-0 truncate ${task.taskStatus === "done" ? "line-through text-gray-500" : "text-gray-200"}`}>
+                      <p className={`text-sm flex-1 min-w-0 truncate ${task.taskStatus === "done" ? "line-through text-gray-400" : "text-gray-800"}`}>
                         {task.title}
                       </p>
                       <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 font-medium ${
-                        task.taskStatus === "done" ? "bg-green-900/40 text-green-400" :
-                        task.taskStatus === "in-progress" ? "bg-amber-900/40 text-amber-400" :
-                        "bg-gray-700 text-gray-400"
+                        task.taskStatus === "done" ? "bg-green-50 text-green-600" :
+                        task.taskStatus === "in-progress" ? "bg-amber-50 text-amber-600" :
+                        "bg-gray-100 text-gray-500"
                       }`}>
                         {task.taskStatus ? TASK_STATUS_LABEL[task.taskStatus] : "待辦"}
                       </span>
@@ -522,13 +522,13 @@ export default function DashboardPage() {
               </div>
 
               {/* Footer */}
-              <div className="px-5 py-3 bg-gray-800/60 border-t border-gray-700 flex items-center justify-between">
+              <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
                 <Link href={`/tasks?objectiveId=${krTasksPopup.objId}&krId=${krTasksPopup.krId}`}
                   onClick={() => setKrTasksPopup(null)}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">
+                  className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
                   ＋ 新增任務
                 </Link>
-                <button onClick={() => setKrTasksPopup(null)} className="text-xs text-gray-500 hover:text-gray-300">關閉</button>
+                <button onClick={() => setKrTasksPopup(null)} className="text-xs text-gray-400 hover:text-gray-600">關閉</button>
               </div>
             </div>
           </div>
@@ -545,7 +545,7 @@ export default function DashboardPage() {
           <div className="text-xs text-gray-500 mt-1">目標 (O)</div>
           {avgOCompletion !== null && (
             <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full rounded-full bg-indigo-400 transition-all" style={{ width: `${avgOCompletion}%` }} />
+              <div className="h-full rounded-full bg-indigo-400 transition-all" style={{ width: `${avgOCompletion}%`, minWidth: "3px" }} />
             </div>
           )}
         </div>
@@ -625,7 +625,7 @@ export default function DashboardPage() {
                     </div>
                     {completion !== undefined ? (
                       <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${getProgressColor(completion)}`} style={{ width: `${completion}%` }} />
+                        <div className={`h-full rounded-full transition-all ${getProgressColor(completion)}`} style={{ width: `${completion}%`, minWidth: "3px" }} />
                       </div>
                     ) : (
                       <p className="text-xs text-gray-400">尚無可追蹤的子目標</p>
@@ -669,7 +669,7 @@ export default function DashboardPage() {
                               ) : krCompletion !== undefined ? (
                                 <div className="flex items-center gap-2">
                                   <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
+                                    <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%`, minWidth: "3px" }} />
                                   </div>
                                   <span className="text-xs text-gray-400 shrink-0 font-mono">
                                     {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
