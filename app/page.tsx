@@ -286,10 +286,11 @@ export default function DashboardPage() {
                       {o.keyResults.map((kr) => {
                         const krCompletion = calcKRCompletion(kr);
                         const krType = kr.krType ?? "cumulative";
+                        const taskHref = `/tasks?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`;
                         return (
                           <div key={kr.id} className="flex items-center gap-2 pl-2">
                             <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0" />
-                            <p className="text-xs text-gray-600 flex-1 truncate">{kr.title}</p>
+                            <p className="text-xs text-gray-600 flex-1 truncate min-w-0">{kr.title}</p>
                             {krType === "milestone" ? (
                               <span className={`text-xs shrink-0 ${kr.currentValue && kr.currentValue >= 1 ? "text-green-600" : "text-gray-400"}`}>
                                 {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
@@ -299,9 +300,14 @@ export default function DashboardPage() {
                                 <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
                                   <div className={`h-full rounded-full ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
                                 </div>
-                                <span className="text-xs text-gray-400 w-7 text-right">{krCompletion}%</span>
+                                <span className="text-xs text-gray-400 w-20 text-right shrink-0">
+                                  {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                                </span>
                               </div>
                             ) : null}
+                            <Link href={taskHref} className="text-xs text-indigo-400 hover:text-indigo-600 shrink-0 whitespace-nowrap">
+                              ＋ Task
+                            </Link>
                           </div>
                         );
                       })}
