@@ -254,7 +254,10 @@ function TasksPageInner() {
   const [pendingMeasure, setPendingMeasure] = useState<string | null>(null);
   const [measureInputs, setMeasureInputs] = useState<MeasurementInputs>({});
   const [expandedAnalysisIds, setExpandedAnalysisIds] = useState<Set<string>>(new Set());
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>("active");
+  const prefilledFilter = searchParams.get("filter");
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>(
+    () => (prefilledFilter === "shelved" || prefilledFilter === "deleted") ? prefilledFilter : "active"
+  );
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
   const todoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 

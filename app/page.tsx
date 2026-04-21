@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Idea, Objective, KeyResult, CheckIn, TodoItem, TaskStatus, IdeaStatus, IdeaAnalysis, IdeaKRLink } from "@/lib/types";
-import { fetchIdeas, fetchObjectives, saveIdea, updateIdeaTaskStatus, updateIdeaStatus } from "@/lib/db";
+import { fetchIdeas, fetchObjectives, saveIdea, updateIdeaTaskStatus } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
 import Markdown from "@/components/Markdown";
@@ -13,11 +14,11 @@ type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
 type DashTaskFilter = "all" | "todo" | "in-progress" | "done";
 
 interface SuggestedLink {
-  objectiveId: string;
-  objectiveTitle: string;
-  krId: string;
-  krTitle: string;
-  score: number;
+  objectiveId: string; objectiveTitle: string;
+  krId: string; krTitle: string; score: number;
+}
+interface KRTasksPopup {
+  krId: string; krTitle: string; objTitle: string; objId: string;
 }
 
 function calcKRCompletion(kr: KeyResult): number | undefined {
@@ -44,10 +45,10 @@ function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
   return kr.checkIns[kr.checkIns.length - 1];
 }
 
-function getProgressColor(completion: number): string {
-  if (completion >= 60) return "bg-green-400";
-  if (completion >= 30) return "bg-amber-400";
-  return "bg-gray-400";
+function getProgressColor(pct: number): string {
+  if (pct >= 60) return "bg-green-400";
+  if (pct >= 30) return "bg-amber-400";
+  return "bg-red-400";
 }
 
 function buildProgressContext(objectives: Objective[]): string {
@@ -68,23 +69,20 @@ const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
 };
 
 function ScoreBadge({ score }: { score: number }) {
-  const cls = score >= 7
-    ? "bg-indigo-50 text-indigo-600"
-    : score >= 4
-    ? "bg-amber-50 text-amber-600"
+  const cls = score >= 7 ? "bg-indigo-50 text-indigo-600"
+    : score >= 4 ? "bg-amber-50 text-amber-600"
     : "bg-gray-100 text-gray-500";
-  return (
-    <span className={`text-xs font-bold px-1.5 py-0.5 rounded shrink-0 ${cls}`}>
-      {score.toFixed(1)}
-    </span>
-  );
+  return <span className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${cls}`}>{score.toFixed(1)}</span>;
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const [expandedObjId, setExpandedObjId] = useState<string | null>(null);
-  const [expandedDashTaskId, setExpandedDashTaskId] = useState<string | null>(null);
+
+  // Sets for multi-expand
+  const [expandedObjIds, setExpandedObjIds] = useState<Set<string>>(new Set());
+  const [expandedDashTaskIds, setExpandedDashTaskIds] = useState<Set<string>>(new Set());
   const [dashTaskFilter, setDashTaskFilter] = useState<DashTaskFilter>("all");
   const dashTodoRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -93,7 +91,14 @@ export default function DashboardPage() {
     fetchObjectives().then(setObjectives).catch(console.error);
   }, []);
 
-  // ── Modal state ──────────────────────────────────────────────────────────
+  function toggleObjExpand(id: string) {
+    setExpandedObjIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleTaskExpand(id: string) {
+    setExpandedDashTaskIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+
+  // ── Modal ────────────────────────────────────────────────────────────────
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -112,10 +117,9 @@ export default function DashboardPage() {
   const hasDetails = modalWhy.trim() || modalOutcome.trim() || modalNotes.trim();
   const isQuickMode = !hasDetails;
 
-  function openModal(prefill = "") {
-    setModalTitle(prefill);
-    setModalStatus("idle");
+  function openModal() {
     setModalOpen(true);
+    setModalStatus("idle");
   }
 
   function closeModal() {
@@ -140,16 +144,10 @@ export default function DashboardPage() {
         progressContext: buildProgressContext(objectives),
       });
       setModalAnalysis(result);
-
       const links: SuggestedLink[] = [];
       for (const os of result.objectiveScores) {
         for (const krs of os.keyResultScores) {
-          if (krs.score >= 5) {
-            links.push({
-              objectiveId: os.objectiveId, objectiveTitle: os.objectiveTitle,
-              krId: krs.keyResultId, krTitle: krs.keyResultTitle, score: krs.score,
-            });
-          }
+          if (krs.score >= 5) links.push({ objectiveId: os.objectiveId, objectiveTitle: os.objectiveTitle, krId: krs.keyResultId, krTitle: krs.keyResultTitle, score: krs.score });
         }
       }
       links.sort((a, b) => b.score - a.score);
@@ -172,11 +170,7 @@ export default function DashboardPage() {
         const { shouldClarify, question } = await callAI<{ shouldClarify: boolean; question: string }>(
           "clarifyIdea", { ideaTitle: modalTitle, objectives }
         );
-        if (shouldClarify && question) {
-          setClarifyQuestion(question);
-          setClarifyAnswer("");
-          return;
-        }
+        if (shouldClarify && question) { setClarifyQuestion(question); setClarifyAnswer(""); return; }
       } catch { /* fall through */ }
     }
     await runModalAnalysis();
@@ -196,14 +190,10 @@ export default function DashboardPage() {
     if (modalNotes.trim()) descParts.push(`備註：${modalNotes}`);
 
     const newIdea: Idea = {
-      id: uuid(),
-      title: modalTitle,
+      id: uuid(), title: modalTitle,
       description: descParts.join("\n"),
-      analysis: modalAnalysis,
-      createdAt: new Date().toISOString(),
-      completed: false,
-      linkedKRs,
-      taskStatus,
+      analysis: modalAnalysis, createdAt: new Date().toISOString(),
+      completed: false, linkedKRs, taskStatus,
       ideaStatus: ideaStatus ?? "active",
       quickAnalysis: isQuickMode,
     };
@@ -212,19 +202,17 @@ export default function DashboardPage() {
       await saveIdea(newIdea);
       setIdeas((prev) => [newIdea, ...prev]);
       closeModal();
+      if (ideaStatus === "deleted") router.push("/tasks?filter=deleted");
+      else if (ideaStatus === "shelved") router.push("/tasks?filter=shelved");
     } catch (e) {
       setModalErrorMsg(e instanceof Error ? e.message : "儲存失敗");
       setModalStatus("confirm");
     }
   }
 
-  function toggleModalLink(krId: string) {
-    setModalSelectedLinkIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(krId)) next.delete(krId); else next.add(krId);
-      return next;
-    });
-  }
+  // ── KR Tasks Popup ───────────────────────────────────────────────────────
+
+  const [krTasksPopup, setKrTasksPopup] = useState<KRTasksPopup | null>(null);
 
   // ── Dashboard task handlers ──────────────────────────────────────────────
 
@@ -289,11 +277,9 @@ export default function DashboardPage() {
   const allKRs = objectives.flatMap((o) =>
     o.keyResults.map((kr) => ({ ...kr, objectiveTitle: o.title, objectiveId: o.id }))
   );
-
   const oCompletions = objectives.map(calcOCompletion).filter((v): v is number => v !== undefined);
   const avgOCompletion = oCompletions.length > 0
-    ? Math.round(oCompletions.reduce((a, b) => a + b, 0) / oCompletions.length)
-    : null;
+    ? Math.round(oCompletions.reduce((a, b) => a + b, 0) / oCompletions.length) : null;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -319,11 +305,9 @@ export default function DashboardPage() {
   const filteredTasks = [...activeTasks]
     .filter((i) => dashTaskFilter === "all" || i.taskStatus === dashTaskFilter)
     .sort((a, b) => {
-      const aDone = a.taskStatus === "done" ? 1 : 0;
-      const bDone = b.taskStatus === "done" ? 1 : 0;
+      const aDone = a.taskStatus === "done" ? 1 : 0, bDone = b.taskStatus === "done" ? 1 : 0;
       if (aDone !== bDone) return aDone - bDone;
-      const aIP = a.taskStatus === "in-progress" ? 0 : 1;
-      const bIP = b.taskStatus === "in-progress" ? 0 : 1;
+      const aIP = a.taskStatus === "in-progress" ? 0 : 1, bIP = b.taskStatus === "in-progress" ? 0 : 1;
       if (aIP !== bIP) return aIP - bIP;
       return (b.analysis?.finalScore ?? -1) - (a.analysis?.finalScore ?? -1);
     });
@@ -333,10 +317,11 @@ export default function DashboardPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
 
-      {/* ── Modal ──────────────────────────────────────────────────────────── */}
+      {/* ── Analysis Modal ──────────────────────────────────────────────────── */}
       {modalOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget && modalStatus === "idle") closeModal(); }}>
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget && modalStatus === "idle") closeModal(); }}>
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-700">新增 Task</h2>
@@ -345,49 +330,33 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {/* Loading */}
               {(modalStatus === "analyzing" || modalStatus === "saving" || (modalStatus === "clarifying" && !clarifyQuestion)) && (
                 <div className="text-center py-10">
                   <div className="text-3xl mb-3 animate-pulse">◎</div>
-                  <p className="text-xs text-gray-400">
-                    {modalStatus === "saving" ? "儲存中…" : "AI 分析中，通常需要 5–15 秒…"}
-                  </p>
+                  <p className="text-xs text-gray-400">{modalStatus === "saving" ? "儲存中…" : "AI 分析中，通常需要 5–15 秒…"}</p>
                 </div>
               )}
 
-              {/* Clarification */}
               {modalStatus === "clarifying" && clarifyQuestion && (
                 <div className="space-y-3">
                   <p className="text-sm text-gray-700 font-medium">{clarifyQuestion}</p>
-                  <textarea
-                    value={clarifyAnswer}
-                    onChange={(e) => setClarifyAnswer(e.target.value)}
-                    placeholder="簡單說明即可…"
-                    rows={3}
-                    autoFocus
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                  />
+                  <textarea value={clarifyAnswer} onChange={(e) => setClarifyAnswer(e.target.value)}
+                    placeholder="簡單說明即可…" rows={3} autoFocus
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
                   <div className="flex gap-2">
                     <button onClick={() => runModalAnalysis()} className="text-xs px-3 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50">跳過</button>
                     <button onClick={() => runModalAnalysis(clarifyAnswer.trim() || undefined)} disabled={!clarifyAnswer.trim()}
-                      className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
-                      繼續分析
-                    </button>
+                      className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">繼續分析</button>
                   </div>
                 </div>
               )}
 
-              {/* Input form */}
               {modalStatus === "idle" && (
                 <div className="space-y-3">
-                  <input
-                    value={modalTitle}
-                    onChange={(e) => setModalTitle(e.target.value)}
+                  <input value={modalTitle} onChange={(e) => setModalTitle(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleModalAnalyze()}
-                    placeholder="用一句話描述你的 Task"
-                    autoFocus
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                    placeholder="用一句話描述你的 Task" autoFocus
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   <button type="button" onClick={() => setModalDetailsOpen((v) => !v)}
                     className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600">
                     <span className={`transition-transform ${modalDetailsOpen ? "rotate-90" : ""}`}>›</span>
@@ -412,7 +381,6 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Confirm */}
               {modalStatus === "confirm" && modalAnalysis && (
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-3">
@@ -421,11 +389,10 @@ export default function DashboardPage() {
                       <p className="text-xs text-gray-400 mt-0.5">分析結果</p>
                     </div>
                     <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
-                      <span className="text-2xl font-bold text-indigo-600">{modalAnalysis.finalScore.toFixed(1)}</span>
+                      <span className="text-2xl font-bold font-mono text-indigo-600">{modalAnalysis.finalScore.toFixed(1)}</span>
                       <span className="text-[10px] text-gray-400 mt-0.5">綜合分</span>
                     </div>
                   </div>
-
                   {modalAnalysis.objectiveScores.map((os) => (
                     <div key={os.objectiveId} className="bg-gray-50 rounded-lg border border-gray-100 p-4">
                       <div className="flex items-center justify-between mb-1.5">
@@ -445,19 +412,19 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   ))}
-
                   {modalAnalysis.risks.length > 0 && (
                     <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
                       <span className="font-medium">風險：</span>{modalAnalysis.risks.join("；")}
                     </div>
                   )}
-
                   {modalSuggestedLinks.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-gray-600">連結至子目標</p>
                       {modalSuggestedLinks.map((l) => (
                         <label key={l.krId} className="flex items-center gap-2.5 cursor-pointer">
-                          <input type="checkbox" checked={modalSelectedLinkIds.has(l.krId)} onChange={() => toggleModalLink(l.krId)} className="accent-indigo-600 shrink-0" />
+                          <input type="checkbox" checked={modalSelectedLinkIds.has(l.krId)} onChange={() => {
+                            setModalSelectedLinkIds((prev) => { const s = new Set(prev); s.has(l.krId) ? s.delete(l.krId) : s.add(l.krId); return s; });
+                          }} className="accent-indigo-600 shrink-0" />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
                             <p className="text-xs text-gray-400 truncate">{l.objectiveTitle}</p>
@@ -467,22 +434,14 @@ export default function DashboardPage() {
                       ))}
                     </div>
                   )}
-
                   {modalErrorMsg && <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{modalErrorMsg}</div>}
-
                   <div className="flex gap-2 pt-1">
                     <button onClick={() => handleModalSave("deleted", "todo")}
-                      className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">
-                      放棄
-                    </button>
+                      className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">放棄</button>
                     <button onClick={() => handleModalSave("shelved", "todo")}
-                      className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">
-                      暫存
-                    </button>
+                      className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-200">暫存</button>
                     <button onClick={() => handleModalSave(undefined, "in-progress")}
-                      className="flex-1 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
-                      執行
-                    </button>
+                      className="flex-1 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">執行</button>
                   </div>
                 </div>
               )}
@@ -491,40 +450,121 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* ── KR Tasks Popup (game quest window) ──────────────────────────────── */}
+      {krTasksPopup && (() => {
+        const kr = objectives.find((o) => o.id === krTasksPopup.objId)?.keyResults.find((k) => k.id === krTasksPopup.krId);
+        const krCompletion = kr ? calcKRCompletion(kr) : undefined;
+        const relatedTasks = ideas.filter((i) =>
+          (i.ideaStatus ?? "active") === "active" &&
+          (i.linkedKRs ?? []).some((l) => l.krId === krTasksPopup.krId)
+        );
+        const doneCount = relatedTasks.filter((t) => t.taskStatus === "done").length;
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) setKrTasksPopup(null); }}>
+            <div className="bg-gray-900 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden border border-gray-700">
+
+              {/* Header */}
+              <div className="px-5 py-4 bg-gradient-to-br from-indigo-950 to-gray-800 border-b border-gray-700">
+                <p className="text-[10px] text-indigo-400 font-bold tracking-widest uppercase mb-2">子目標任務</p>
+                <p className="text-sm font-semibold text-white leading-snug">{krTasksPopup.krTitle}</p>
+                <p className="text-xs text-gray-400 mt-1">{krTasksPopup.objTitle}</p>
+                {krCompletion !== undefined && (
+                  <div className="mt-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">進度</span>
+                      <span className={`text-xs font-bold font-mono ${krCompletion >= 60 ? "text-green-400" : krCompletion >= 30 ? "text-amber-400" : "text-red-400"}`}>
+                        {krCompletion}%
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
+                    </div>
+                    {kr && kr.targetValue && (
+                      <p className="text-[10px] text-gray-500 text-right font-mono">
+                        {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {relatedTasks.length > 0 && (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <span className="text-[10px] text-gray-500">任務完成</span>
+                    <span className="text-[10px] font-mono text-gray-400">{doneCount} / {relatedTasks.length}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Task list */}
+              <div className="divide-y divide-gray-800 max-h-64 overflow-y-auto">
+                {relatedTasks.length === 0 ? (
+                  <p className="px-5 py-8 text-xs text-gray-500 text-center">尚無相關任務</p>
+                ) : (
+                  relatedTasks.map((task) => (
+                    <div key={task.id} className="px-5 py-3 flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${
+                        task.taskStatus === "done" ? "bg-green-400" :
+                        task.taskStatus === "in-progress" ? "bg-amber-400" : "bg-gray-600"
+                      }`} />
+                      <p className={`text-sm flex-1 min-w-0 truncate ${task.taskStatus === "done" ? "line-through text-gray-500" : "text-gray-200"}`}>
+                        {task.title}
+                      </p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 font-medium ${
+                        task.taskStatus === "done" ? "bg-green-900/40 text-green-400" :
+                        task.taskStatus === "in-progress" ? "bg-amber-900/40 text-amber-400" :
+                        "bg-gray-700 text-gray-400"
+                      }`}>
+                        {task.taskStatus ? TASK_STATUS_LABEL[task.taskStatus] : "待辦"}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3 bg-gray-800/60 border-t border-gray-700 flex items-center justify-between">
+                <Link href={`/tasks?objectiveId=${krTasksPopup.objId}&krId=${krTasksPopup.krId}`}
+                  onClick={() => setKrTasksPopup(null)}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">
+                  ＋ 新增任務
+                </Link>
+                <button onClick={() => setKrTasksPopup(null)} className="text-xs text-gray-500 hover:text-gray-300">關閉</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Stat cards ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-end gap-1.5">
-            <span className="text-2xl font-bold text-indigo-600">{objectives.length}</span>
-            {avgOCompletion !== null && (
-              <span className="text-sm font-medium text-gray-400 mb-0.5">{avgOCompletion}%</span>
-            )}
+            <span className="text-2xl font-bold font-mono text-indigo-600">{objectives.length}</span>
+            {avgOCompletion !== null && <span className="text-sm font-mono text-gray-400 mb-0.5">{avgOCompletion}%</span>}
           </div>
           <div className="text-xs text-gray-500 mt-1">目標 (O)</div>
           {avgOCompletion !== null && (
-            <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
               <div className="h-full rounded-full bg-indigo-400 transition-all" style={{ width: `${avgOCompletion}%` }} />
             </div>
           )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-indigo-600">{activeTasks.length}</div>
+          <div className="text-2xl font-bold font-mono text-indigo-600">{activeTasks.length}</div>
           <div className="text-xs text-gray-500 mt-1">Tasks</div>
           <div className="mt-1 text-xs space-x-1">
             {activeTasks.filter(t => t.taskStatus === "in-progress").length > 0 && (
-              <span className="text-amber-500">{activeTasks.filter(t => t.taskStatus === "in-progress").length} 進行中</span>
+              <span className="text-amber-500 font-mono">{activeTasks.filter(t => t.taskStatus === "in-progress").length} 進行中</span>
             )}
             {activeTasks.filter(t => t.taskStatus === "done").length > 0 && (
-              <span className="text-green-500">{activeTasks.filter(t => t.taskStatus === "done").length} 完成</span>
+              <span className="text-green-500 font-mono">{activeTasks.filter(t => t.taskStatus === "done").length} 完成</span>
             )}
           </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="text-2xl font-bold text-indigo-600">{doneTasks.length}</div>
+          <div className="text-2xl font-bold font-mono text-indigo-600">{doneTasks.length}</div>
           <div className="text-xs text-gray-500 mt-1">已完成</div>
-          {staleKRs.length > 0 && (
-            <div className="mt-1 text-xs text-amber-500">{staleKRs.length} 子目標待更新</div>
-          )}
+          {staleKRs.length > 0 && <div className="mt-1 text-xs text-amber-500">{staleKRs.length} 子目標待更新</div>}
         </div>
       </div>
 
@@ -538,9 +578,7 @@ export default function DashboardPage() {
           <div className="space-y-2">
             {staleKRs.slice(0, 5).map((kr) => {
               const last = getLastCheckIn(kr);
-              const daysOld = last
-                ? Math.round((today.getTime() - new Date(last.date).getTime()) / (1000 * 60 * 60 * 24))
-                : null;
+              const daysOld = last ? Math.round((today.getTime() - new Date(last.date).getTime()) / (1000 * 60 * 60 * 24)) : null;
               return (
                 <div key={kr.id} className="flex items-center gap-3">
                   <div className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
@@ -548,16 +586,12 @@ export default function DashboardPage() {
                     <p className="text-xs text-gray-700 truncate">{kr.title}</p>
                     <p className="text-xs text-gray-400 truncate">{kr.objectiveTitle}</p>
                   </div>
-                  <span className="text-xs text-gray-400 shrink-0">
-                    {daysOld !== null ? `${daysOld}天前` : "從未更新"}
-                  </span>
+                  <span className="text-xs text-gray-400 shrink-0 font-mono">{daysOld !== null ? `${daysOld}天前` : "從未更新"}</span>
                 </div>
               );
             })}
             {staleKRs.length > 5 && (
-              <Link href="/okr" className="text-xs text-indigo-500 hover:text-indigo-700 block mt-1">
-                查看全部 {staleKRs.length} 條 →
-              </Link>
+              <Link href="/okr" className="text-xs text-indigo-500 hover:text-indigo-700 block mt-1">查看全部 {staleKRs.length} 條 →</Link>
             )}
           </div>
         </div>
@@ -573,69 +607,76 @@ export default function DashboardPage() {
           <div className="divide-y divide-gray-50">
             {objectives.map((o) => {
               const completion = calcOCompletion(o);
-              const isExpanded = expandedObjId === o.id;
-              const linkedTaskCount = ideas.filter(
-                (t) => t.linkedKRs?.some((l) => l.objectiveId === o.id)
-              ).length;
+              const isExpanded = expandedObjIds.has(o.id);
+              const linkedTaskCount = ideas.filter((t) => t.linkedKRs?.some((l) => l.objectiveId === o.id)).length;
               return (
                 <div key={o.id}>
-                  <button
-                    onClick={() => setExpandedObjId(isExpanded ? null : o.id)}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
-                  >
+                  <button onClick={() => toggleObjExpand(o.id)}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors">
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-sm text-gray-800 truncate flex-1 mr-3 font-medium">{o.title}</span>
                       <div className="flex items-center gap-2 shrink-0">
-                        {linkedTaskCount > 0 && (
-                          <span className="text-xs text-indigo-400">{linkedTaskCount} task</span>
-                        )}
+                        {linkedTaskCount > 0 && <span className="text-xs text-indigo-400 font-mono">{linkedTaskCount} task</span>}
                         {completion !== undefined && (
-                          <span className={`text-xs font-bold ${
-                            completion >= 70 ? "text-green-600" : completion >= 40 ? "text-amber-500" : "text-red-500"
-                          }`}>{completion}%</span>
+                          <span className={`text-xs font-bold font-mono ${completion >= 70 ? "text-green-600" : completion >= 40 ? "text-amber-500" : "text-red-500"}`}>{completion}%</span>
                         )}
                         <span className="text-gray-300 text-xs">{isExpanded ? "▲" : "▼"}</span>
                       </div>
                     </div>
-                    {completion !== undefined && (
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${getProgressColor(completion)}`}
-                          style={{ width: `${completion}%` }}
-                        />
+                    {completion !== undefined ? (
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${getProgressColor(completion)}`} style={{ width: `${completion}%` }} />
                       </div>
-                    )}
-                    {completion === undefined && (
+                    ) : (
                       <p className="text-xs text-gray-400">尚無可追蹤的子目標</p>
                     )}
                   </button>
+
                   {isExpanded && (
-                    <div className="px-4 pb-3 space-y-1.5">
+                    <div className="px-4 pb-3 pt-1 space-y-3 bg-gray-50/60">
                       {o.keyResults.map((kr) => {
                         const krCompletion = calcKRCompletion(kr);
                         const krType = kr.krType ?? "cumulative";
-                        const taskHref = `/tasks?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`;
                         return (
-                          <div key={kr.id} className="flex items-center gap-2 pl-2">
-                            <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0" />
-                            <p className="text-xs text-gray-600 flex-1 truncate min-w-0">{kr.title}</p>
-                            {krType === "milestone" ? (
-                              <span className={`text-xs shrink-0 ${kr.currentValue && kr.currentValue >= 1 ? "text-green-600" : "text-gray-400"}`}>
-                                {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
-                              </span>
-                            ) : krCompletion !== undefined ? (
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
-                                </div>
-                                <span className="text-xs text-gray-400 w-20 text-right shrink-0">
-                                  {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                          <div key={kr.id} className="pl-2 space-y-1.5">
+                            {/* Title row */}
+                            <div className="flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
+                              <p className="text-xs text-gray-700 flex-1 truncate min-w-0">{kr.title}</p>
+                              {krType === "milestone" ? (
+                                <span className={`text-xs font-medium shrink-0 ${kr.currentValue && kr.currentValue >= 1 ? "text-green-600" : "text-gray-400"}`}>
+                                  {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
                                 </span>
-                              </div>
-                            ) : null}
-                            <Link href={taskHref} className="text-xs text-indigo-400 hover:text-indigo-600 shrink-0 whitespace-nowrap">
-                              ＋ Task
-                            </Link>
+                              ) : krCompletion !== undefined && (
+                                <span className={`text-xs font-bold font-mono shrink-0 ${krCompletion >= 60 ? "text-green-600" : krCompletion >= 30 ? "text-amber-500" : "text-red-500"}`}>
+                                  {krCompletion}%
+                                </span>
+                              )}
+                              <button
+                                onClick={() => setKrTasksPopup({ krId: kr.id, krTitle: kr.title, objTitle: o.title, objId: o.id })}
+                                className="text-xs font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 shrink-0"
+                              >
+                                Tasks
+                              </button>
+                            </div>
+                            {/* Progress bar */}
+                            <div className="pl-3.5">
+                              {krType === "milestone" ? (
+                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full transition-all ${kr.currentValue && kr.currentValue >= 1 ? "bg-green-400" : "bg-gray-200"}`}
+                                    style={{ width: kr.currentValue && kr.currentValue >= 1 ? "100%" : "0%" }} />
+                                </div>
+                              ) : krCompletion !== undefined ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
+                                  </div>
+                                  <span className="text-xs text-gray-400 shrink-0 font-mono">
+                                    {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                                  </span>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         );
                       })}
@@ -656,10 +697,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Quick-add */}
-        <div
-          onClick={() => openModal("")}
-          className="px-4 py-3 border-b border-gray-100 cursor-text"
-        >
+        <div onClick={openModal} className="px-4 py-3 border-b border-gray-100 cursor-text hover:bg-gray-50 transition-colors">
           <span className="text-sm text-gray-400">+ 新增 Task…</span>
         </div>
 
@@ -684,39 +722,29 @@ export default function DashboardPage() {
         ) : (
           <div className="divide-y divide-gray-50">
             {filteredTasks.map((idea) => {
-              const isExpanded = expandedDashTaskId === idea.id;
+              const isExpanded = expandedDashTaskIds.has(idea.id);
               const isDone = idea.taskStatus === "done";
               const todos = idea.todos ?? [];
               const doneTodoCount = todos.filter((t) => t.done).length;
               const todoPct = todos.length > 0 ? Math.round((doneTodoCount / todos.length) * 100) : 0;
-
               return (
                 <div key={idea.id} className={isDone ? "opacity-60" : ""}>
                   <div className="px-4 py-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setExpandedDashTaskId(isExpanded ? null : idea.id)}
-                      className="flex-1 text-left flex items-center gap-2 min-w-0"
-                    >
+                    <button onClick={() => toggleTaskExpand(idea.id)}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0">
                       <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through text-gray-400" : ""}`}>{idea.title}</p>
-                      {todos.length > 0 && (
-                        <span className="text-xs text-gray-400 shrink-0">{doneTodoCount}/{todos.length}</span>
-                      )}
+                      {todos.length > 0 && <span className="text-xs text-gray-400 font-mono shrink-0">{doneTodoCount}/{todos.length}</span>}
                       <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
                     </button>
                     <div className="flex gap-1 shrink-0">
                       {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                        <button
-                          key={s}
-                          onClick={(e) => { e.stopPropagation(); handleDashSetTaskStatus(idea.id, s); }}
-                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}
-                        >
+                        <button key={s} onClick={(e) => { e.stopPropagation(); handleDashSetTaskStatus(idea.id, s); }}
+                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}>
                           {TASK_STATUS_LABEL[s]}
                         </button>
                       ))}
                     </div>
-                    {idea.analysis?.finalScore != null && (
-                      <ScoreBadge score={idea.analysis.finalScore} />
-                    )}
+                    {idea.analysis?.finalScore != null && <ScoreBadge score={idea.analysis.finalScore} />}
                   </div>
 
                   {isExpanded && (
@@ -725,8 +753,8 @@ export default function DashboardPage() {
                         <span className="text-xs font-medium text-gray-600">子任務</span>
                         {todos.length > 0 && (
                           <>
-                            <span className="text-xs text-gray-400">{doneTodoCount}/{todos.length}</span>
-                            <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                            <span className="text-xs text-gray-400 font-mono">{doneTodoCount}/{todos.length}</span>
+                            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div className={`h-full rounded-full transition-all ${getProgressColor(todoPct)}`} style={{ width: `${todoPct}%` }} />
                             </div>
                           </>
@@ -735,15 +763,11 @@ export default function DashboardPage() {
                       <div className="space-y-0.5">
                         {todos.map((todo) => (
                           <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
-                            <button
-                              onClick={() => handleDashToggleTodo(idea.id, todo.id)}
-                              className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}
-                            >
+                            <button onClick={() => handleDashToggleTodo(idea.id, todo.id)}
+                              className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}>
                               {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
                             </button>
-                            <input
-                              ref={(el) => { dashTodoRefs.current[todo.id] = el; }}
-                              type="text"
+                            <input ref={(el) => { dashTodoRefs.current[todo.id] = el; }} type="text"
                               defaultValue={todo.title}
                               onBlur={(e) => handleDashUpdateTodoTitle(idea.id, todo.id, e.target.value)}
                               onKeyDown={(e) => {
@@ -751,14 +775,11 @@ export default function DashboardPage() {
                                 if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDashDeleteTodo(idea.id, todo.id); }
                               }}
                               className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
-                              placeholder="待辦事項"
-                            />
+                              placeholder="待辦事項" />
                           </div>
                         ))}
-                        <button
-                          onClick={() => handleDashAddTodo(idea.id)}
-                          className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white"
-                        >
+                        <button onClick={() => handleDashAddTodo(idea.id)}
+                          className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white">
                           <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
                           新增待辦
                         </button>
