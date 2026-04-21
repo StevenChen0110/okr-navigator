@@ -547,7 +547,7 @@ export default function DashboardPage() {
             <span className="text-2xl font-bold font-mono text-indigo-600">{objectives.length}</span>
             {avgOCompletion !== null && avgOCompletion > 0 && <span className="text-sm font-mono text-gray-400 mb-0.5">{avgOCompletion}%</span>}
           </div>
-          <div className="text-xs text-gray-500 mt-1">目標 (O)</div>
+          <div className="text-xs text-gray-500 mt-1">目標</div>
           {avgOCompletion !== null && (
             <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
               <div className="h-full rounded-full bg-indigo-400 transition-all" style={{ width: `${avgOCompletion}%`, minWidth: "3px" }} />
