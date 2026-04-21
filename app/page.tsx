@@ -282,35 +282,26 @@ export default function DashboardPage() {
                     )}
                   </button>
                   {isExpanded && (
-                    <div className="px-4 pb-3 space-y-2">
+                    <div className="px-4 pb-3 space-y-1.5">
                       {o.keyResults.map((kr) => {
                         const krCompletion = calcKRCompletion(kr);
                         const krType = kr.krType ?? "cumulative";
                         return (
-                          <div key={kr.id} className="flex items-start gap-2 pl-2">
-                            <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs text-gray-600 truncate mb-1">{kr.title}</p>
-                              {krType === "milestone" ? (
-                                <div className="flex items-center gap-1.5 ml-0">
-                                  <div className={`w-3 h-3 rounded border flex items-center justify-center ${kr.currentValue && kr.currentValue >= 1 ? "bg-green-500 border-green-500" : "border-gray-300"}`}>
-                                    {kr.currentValue && kr.currentValue >= 1 && <span className="text-white text-[8px]">✓</span>}
-                                  </div>
-                                  <span className={`text-xs ${kr.currentValue && kr.currentValue >= 1 ? "text-green-600 font-medium" : "text-gray-400"}`}>
-                                    {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
-                                  </span>
+                          <div key={kr.id} className="flex items-center gap-2 pl-2">
+                            <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0" />
+                            <p className="text-xs text-gray-600 flex-1 truncate">{kr.title}</p>
+                            {krType === "milestone" ? (
+                              <span className={`text-xs shrink-0 ${kr.currentValue && kr.currentValue >= 1 ? "text-green-600" : "text-gray-400"}`}>
+                                {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
+                              </span>
+                            ) : krCompletion !== undefined ? (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
                                 </div>
-                              ) : krCompletion !== undefined ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
-                                  </div>
-                                  <span className="text-xs text-gray-400 shrink-0">
-                                    {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
-                                  </span>
-                                </div>
-                              ) : null}
-                            </div>
+                                <span className="text-xs text-gray-400 w-7 text-right">{krCompletion}%</span>
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
