@@ -853,7 +853,6 @@ function TasksPageInner() {
                                   <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
                                   {obj.keyResults.map((kr) => {
                                     const alreadyLinked = links.some((l) => l.krId === kr.id);
-                                    const typeIcon = (kr.krType ?? "cumulative") === "measurement" ? "📊" : kr.krType === "milestone" ? "✅" : "📈";
                                     return (
                                       <button key={kr.id}
                                         onClick={() => alreadyLinked
@@ -864,7 +863,6 @@ function TasksPageInner() {
                                           {alreadyLinked && "✓"}
                                         </span>
                                         <span className="flex-1 truncate">{kr.title}</span>
-                                        <span className="text-gray-400 shrink-0">{typeIcon}</span>
                                       </button>
                                     );
                                   })}

@@ -600,9 +600,6 @@ export default function OKRPage() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex items-start gap-1.5 flex-1 min-w-0">
-                                  <span className="text-sm shrink-0 mt-0.5">
-                                    {(kr.krType ?? "cumulative") === "measurement" ? "📊" : kr.krType === "milestone" ? "✅" : "📈"}
-                                  </span>
                                   <p className="text-sm text-gray-800 leading-snug flex-1">{kr.title}</p>
                                 </div>
                                 <button
