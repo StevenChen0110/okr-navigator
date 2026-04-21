@@ -46,9 +46,15 @@ function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
 }
 
 function getProgressColor(pct: number): string {
-  if (pct >= 60) return "bg-green-400";
-  if (pct >= 30) return "bg-amber-400";
-  return "bg-red-400";
+  if (pct >= 60) return "bg-indigo-300";
+  if (pct >= 30) return "bg-indigo-200";
+  return "bg-gray-200";
+}
+
+function getProgressTextColor(pct: number): string {
+  if (pct >= 60) return "text-indigo-600";
+  if (pct >= 30) return "text-indigo-400";
+  return "text-gray-400";
 }
 
 function buildProgressContext(objectives: Objective[]): string {
@@ -79,6 +85,10 @@ export default function DashboardPage() {
   const router = useRouter();
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
+
+  // Section collapse
+  const [objSectionOpen, setObjSectionOpen] = useState(true);
+  const [taskSectionOpen, setTaskSectionOpen] = useState(true);
 
   // Sets for multi-expand
   const [expandedObjIds, setExpandedObjIds] = useState<Set<string>>(new Set());
@@ -462,22 +472,24 @@ export default function DashboardPage() {
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
             onClick={(e) => { if (e.target === e.currentTarget) setKrTasksPopup(null); }}>
-            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden border border-gray-200">
+            <div className="bg-white rounded-xl w-full max-w-sm shadow-lg overflow-hidden border border-gray-200">
 
               {/* Header */}
-              <div className="px-5 py-4 bg-indigo-50 border-b border-indigo-100">
-                <p className="text-[10px] text-indigo-500 font-bold tracking-widest uppercase mb-2">子目標任務</p>
-                <p className="text-sm font-semibold text-gray-900 leading-snug">{krTasksPopup.krTitle}</p>
-                <p className="text-xs text-gray-500 mt-1">{krTasksPopup.objTitle}</p>
+              <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-400 mb-0.5">{krTasksPopup.objTitle}</p>
+                    <p className="text-sm font-semibold text-gray-800 leading-snug">{krTasksPopup.krTitle}</p>
+                  </div>
+                  <button onClick={() => setKrTasksPopup(null)} className="text-gray-300 hover:text-gray-500 text-lg leading-none shrink-0 mt-0.5">×</button>
+                </div>
                 {krCompletion !== undefined && (
-                  <div className="mt-3 space-y-1">
+                  <div className="mt-3 space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">進度</span>
-                      <span className={`text-xs font-bold font-mono ${krCompletion >= 60 ? "text-green-600" : krCompletion >= 30 ? "text-amber-500" : "text-red-500"}`}>
-                        {krCompletion}%
-                      </span>
+                      <span className="text-xs text-gray-400">{doneCount}/{relatedTasks.length} 任務完成</span>
+                      <span className={`text-xs font-medium font-mono ${getProgressTextColor(krCompletion)}`}>{krCompletion}%</span>
                     </div>
-                    <div className="h-2 bg-white rounded-full overflow-hidden border border-gray-200">
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full transition-all ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%`, minWidth: "3px" }} />
                     </div>
                     {kr && kr.targetValue && (
@@ -487,32 +499,26 @@ export default function DashboardPage() {
                     )}
                   </div>
                 )}
-                {relatedTasks.length > 0 && (
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <span className="text-[10px] text-gray-400">任務完成</span>
-                    <span className="text-[10px] font-mono text-gray-500">{doneCount} / {relatedTasks.length}</span>
-                  </div>
-                )}
               </div>
 
               {/* Task list */}
-              <div className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+              <div className="divide-y divide-gray-50 max-h-56 overflow-y-auto">
                 {relatedTasks.length === 0 ? (
-                  <p className="px-5 py-8 text-xs text-gray-400 text-center">尚無相關任務</p>
+                  <p className="px-4 py-6 text-xs text-gray-400 text-center">尚無相關任務</p>
                 ) : (
                   relatedTasks.map((task) => (
-                    <div key={task.id} className="px-5 py-3 flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full shrink-0 ${
-                        task.taskStatus === "done" ? "bg-green-400" :
-                        task.taskStatus === "in-progress" ? "bg-amber-400" : "bg-gray-300"
+                    <div key={task.id} className="px-4 py-2.5 flex items-center gap-2.5">
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        task.taskStatus === "done" ? "bg-indigo-300" :
+                        task.taskStatus === "in-progress" ? "bg-amber-300" : "bg-gray-300"
                       }`} />
-                      <p className={`text-sm flex-1 min-w-0 truncate ${task.taskStatus === "done" ? "line-through text-gray-400" : "text-gray-800"}`}>
+                      <p className={`text-xs flex-1 min-w-0 truncate ${task.taskStatus === "done" ? "line-through text-gray-400" : "text-gray-700"}`}>
                         {task.title}
                       </p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 font-medium ${
-                        task.taskStatus === "done" ? "bg-green-50 text-green-600" :
-                        task.taskStatus === "in-progress" ? "bg-amber-50 text-amber-600" :
-                        "bg-gray-100 text-gray-500"
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${
+                        task.taskStatus === "done" ? "bg-gray-50 text-gray-400" :
+                        task.taskStatus === "in-progress" ? "bg-amber-50 text-amber-500" :
+                        "bg-gray-50 text-gray-400"
                       }`}>
                         {task.taskStatus ? TASK_STATUS_LABEL[task.taskStatus] : "待辦"}
                       </span>
@@ -522,13 +528,12 @@ export default function DashboardPage() {
               </div>
 
               {/* Footer */}
-              <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+              <div className="px-4 py-2.5 border-t border-gray-100">
                 <Link href={`/tasks?objectiveId=${krTasksPopup.objId}&krId=${krTasksPopup.krId}`}
                   onClick={() => setKrTasksPopup(null)}
-                  className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
+                  className="text-xs text-indigo-500 hover:text-indigo-700">
                   ＋ 新增任務
                 </Link>
-                <button onClick={() => setKrTasksPopup(null)} className="text-xs text-gray-400 hover:text-gray-600">關閉</button>
               </div>
             </div>
           </div>
@@ -601,10 +606,14 @@ export default function DashboardPage() {
       {objectives.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-700">目標進度</h2>
+            <button onClick={() => setObjSectionOpen((v) => !v)}
+              className="flex items-center gap-2 flex-1 text-left">
+              <h2 className="text-sm font-semibold text-gray-700">目標進度</h2>
+              <span className="text-gray-300 text-xs">{objSectionOpen ? "▲" : "▼"}</span>
+            </button>
             <Link href="/okr" className="text-xs text-indigo-500 hover:text-indigo-700">管理 →</Link>
           </div>
-          <div className="divide-y divide-gray-50">
+          {objSectionOpen && <div className="divide-y divide-gray-50">
             {objectives.map((o) => {
               const completion = calcOCompletion(o);
               const isExpanded = expandedObjIds.has(o.id);
@@ -618,7 +627,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2 shrink-0">
                         {linkedTaskCount > 0 && <span className="text-xs text-indigo-400 font-mono">{linkedTaskCount} task</span>}
                         {completion !== undefined && (
-                          <span className={`text-xs font-bold font-mono ${completion >= 70 ? "text-green-600" : completion >= 40 ? "text-amber-500" : "text-red-500"}`}>{completion}%</span>
+                          <span className={`text-xs font-medium font-mono ${getProgressTextColor(completion)}`}>{completion}%</span>
                         )}
                         <span className="text-gray-300 text-xs">{isExpanded ? "▲" : "▼"}</span>
                       </div>
@@ -648,7 +657,7 @@ export default function DashboardPage() {
                                   {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "未達成"}
                                 </span>
                               ) : krCompletion !== undefined && (
-                                <span className={`text-xs font-bold font-mono shrink-0 ${krCompletion >= 60 ? "text-green-600" : krCompletion >= 30 ? "text-amber-500" : "text-red-500"}`}>
+                                <span className={`text-xs font-medium font-mono shrink-0 ${getProgressTextColor(krCompletion)}`}>
                                   {krCompletion}%
                                 </span>
                               )}
@@ -685,20 +694,25 @@ export default function DashboardPage() {
                 </div>
               );
             })}
-          </div>
+          </div>}
         </div>
       )}
 
       {/* ── Tasks ────────────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">Tasks</h2>
+          <button onClick={() => setTaskSectionOpen((v) => !v)}
+            className="flex items-center gap-2 flex-1 text-left">
+            <h2 className="text-sm font-semibold text-gray-700">任務清單</h2>
+            <span className="text-gray-300 text-xs">{taskSectionOpen ? "▲" : "▼"}</span>
+          </button>
           <Link href="/tasks" className="text-xs text-indigo-500 hover:text-indigo-700">管理 →</Link>
         </div>
 
+        {taskSectionOpen && <>
         {/* Quick-add */}
         <div onClick={openModal} className="px-4 py-3 border-b border-gray-100 cursor-text hover:bg-gray-50 transition-colors">
-          <span className="text-sm text-gray-400">+ 新增 Task…</span>
+          <span className="text-sm text-gray-400">+ 新增任務…</span>
         </div>
 
         {/* Filter tabs */}
@@ -791,6 +805,7 @@ export default function DashboardPage() {
             })}
           </div>
         )}
+        </>}
       </div>
 
     </div>
