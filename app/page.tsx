@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Idea, Objective, KeyResult, CheckIn } from "@/lib/types";
-import { fetchIdeas, fetchObjectives } from "@/lib/db";
+import { useRouter } from "next/navigation";
+import { Idea, Objective, KeyResult, CheckIn, TodoItem, TaskStatus } from "@/lib/types";
+import { fetchIdeas, fetchObjectives, saveIdea, updateIdeaTaskStatus } from "@/lib/db";
 
 function calcKRCompletion(kr: KeyResult): number | undefined {
   if (kr.krType === "milestone") {
@@ -37,22 +38,84 @@ function getProgressColor(completion: number): string {
   return "bg-gray-400";
 }
 
-const TASK_STATUS_LABEL = { todo: "待辦", "in-progress": "進行中", done: "完成" } as const;
-const TASK_STATUS_STYLE = {
+const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: "待辦", "in-progress": "進行中", done: "完成" };
+const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
   todo: "bg-gray-100 text-gray-500",
   "in-progress": "bg-amber-50 text-amber-600",
   done: "bg-green-50 text-green-600",
-} as const;
+};
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [expandedObjId, setExpandedObjId] = useState<string | null>(null);
+  const [expandedDashTaskId, setExpandedDashTaskId] = useState<string | null>(null);
+  const [quickAddTitle, setQuickAddTitle] = useState("");
+  const dashTodoRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     fetchIdeas().then(setIdeas).catch(console.error);
     fetchObjectives().then(setObjectives).catch(console.error);
   }, []);
+
+  // ── Dashboard task handlers ──────────────────────────────────────────────
+
+  function handleDashSetTaskStatus(taskId: string, status: TaskStatus) {
+    updateIdeaTaskStatus(taskId, status).catch(console.error);
+    setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i));
+  }
+
+  function handleDashToggleTodo(ideaId: string, todoId: string) {
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const todos = (i.todos ?? []).map((t) =>
+        t.id === todoId ? { ...t, done: !t.done, doneAt: !t.done ? new Date().toISOString() : undefined } : t
+      );
+      const updated = { ...i, todos };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
+  }
+
+  function handleDashAddTodo(ideaId: string, afterTodoId?: string) {
+    const todo: TodoItem = { id: crypto.randomUUID(), title: "", done: false };
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const todos = i.todos ?? [];
+      const newTodos = afterTodoId
+        ? (() => { const idx = todos.findIndex((t) => t.id === afterTodoId); return [...todos.slice(0, idx + 1), todo, ...todos.slice(idx + 1)]; })()
+        : [...todos, todo];
+      const updated = { ...i, todos: newTodos };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
+    setTimeout(() => dashTodoRefs.current[todo.id]?.focus(), 30);
+  }
+
+  function handleDashUpdateTodoTitle(ideaId: string, todoId: string, newTitle: string) {
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const todos = (i.todos ?? []).map((t) => t.id === todoId ? { ...t, title: newTitle } : t);
+      const updated = { ...i, todos };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
+  }
+
+  function handleDashDeleteTodo(ideaId: string, todoId: string) {
+    const idea = ideas.find((i) => i.id === ideaId);
+    const todos = idea?.todos ?? [];
+    const idx = todos.findIndex((t) => t.id === todoId);
+    const prevId = idx > 0 ? todos[idx - 1].id : null;
+    setIdeas((prev) => prev.map((i) => {
+      if (i.id !== ideaId) return i;
+      const updated = { ...i, todos: (i.todos ?? []).filter((t) => t.id !== todoId) };
+      saveIdea(updated).catch(console.error);
+      return updated;
+    }));
+    if (prevId) setTimeout(() => dashTodoRefs.current[prevId]?.focus(), 30);
+  }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
 
@@ -223,17 +286,13 @@ export default function DashboardPage() {
                       {o.keyResults.map((kr) => {
                         const krCompletion = calcKRCompletion(kr);
                         const krType = kr.krType ?? "cumulative";
-                        const typeIcon = krType === "measurement" ? "📊" : krType === "milestone" ? "✅" : "📈";
                         return (
                           <div key={kr.id} className="flex items-start gap-2 pl-2">
                             <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2" />
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <span className="text-[11px] shrink-0">{typeIcon}</span>
-                                <p className="text-xs text-gray-600 truncate flex-1">{kr.title}</p>
-                              </div>
+                              <p className="text-xs text-gray-600 truncate mb-1">{kr.title}</p>
                               {krType === "milestone" ? (
-                                <div className="flex items-center gap-1.5 ml-4">
+                                <div className="flex items-center gap-1.5 ml-0">
                                   <div className={`w-3 h-3 rounded border flex items-center justify-center ${kr.currentValue && kr.currentValue >= 1 ? "bg-green-500 border-green-500" : "border-gray-300"}`}>
                                     {kr.currentValue && kr.currentValue >= 1 && <span className="text-white text-[8px]">✓</span>}
                                   </div>
@@ -242,7 +301,7 @@ export default function DashboardPage() {
                                   </span>
                                 </div>
                               ) : krCompletion !== undefined ? (
-                                <div className="flex items-center gap-2 ml-4">
+                                <div className="flex items-center gap-2">
                                   <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
                                     <div className={`h-full rounded-full ${getProgressColor(krCompletion)}`} style={{ width: `${krCompletion}%` }} />
                                   </div>
@@ -270,27 +329,118 @@ export default function DashboardPage() {
           <h2 className="text-sm font-semibold text-gray-700">重點 Tasks</h2>
           <Link href="/tasks" className="text-xs text-indigo-500 hover:text-indigo-700">查看全部 →</Link>
         </div>
+
+        {/* Quick-add input */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const t = quickAddTitle.trim();
+            if (!t) return;
+            setQuickAddTitle("");
+            router.push(`/tasks?title=${encodeURIComponent(t)}`);
+          }}
+          className="px-4 py-3 border-b border-gray-100"
+        >
+          <input
+            value={quickAddTitle}
+            onChange={(e) => setQuickAddTitle(e.target.value)}
+            placeholder="+ 新增 Task…"
+            className="w-full text-sm text-gray-500 placeholder-gray-400 bg-transparent outline-none"
+          />
+        </form>
+
         {priorityTasks.length === 0 ? (
           <div className="px-4 py-6 text-center">
-            <Link href="/tasks" className="text-xs text-indigo-500 hover:text-indigo-700">
-              + 新增第一個 Task
-            </Link>
+            <span className="text-xs text-gray-400">還沒有 Task，在上方輸入開始</span>
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {priorityTasks.map((idea) => (
-              <div key={idea.id} className="px-4 py-3 flex items-center gap-2">
-                <p className="text-sm text-gray-800 flex-1 truncate">{idea.title}</p>
-                {idea.taskStatus && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap ${TASK_STATUS_STYLE[idea.taskStatus]}`}>
-                    {TASK_STATUS_LABEL[idea.taskStatus]}
-                  </span>
-                )}
-                {idea.analysis?.finalScore != null && (
-                  <span className="text-xs text-gray-300 shrink-0">{idea.analysis.finalScore.toFixed(1)}</span>
-                )}
-              </div>
-            ))}
+            {priorityTasks.map((idea) => {
+              const isExpanded = expandedDashTaskId === idea.id;
+              const isDone = idea.taskStatus === "done";
+              const todos = idea.todos ?? [];
+              const doneTodoCount = todos.filter((t) => t.done).length;
+              const todoPct = todos.length > 0 ? Math.round((doneTodoCount / todos.length) * 100) : 0;
+
+              return (
+                <div key={idea.id} className={isDone ? "opacity-60" : ""}>
+                  <div className="px-4 py-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setExpandedDashTaskId(isExpanded ? null : idea.id)}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0"
+                    >
+                      <p className={`text-sm text-gray-800 flex-1 truncate ${isDone ? "line-through text-gray-400" : ""}`}>{idea.title}</p>
+                      {todos.length > 0 && (
+                        <span className="text-xs text-gray-400 shrink-0">{doneTodoCount}/{todos.length}</span>
+                      )}
+                      <span className="text-gray-300 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    <div className="flex gap-1 shrink-0">
+                      {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                        <button
+                          key={s}
+                          onClick={(e) => { e.stopPropagation(); handleDashSetTaskStatus(idea.id, s); }}
+                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-300 hover:text-gray-500"}`}
+                        >
+                          {TASK_STATUS_LABEL[s]}
+                        </button>
+                      ))}
+                    </div>
+                    {idea.analysis?.finalScore != null && (
+                      <span className="text-xs text-gray-300 shrink-0">{idea.analysis.finalScore.toFixed(1)}</span>
+                    )}
+                  </div>
+
+                  {isExpanded && (
+                    <div className="px-4 pb-4 bg-gray-50 border-t border-gray-100 space-y-2 pt-3">
+                      {/* Todo list */}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium text-gray-600">子任務</span>
+                        {todos.length > 0 && (
+                          <>
+                            <span className="text-xs text-gray-400">{doneTodoCount}/{todos.length}</span>
+                            <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${getProgressColor(todoPct)}`} style={{ width: `${todoPct}%` }} />
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      <div className="space-y-0.5">
+                        {todos.map((todo) => (
+                          <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
+                            <button
+                              onClick={() => handleDashToggleTodo(idea.id, todo.id)}
+                              className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}
+                            >
+                              {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
+                            </button>
+                            <input
+                              ref={(el) => { dashTodoRefs.current[todo.id] = el; }}
+                              type="text"
+                              defaultValue={todo.title}
+                              onBlur={(e) => handleDashUpdateTodoTitle(idea.id, todo.id, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") { e.preventDefault(); handleDashAddTodo(idea.id, todo.id); }
+                                if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDashDeleteTodo(idea.id, todo.id); }
+                              }}
+                              className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
+                              placeholder="待辦事項"
+                            />
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => handleDashAddTodo(idea.id)}
+                          className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white"
+                        >
+                          <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
+                          新增待辦
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {activeTasks.filter(i => i.taskStatus !== "done").length > 4 && (
               <div className="px-4 py-2.5 text-center">
                 <Link href="/tasks" className="text-xs text-indigo-500 hover:text-indigo-700">

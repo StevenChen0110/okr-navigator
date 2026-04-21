@@ -98,6 +98,7 @@ function TasksPageInner() {
   const searchParams = useSearchParams();
   const preselectedKrId = searchParams.get("krId") ?? undefined;
   const preselectedObjectiveId = searchParams.get("objectiveId") ?? undefined;
+  const prefilledTitle = searchParams.get("title") ?? "";
 
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
@@ -110,8 +111,8 @@ function TasksPageInner() {
   // ── Creation form ──────────────────────────────────────────────────────────
 
   const [createStatus, setCreateStatus] = useState<CreateStatus>("idle");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [title, setTitle] = useState("");
+  const [createOpen, setCreateOpen] = useState(() => !!prefilledTitle);
+  const [title, setTitle] = useState(() => prefilledTitle);
   const [why, setWhy] = useState("");
   const [outcome, setOutcome] = useState("");
   const [notes, setNotes] = useState("");
