@@ -545,7 +545,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-end gap-1.5">
             <span className="text-2xl font-bold font-mono text-indigo-600">{objectives.length}</span>
-            {avgOCompletion !== null && <span className="text-sm font-mono text-gray-400 mb-0.5">{avgOCompletion}%</span>}
+            {avgOCompletion !== null && avgOCompletion > 0 && <span className="text-sm font-mono text-gray-400 mb-0.5">{avgOCompletion}%</span>}
           </div>
           <div className="text-xs text-gray-500 mt-1">目標 (O)</div>
           {avgOCompletion !== null && (
@@ -556,7 +556,7 @@ export default function DashboardPage() {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="text-2xl font-bold font-mono text-indigo-600">{activeTasks.length}</div>
-          <div className="text-xs text-gray-500 mt-1">Tasks</div>
+          <div className="text-xs text-gray-500 mt-1">任務</div>
           <div className="mt-1 text-xs space-x-1">
             {activeTasks.filter(t => t.taskStatus === "in-progress").length > 0 && (
               <span className="text-amber-500 font-mono">{activeTasks.filter(t => t.taskStatus === "in-progress").length} 進行中</span>
