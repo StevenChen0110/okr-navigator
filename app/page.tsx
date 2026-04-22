@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Idea, Objective, KeyResult, CheckIn, TodoItem, TaskStatus, IdeaStatus, IdeaAnalysis, IdeaKRLink } from "@/lib/types";
-import { fetchIdeas, fetchObjectives, saveIdea, updateIdeaTaskStatus } from "@/lib/db";
+import { fetchIdeas, fetchObjectives, saveIdea, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
 import Markdown from "@/components/Markdown";
@@ -227,8 +227,42 @@ export default function DashboardPage() {
   // ── Dashboard task handlers ──────────────────────────────────────────────
 
   function handleDashSetTaskStatus(taskId: string, status: TaskStatus) {
+    const task = ideas.find((i) => i.id === taskId);
+    if (!task || task.taskStatus === status) return;
+
+    const updatedIdeas = ideas.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i);
     updateIdeaTaskStatus(taskId, status).catch(console.error);
-    setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i));
+    setIdeas(updatedIdeas);
+
+    const linkedLinks = (task.linkedKRs ?? []).filter((l) => l.krId);
+    if (linkedLinks.length === 0) return;
+
+    setObjectives((prevObjs) => {
+      const updatedMap = new Map();
+      for (const link of linkedLinks) {
+        const obj = prevObjs.find((o) => o.id === link.objectiveId);
+        if (!obj || !link.krId) continue;
+        const current = updatedMap.get(obj.id) ?? obj;
+        const kr = current.keyResults.find((k: { id: string }) => k.id === link.krId);
+        if (!kr) continue;
+        const krType = kr.krType ?? "cumulative";
+        let newValue: number | undefined;
+        if (krType === "cumulative") {
+          newValue = updatedIdeas.filter((i) =>
+            (i.ideaStatus ?? "active") !== "deleted" &&
+            i.taskStatus === "done" &&
+            (i.linkedKRs ?? []).some((l) => l.krId === link.krId)
+          ).length;
+          if (kr.targetValue) newValue = Math.min(kr.targetValue, newValue);
+        } else if (krType === "milestone") {
+          newValue = status === "done" ? 1 : 0;
+        }
+        if (newValue !== undefined)
+          updatedMap.set(obj.id, { ...current, keyResults: current.keyResults.map((k: { id: string }) => k.id === link.krId ? { ...k, currentValue: newValue } : k) });
+      }
+      updatedMap.forEach((o: { id: string }) => saveObjective(o as Parameters<typeof saveObjective>[0]).catch(console.error));
+      return prevObjs.map((o) => updatedMap.get(o.id) ?? o);
+    });
   }
 
   function handleDashToggleTodo(ideaId: string, todoId: string) {

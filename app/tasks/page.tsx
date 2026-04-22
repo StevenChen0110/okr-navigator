@@ -398,15 +398,18 @@ function TasksPageInner() {
         const krType = kr.krType ?? "cumulative";
         let newValue: number | undefined;
         if (krType === "cumulative") {
-          const getScore = (krId: string) =>
-            task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id)
-              ?.keyResultScores.find((ks) => ks.keyResultId === krId)?.score ?? 1;
-          const totalScore = linkedKRLinks.filter((l) => l.objectiveId === obj.id).reduce((sum, l) => sum + getScore(l.krId!), 0) || 1;
-          newValue = Math.max(0, (kr.currentValue ?? 0) - (kr.incrementPerTask ?? 1) * (getScore(kr.id) / totalScore));
-        } else {
+          // Count remaining done tasks linked to this KR (excluding the task being undone)
+          newValue = ideas.filter((i) =>
+            i.id !== task.id &&
+            (i.ideaStatus ?? "active") !== "deleted" &&
+            i.taskStatus === "done" &&
+            (i.linkedKRs ?? []).some((l) => l.krId === link.krId)
+          ).length;
+        } else if (krType === "milestone") {
           newValue = 0;
         }
-        updatedMap.set(obj.id, { ...current, keyResults: current.keyResults.map((k) => k.id === link.krId ? { ...k, currentValue: newValue } : k) });
+        if (newValue !== undefined)
+          updatedMap.set(obj.id, { ...current, keyResults: current.keyResults.map((k) => k.id === link.krId ? { ...k, currentValue: newValue } : k) });
       }
       updatedMap.forEach((o) => saveObjective(o).catch(console.error));
       return prevObjs.map((o) => updatedMap.get(o.id) ?? o);
@@ -431,12 +434,14 @@ function TasksPageInner() {
       const krType = kr.krType ?? "cumulative";
       let newValue: number | undefined;
       if (krType === "cumulative") {
-        const linkedInObj = linkedKRs.filter((r) => r.obj.id === obj.id);
-        const getScore = (krId: string) =>
-          task.analysis?.objectiveScores.find((os) => os.objectiveId === obj.id)
-            ?.keyResultScores.find((ks) => ks.keyResultId === krId)?.score ?? 1;
-        const totalScore = linkedInObj.reduce((sum, r) => sum + getScore(r.kr.id), 0) || 1;
-        newValue = Math.min(kr.targetValue ?? Infinity, (kr.currentValue ?? 0) + (kr.incrementPerTask ?? 1) * (getScore(kr.id) / totalScore));
+        // Count all done tasks linked to this KR (including the task just completed)
+        const doneCount = ideas.filter((i) =>
+          i.id !== taskId &&
+          (i.ideaStatus ?? "active") !== "deleted" &&
+          i.taskStatus === "done" &&
+          (i.linkedKRs ?? []).some((l) => l.krId === kr.id)
+        ).length + 1;
+        newValue = kr.targetValue ? Math.min(kr.targetValue, doneCount) : doneCount;
       } else if (krType === "measurement") {
         const raw = measurements[kr.id];
         if (raw !== undefined && raw !== "") newValue = parseFloat(raw);
