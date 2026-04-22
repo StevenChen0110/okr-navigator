@@ -19,6 +19,12 @@ const STATUS_CONFIG: Record<ObjectiveStatus, { label: string; color: string }> =
 
 const TIMEFRAME_OPTIONS = ["本月", "本季", "半年", "全年"];
 
+const KR_TYPE_LABEL: Record<string, string> = {
+  cumulative: "累積",
+  measurement: "量測",
+  milestone: "里程碑",
+};
+
 function calcKRCompletion(kr: KeyResult): number | undefined {
   if (!kr.targetValue || kr.targetValue <= 0) return undefined;
   return Math.min(100, Math.round(((kr.currentValue ?? 0) / kr.targetValue) * 100));
@@ -29,9 +35,9 @@ function getProgressColor(completion: number, deadline?: string): string {
   today.setHours(0, 0, 0, 0);
   const isOverdue = deadline ? new Date(deadline) < today : false;
   if (isOverdue && completion < 100) return "bg-red-400";
-  if (completion >= 60) return "bg-green-400";
-  if (completion >= 30) return "bg-amber-400";
-  return "bg-gray-400";
+  if (completion >= 60) return "bg-indigo-300";
+  if (completion >= 30) return "bg-indigo-200";
+  return "bg-gray-200";
 }
 
 function calcOCompletion(o: Objective): number | undefined {
@@ -54,7 +60,7 @@ function daysAgo(dateStr: string): number {
 function formatDaysAgo(n: number): string {
   if (n === 0) return "今天";
   if (n === 1) return "昨天";
-  return `${n} 天前`;
+  return `${n}天前`;
 }
 
 function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
@@ -66,6 +72,17 @@ function getProgressTextColor(pct: number): string {
   if (pct >= 60) return "text-indigo-600";
   if (pct >= 30) return "text-indigo-400";
   return "text-gray-400";
+}
+
+function getLastUpdatedDate(o: Objective): number {
+  let latest = 0;
+  for (const kr of o.keyResults) {
+    for (const ci of kr.checkIns ?? []) {
+      const t = new Date(ci.date).getTime();
+      if (t > latest) latest = t;
+    }
+  }
+  return latest;
 }
 
 const TASK_STATUS_LABEL: Record<string, string> = { todo: "待辦", "in-progress": "進行中", done: "完成" };
@@ -81,13 +98,17 @@ export default function OKRPage() {
   // Filters
   const [statusFilter, setStatusFilter] = useState<"active" | "completed" | "shelved" | "deleted">("active");
   const [periodFilter, setPeriodFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"default" | "completion_asc" | "completion_desc" | "updated">("default");
 
-  // Edit mode
+  // Edit mode (right drawer)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Objective | null>(null);
 
   // KR Tasks popup
   const [krTasksPopup, setKrTasksPopup] = useState<KRTasksPopup | null>(null);
+
+  // KR row expansion (for check-in / history in view mode)
+  const [expandedKRId, setExpandedKRId] = useState<string | null>(null);
 
   // AI classifying KRs in edit mode (set of krId)
   const [classifyingKRs, setClassifyingKRs] = useState<Set<string>>(new Set());
@@ -100,7 +121,6 @@ export default function OKRPage() {
   const [checkInOpen, setCheckInOpen] = useState<string | null>(null); // krId
   const [checkInVal, setCheckInVal] = useState("");
   const [checkInNote, setCheckInNote] = useState("");
-  const [historyOpen, setHistoryOpen] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchObjectives().then(setObjectives).catch(console.error);
@@ -154,15 +174,6 @@ export default function OKRPage() {
     setCheckInNote("");
   }
 
-  function toggleHistory(krId: string) {
-    setHistoryOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(krId)) next.delete(krId);
-      else next.add(krId);
-      return next;
-    });
-  }
-
   // ── Status ────────────────────────────────────────────────────────────────────
 
   function cycleStatus(objectiveId: string, current: ObjectiveStatus | undefined) {
@@ -172,25 +183,13 @@ export default function OKRPage() {
     updateObjective(objectiveId, { status: next });
   }
 
-
-  // ── Progress (direct input) ───────────────────────────────────────────────────
-
-  function updateKRProgress(objectiveId: string, krId: string, currentValue: number) {
-    const o = objectives.find((o) => o.id === objectiveId);
-    if (!o) return;
-    updateObjective(objectiveId, {
-      keyResults: o.keyResults.map((kr) => (kr.id === krId ? { ...kr, currentValue } : kr)),
-    });
-  }
-
-  // ── Edit mode ─────────────────────────────────────────────────────────────────
+  // ── Edit mode (drawer) ────────────────────────────────────────────────────────
 
   function startEdit(o: Objective) {
     setEditingId(o.id);
     setEditDraft(JSON.parse(JSON.stringify(o)));
     setKrSuggestions({});
     setKrSuggestionOpen(new Set());
-    // Fetch AI rewrite suggestions for each existing KR
     o.keyResults.forEach((kr) => {
       if (!kr.title.trim()) return;
       callAI<string>("refineKRTitle", {
@@ -280,17 +279,24 @@ export default function OKRPage() {
     removeObjective(id).catch(console.error);
   }
 
-  // ── Filtered list ─────────────────────────────────────────────────────────────
+  // ── Filtered + sorted list ────────────────────────────────────────────────────
 
-  const visibleObjectives = objectives.filter((o) => {
-    const s = (o.status ?? "active") as ObjectiveStatus;
-    if (statusFilter === "active" && s !== "active") return false;
-    if (statusFilter === "completed" && s !== "completed") return false;
-    if (statusFilter === "shelved" && s !== "shelved" && s !== ("archived" as string)) return false;
-    if (statusFilter === "deleted" && s !== "deleted") return false;
-    if (periodFilter !== "all" && o.meta?.timeframe !== periodFilter) return false;
-    return true;
-  });
+  const visibleObjectives = objectives
+    .filter((o) => {
+      const s = (o.status ?? "active") as ObjectiveStatus;
+      if (statusFilter === "active" && s !== "active") return false;
+      if (statusFilter === "completed" && s !== "completed") return false;
+      if (statusFilter === "shelved" && s !== "shelved" && s !== ("archived" as string)) return false;
+      if (statusFilter === "deleted" && s !== "deleted") return false;
+      if (periodFilter !== "all" && o.meta?.timeframe !== periodFilter) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === "completion_asc") return (calcOCompletion(a) ?? 0) - (calcOCompletion(b) ?? 0);
+      if (sortBy === "completion_desc") return (calcOCompletion(b) ?? 0) - (calcOCompletion(a) ?? 0);
+      if (sortBy === "updated") return getLastUpdatedDate(b) - getLastUpdatedDate(a);
+      return 0;
+    });
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -359,6 +365,156 @@ export default function OKRPage() {
           </div>
         );
       })()}
+
+      {/* Edit Drawer */}
+      {editingId && editDraft && (
+        <div className="fixed inset-0 z-40 flex">
+          <div className="flex-1 bg-black/20" onClick={cancelEdit} />
+          <div className="w-[440px] bg-white h-full shadow-2xl border-l border-gray-200 flex flex-col overflow-hidden">
+            {/* Drawer header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+              <button onClick={cancelEdit} className="text-gray-400 hover:text-gray-600 text-sm leading-none">‹</button>
+              <span className="text-sm font-medium flex-1 truncate text-gray-700">編輯目標</span>
+              <button onClick={saveEdit} className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 font-medium transition-colors">儲存</button>
+            </div>
+
+            {/* Drawer body */}
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              {/* Objective title */}
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block">目標名稱</label>
+                <input
+                  value={editDraft.title}
+                  onChange={(e) => updateDraft({ title: e.target.value })}
+                  placeholder="目標名稱"
+                  className="w-full text-sm border border-indigo-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+              </div>
+
+              {/* Timeframe */}
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block">時程</label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {TIMEFRAME_OPTIONS.map((t) => (
+                    <button key={t}
+                      onClick={() => updateDraft({ meta: { ...editDraft.meta, timeframe: t } })}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        editDraft.meta?.timeframe === t
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "border-gray-200 text-gray-600 hover:border-indigo-300"
+                      }`}>{t}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block">狀態</label>
+                <div className="flex gap-1.5">
+                  {(["active", "completed", "shelved"] as const).map((s) => (
+                    <button key={s}
+                      onClick={() => updateDraft({ status: s })}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        (editDraft.status ?? "active") === s
+                          ? STATUS_CONFIG[s].color
+                          : "border-gray-200 text-gray-400 hover:border-gray-300"
+                      }`}>{STATUS_CONFIG[s].label}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-gray-100" />
+
+              {/* KRs */}
+              <div>
+                <p className="text-xs text-gray-400 mb-3">子目標</p>
+                <div className="space-y-4">
+                  {editDraft.keyResults.map((kr, kri) => (
+                    <div key={kr.id} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-300 shrink-0 w-5">{kri + 1}.</span>
+                        <input
+                          value={kr.title}
+                          onChange={(e) => updateDraftKR(kr.id, { title: e.target.value })}
+                          onBlur={() => handleDraftKRTitleBlur(kr)}
+                          placeholder="完成後，什麼事情會不一樣？"
+                          className="flex-1 text-sm bg-gray-50 rounded-lg px-3 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
+                        />
+                        {classifyingKRs.has(kr.id) && (
+                          <span className="text-indigo-400 shrink-0">
+                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                          </span>
+                        )}
+                        <button onClick={() => removeDraftKR(kr.id)} className="text-gray-300 hover:text-red-400 transition-colors shrink-0">×</button>
+                      </div>
+                      {kr.krType !== "milestone" && (kr.targetValue !== undefined || kr.unit) && (
+                        <div className="ml-5 flex items-center gap-2">
+                          <span className="text-xs text-gray-400">目標</span>
+                          <input type="number" min={0} value={kr.targetValue ?? ""}
+                            onChange={(e) => updateDraftKR(kr.id, { targetValue: e.target.value ? parseFloat(e.target.value) : undefined })}
+                            placeholder="數值"
+                            className="w-16 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none" />
+                          <input value={kr.unit ?? ""}
+                            onChange={(e) => updateDraftKR(kr.id, { unit: e.target.value })}
+                            placeholder="單位"
+                            className="w-14 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none" />
+                        </div>
+                      )}
+                      {krSuggestions[kr.id] && (
+                        <div className="ml-5">
+                          <button type="button"
+                            onClick={() => setKrSuggestionOpen((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(kr.id)) next.delete(kr.id); else next.add(kr.id);
+                              return next;
+                            })}
+                            className="text-xs text-indigo-400 hover:text-indigo-600 flex items-center gap-1">
+                            <span className={`transition-transform inline-block ${krSuggestionOpen.has(kr.id) ? "rotate-90" : ""}`}>›</span>
+                            AI 建議改寫
+                          </button>
+                          {krSuggestionOpen.has(kr.id) && (
+                            <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 flex items-start justify-between gap-3">
+                              <p className="text-xs text-indigo-700 flex-1">{krSuggestions[kr.id]}</p>
+                              <button type="button"
+                                onClick={() => {
+                                  updateDraftKR(kr.id, { title: krSuggestions[kr.id] });
+                                  setKrSuggestionOpen((prev) => { const next = new Set(prev); next.delete(kr.id); return next; });
+                                }}
+                                className="text-xs text-indigo-600 font-medium hover:text-indigo-800 shrink-0">套用</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={addDraftKR} className="mt-4 text-xs text-indigo-500 hover:text-indigo-700 font-medium">
+                  + 新增子目標
+                </button>
+              </div>
+            </div>
+
+            {/* Drawer footer */}
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+              <button
+                onClick={() => deleteObjective(editingId)}
+                className="text-xs text-gray-300 hover:text-red-400 transition-colors"
+              >
+                刪除目標
+              </button>
+              <div className="flex gap-2">
+                <button onClick={cancelEdit} className="px-4 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors">取消</button>
+                <button onClick={saveEdit} className="px-4 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors">儲存</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">OKR 目標管理</h1>
@@ -372,8 +528,8 @@ export default function OKRPage() {
         </button>
       </div>
 
-      {/* Status filter tabs */}
-      <div className="flex flex-wrap items-center gap-4 mb-6">
+      {/* Filters + sort */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-6">
         {/* Status filter */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-400 shrink-0">狀態</span>
@@ -403,6 +559,26 @@ export default function OKRPage() {
             ))}
           </div>
         </div>
+        <div className="w-px h-4 bg-gray-200 shrink-0" />
+        {/* Sort */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-400 shrink-0">排序</span>
+          <div className="flex gap-1">
+            {([
+              { key: "default", label: "預設" },
+              { key: "completion_desc", label: "完成↑" },
+              { key: "completion_asc", label: "完成↓" },
+              { key: "updated", label: "最近更新" },
+            ] as const).map(({ key, label }) => (
+              <button key={key} onClick={() => setSortBy(key)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                  sortBy === key ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-transparent text-gray-400 hover:text-gray-600"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {visibleObjectives.length === 0 && (
@@ -419,106 +595,54 @@ export default function OKRPage() {
 
       <div className="space-y-4">
         {visibleObjectives.map((o, oi) => {
-          const isEditing = editingId === o.id;
-          const draft = isEditing ? editDraft! : null;
           const oCompletion = calcOCompletion(o);
           const currentStatus = o.status ?? "active";
+          const isActiveEdit = editingId === o.id;
 
           return (
             <div
               key={o.id}
-              className={`bg-white rounded-xl border overflow-hidden ${
-                currentStatus === "shelved" || currentStatus === "deleted" ? "opacity-60" : "border-gray-200"
+              className={`bg-white rounded-xl border overflow-hidden transition-all ${
+                isActiveEdit ? "border-indigo-200 ring-1 ring-indigo-100" :
+                currentStatus === "shelved" || currentStatus === "deleted" ? "opacity-60 border-gray-200" : "border-gray-200"
               }`}
             >
               {/* ── Objective header ── */}
-              <div className="p-5">
+              <div className="px-5 py-4">
                 <div className="flex items-start gap-3">
-                  <span className="mt-1 text-xs font-bold text-indigo-400 bg-indigo-50 rounded px-1.5 py-0.5 shrink-0">
+                  <span className="mt-0.5 text-xs font-bold text-indigo-400 bg-indigo-50 rounded px-1.5 py-0.5 shrink-0">
                     O{oi + 1}
                   </span>
 
                   <div className="flex-1 min-w-0">
-                    {isEditing ? (
-                      <input
-                        value={draft!.title}
-                        onChange={(e) => updateDraft({ title: e.target.value })}
-                        placeholder="目標名稱"
-                        className="w-full font-medium text-sm border border-indigo-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-2"
-                        autoFocus
-                      />
-                    ) : (
-                      <div className="flex items-center gap-2 flex-wrap min-w-0">
-                        <span className="font-medium text-sm leading-snug">
-                          {o.title || <span className="text-gray-300">未命名目標</span>}
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className="font-medium text-sm leading-snug">
+                        {o.title || <span className="text-gray-300">未命名目標</span>}
+                      </span>
+                      {o.meta?.timeframe && (
+                        <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 shrink-0">{o.meta.timeframe}</span>
+                      )}
+                      <button
+                        onClick={() => cycleStatus(o.id, currentStatus)}
+                        className={`text-xs px-2 py-0.5 rounded-full border transition-colors shrink-0 ${STATUS_CONFIG[currentStatus].color}`}
+                        title="點擊切換狀態"
+                      >
+                        {STATUS_CONFIG[currentStatus].label}
+                      </button>
+                      {oCompletion !== undefined && (
+                        <span className={`text-xs font-medium font-mono shrink-0 ${getProgressTextColor(oCompletion)}`}>
+                          {oCompletion}%
                         </span>
-                        {o.meta?.timeframe && (
-                          <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 shrink-0">{o.meta.timeframe}</span>
-                        )}
-                        <button
-                          onClick={() => cycleStatus(o.id, currentStatus)}
-                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors shrink-0 ${STATUS_CONFIG[currentStatus].color}`}
-                          title="點擊切換狀態"
-                        >
-                          {STATUS_CONFIG[currentStatus].label}
-                        </button>
-                        {oCompletion !== undefined && (
-                          <span className={`text-xs font-medium font-mono shrink-0 ${getProgressTextColor(oCompletion)}`}>
-                            {oCompletion}%
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Edit mode: meta fields */}
-                    {isEditing && (
-                      <div className="space-y-2 mb-3 mt-2">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-400 w-8 shrink-0">時程</span>
-                          <div className="flex gap-1.5">
-                            {TIMEFRAME_OPTIONS.map((t) => (
-                              <button
-                                key={t}
-                                onClick={() => updateDraft({ meta: { ...draft!.meta, timeframe: t } })}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                  draft!.meta?.timeframe === t
-                                    ? "bg-indigo-600 text-white border-indigo-600"
-                                    : "border-gray-200 text-gray-600 hover:border-indigo-300"
-                                }`}
-                              >
-                                {t}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-400 w-8 shrink-0">狀態</span>
-                          <div className="flex gap-1.5">
-                            {(["active", "completed", "shelved"] as const).map((s) => (
-                              <button
-                                key={s}
-                                onClick={() => updateDraft({ status: s })}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                  (draft!.status ?? "active") === s
-                                    ? STATUS_CONFIG[s].color
-                                    : "border-gray-200 text-gray-400"
-                                }`}
-                              >
-                                {STATUS_CONFIG[s].label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
                   {/* Action buttons */}
-                  {!isEditing && currentStatus !== "deleted" && (
+                  {currentStatus !== "deleted" && (
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => startEdit(o)}
-                        className="text-gray-300 hover:text-gray-600 transition-colors text-base leading-none px-1"
+                        className={`transition-colors text-base leading-none px-1 ${isActiveEdit ? "text-indigo-400" : "text-gray-300 hover:text-gray-600"}`}
                         title="編輯"
                       >
                         ···
@@ -531,7 +655,7 @@ export default function OKRPage() {
                       </button>
                     </div>
                   )}
-                  {!isEditing && currentStatus === "deleted" && (
+                  {currentStatus === "deleted" && (
                     <div className="flex gap-2 shrink-0">
                       <button
                         onClick={() => restoreObjective(o.id)}
@@ -548,309 +672,169 @@ export default function OKRPage() {
                     </div>
                   )}
                 </div>
-
               </div>
 
-              {/* ── KRs ── */}
-              <div className="border-t border-gray-100 px-5 pb-4">
-                <div className="space-y-4 pt-3">
-                  {(isEditing ? draft!.keyResults : o.keyResults).map((kr, kri) => (
-                    <div key={kr.id}>
-                      {isEditing ? (
-                        /* Edit mode KR row */
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400 shrink-0 w-12">
-                              子目標 {kri + 1}
+              {/* ── KR table rows ── */}
+              {o.keyResults.length > 0 && (
+                <div className="border-t border-gray-100">
+                  {o.keyResults.map((kr, kri) => {
+                    const completion = calcKRCompletion(kr);
+                    const lastCI = getLastCheckIn(kr);
+                    const isExpanded = expandedKRId === kr.id;
+
+                    return (
+                      <div key={kr.id} className="border-b border-gray-50 last:border-0">
+                        {/* Compact row */}
+                        <div
+                          className="flex items-center gap-2 px-5 py-2.5 hover:bg-gray-50/50 cursor-pointer group"
+                          onClick={() => setExpandedKRId(isExpanded ? null : kr.id)}
+                        >
+                          <span className="text-[10px] text-gray-300 shrink-0 w-5 font-mono">{kri + 1}</span>
+                          <p className="text-sm text-gray-700 flex-1 min-w-0 truncate leading-snug">{kr.title || <span className="text-gray-300">未命名子目標</span>}</p>
+
+                          {/* Type badge */}
+                          {kr.krType && (
+                            <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 rounded px-1.5 shrink-0 hidden sm:block">
+                              {KR_TYPE_LABEL[kr.krType] ?? kr.krType}
                             </span>
-                            <input
-                              value={kr.title}
-                              onChange={(e) => updateDraftKR(kr.id, { title: e.target.value })}
-                              onBlur={() => handleDraftKRTitleBlur(kr)}
-                              placeholder="完成後，什麼事情會不一樣？"
-                              className="flex-1 text-sm bg-gray-50 rounded-lg px-3 py-1.5 border border-transparent focus:border-indigo-300 focus:outline-none"
-                            />
-                            {classifyingKRs.has(kr.id) && (
-                              <span className="text-xs text-indigo-400 flex items-center gap-1 shrink-0 whitespace-nowrap">
-                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                                </svg>
-                                AI
-                              </span>
-                            )}
-                            <button
-                              onClick={() => removeDraftKR(kr.id)}
-                              className="text-gray-300 hover:text-red-400 transition-colors shrink-0"
-                            >
-                              ×
-                            </button>
-                          </div>
-                          {/* Show metric target only when AI has determined a non-milestone type */}
-                          {kr.krType !== "milestone" && (kr.targetValue !== undefined || kr.unit) && (
-                            <div className="ml-8 flex items-center gap-2">
-                              <span className="text-xs text-gray-400">目標</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={kr.targetValue ?? ""}
-                                onChange={(e) => updateDraftKR(kr.id, { targetValue: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                placeholder="數值"
-                                className="w-16 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none"
-                              />
-                              <input
-                                value={kr.unit ?? ""}
-                                onChange={(e) => updateDraftKR(kr.id, { unit: e.target.value })}
-                                placeholder="單位"
-                                className="w-14 text-xs bg-gray-50 rounded-lg px-2 py-1 border border-transparent focus:border-indigo-300 focus:outline-none"
-                              />
-                            </div>
                           )}
-                          {/* AI rewrite suggestion (collapsible) */}
-                          {krSuggestions[kr.id] && (
-                            <div className="ml-8">
-                              <button
-                                type="button"
-                                onClick={() => setKrSuggestionOpen((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(kr.id)) next.delete(kr.id); else next.add(kr.id);
-                                  return next;
-                                })}
-                                className="text-xs text-indigo-400 hover:text-indigo-600 flex items-center gap-1"
-                              >
-                                <span className={`transition-transform ${krSuggestionOpen.has(kr.id) ? "rotate-90" : ""}`}>›</span>
-                                AI 建議改寫
-                              </button>
-                              {krSuggestionOpen.has(kr.id) && (
-                                <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 flex items-start justify-between gap-3">
-                                  <p className="text-xs text-indigo-700 flex-1">{krSuggestions[kr.id]}</p>
+
+                          {/* Value */}
+                          {kr.krType !== "milestone" && kr.targetValue !== undefined && kr.targetValue > 0 && (
+                            <span className="text-xs font-mono text-gray-500 shrink-0 hidden md:block">
+                              {kr.currentValue ?? 0}/{kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                            </span>
+                          )}
+
+                          {/* % or milestone status */}
+                          {kr.krType === "milestone" ? (
+                            <span className={`text-xs font-medium shrink-0 w-12 text-right ${kr.currentValue && kr.currentValue >= 1 ? "text-indigo-500" : "text-gray-400"}`}>
+                              {kr.currentValue && kr.currentValue >= 1 ? "達成" : "未達成"}
+                            </span>
+                          ) : completion !== undefined ? (
+                            <span className={`text-xs font-mono font-medium shrink-0 w-9 text-right ${getProgressTextColor(completion)}`}>
+                              {completion}%
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-300 shrink-0 w-9 text-right">—</span>
+                          )}
+
+                          {/* Last update */}
+                          <span className="text-[10px] text-gray-300 shrink-0 w-12 text-right hidden lg:block">
+                            {lastCI ? formatDaysAgo(daysAgo(lastCI.date)) : "—"}
+                          </span>
+
+                          {/* Tasks badge */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setKrTasksPopup({ krId: kr.id, krTitle: kr.title, objTitle: o.title, objId: o.id });
+                            }}
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 shrink-0"
+                          >
+                            Tasks
+                          </button>
+
+                          {/* Expand chevron */}
+                          <span className={`text-gray-300 text-sm shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""} group-hover:text-gray-400`}>›</span>
+                        </div>
+
+                        {/* Expanded panel */}
+                        {isExpanded && (
+                          <div className="px-5 pb-4 pt-1 bg-gray-50/30 space-y-3">
+                            {/* Progress bar (non-milestone) */}
+                            {kr.krType !== "milestone" && kr.targetValue !== undefined && kr.targetValue > 0 && (
+                              <div className="space-y-1.5">
+                                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${getProgressColor(completion ?? 0, kr.deadline)}`}
+                                    style={{ width: `${completion ?? 0}%`, minWidth: "3px" }}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-gray-400">
+                                  <span className={`font-mono font-medium ${getProgressTextColor(completion ?? 0)}`}>{completion ?? 0}%</span>
+                                  <span>{kr.currentValue ?? 0} / {kr.targetValue} {kr.unit}</span>
+                                  {kr.deadline && <span className="ml-auto">{kr.deadline}</span>}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Actions row */}
+                            <div className="flex items-center gap-3">
+                              {kr.krType !== "milestone" && (
+                                <button
+                                  onClick={() => checkInOpen === kr.id ? setCheckInOpen(null) : openCheckIn(kr.id)}
+                                  className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+                                >
+                                  {checkInOpen === kr.id ? "取消" : "更新進度"}
+                                </button>
+                              )}
+                              {(kr.checkIns?.length ?? 0) > 0 && (
+                                <span className="text-xs text-gray-400">{kr.checkIns!.length} 筆紀錄</span>
+                              )}
+                            </div>
+
+                            {/* Check-in form */}
+                            {checkInOpen === kr.id && (
+                              <div className="bg-white border border-indigo-200 rounded-lg p-3 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-indigo-600 shrink-0">今日進度值</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={checkInVal}
+                                    onChange={(e) => setCheckInVal(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === "Enter") submitCheckIn(o.id, kr.id); }}
+                                    placeholder={String(kr.currentValue ?? 0)}
+                                    className="w-20 text-xs text-center border border-indigo-300 rounded px-2 py-1 focus:outline-none focus:border-indigo-500 bg-white"
+                                    autoFocus
+                                  />
+                                  {kr.unit && <span className="text-xs text-indigo-400">{kr.unit}</span>}
+                                </div>
+                                <textarea
+                                  value={checkInNote}
+                                  onChange={(e) => setCheckInNote(e.target.value)}
+                                  placeholder="備註（選填）"
+                                  rows={2}
+                                  className="w-full text-xs border border-indigo-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+                                />
+                                <div className="flex gap-2">
                                   <button
-                                    type="button"
-                                    onClick={() => {
-                                      updateDraftKR(kr.id, { title: krSuggestions[kr.id] });
-                                      setKrSuggestionOpen((prev) => { const next = new Set(prev); next.delete(kr.id); return next; });
-                                    }}
-                                    className="text-xs text-indigo-600 font-medium hover:text-indigo-800 shrink-0"
+                                    onClick={() => submitCheckIn(o.id, kr.id)}
+                                    disabled={!checkInVal.trim()}
+                                    className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
                                   >
-                                    套用
+                                    儲存
+                                  </button>
+                                  <button
+                                    onClick={() => setCheckInOpen(null)}
+                                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-colors"
+                                  >
+                                    取消
                                   </button>
                                 </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        /* View mode KR row */
-                        <div className="space-y-1.5">
-                          <div className="flex items-start gap-2">
-                            <span className="text-xs text-gray-400 shrink-0 w-12 mt-0.5">
-                              子目標 {kri + 1}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm text-gray-800 leading-snug flex-1 min-w-0">{kr.title}</p>
-                                {/* Status inline */}
-                                {kr.krType === "milestone" ? (
-                                  <span className={`text-xs font-medium shrink-0 ${kr.currentValue && kr.currentValue >= 1 ? "text-indigo-500" : "text-gray-400"}`}>
-                                    {kr.currentValue && kr.currentValue >= 1 ? "達成" : "未達成"}
-                                  </span>
-                                ) : calcKRCompletion(kr) !== undefined && (
-                                  <span className={`text-xs font-medium font-mono shrink-0 ${getProgressTextColor(calcKRCompletion(kr)!)}`}>
-                                    {calcKRCompletion(kr)}%
-                                  </span>
-                                )}
-                                {/* Tasks badge */}
-                                <button
-                                  onClick={() => setKrTasksPopup({ krId: kr.id, krTitle: kr.title, objTitle: o.title, objId: o.id })}
-                                  className="text-xs font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 shrink-0"
-                                >
-                                  Tasks
-                                </button>
                               </div>
+                            )}
 
-                              {/* Progress row (cumulative / measurement) */}
-                              {kr.krType !== "milestone" && kr.targetValue !== undefined && kr.targetValue > 0 && (
-                                <div className="mt-1.5 space-y-1 ml-6">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs text-gray-400">{kr.metricName || "進度"}</span>
-                                    <div className="flex items-center gap-1">
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        max={kr.targetValue * 2}
-                                        value={kr.currentValue ?? 0}
-                                        onChange={(e) =>
-                                          updateKRProgress(
-                                            o.id,
-                                            kr.id,
-                                            parseFloat(e.target.value) || 0
-                                          )
-                                        }
-                                        className="w-14 text-xs text-center border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400"
-                                      />
-                                      <span className="text-xs text-gray-400">
-                                        / {kr.targetValue} {kr.unit}
-                                      </span>
-                                    </div>
-                                    {kr.deadline && (
-                                      <span className="text-xs text-gray-400 ml-auto">
-                                        {kr.deadline}
-                                      </span>
-                                    )}
+                            {/* Check-in history */}
+                            {(kr.checkIns?.length ?? 0) > 0 && (
+                              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                                {[...kr.checkIns!].reverse().map((ci) => (
+                                  <div key={ci.id} className="flex items-start gap-3 px-3 py-2 border-b border-gray-50 last:border-0 text-xs">
+                                    <span className="text-gray-400 shrink-0 w-20">{new Date(ci.date).toLocaleDateString("zh-TW")}</span>
+                                    <span className="font-medium text-gray-700">{ci.value} {kr.unit}</span>
+                                    {ci.note && <span className="text-gray-400 flex-1">{ci.note}</span>}
                                   </div>
-                                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-full rounded-full transition-all ${getProgressColor(
-                                        calcKRCompletion(kr) ?? 0,
-                                        kr.deadline
-                                      )}`}
-                                      style={{ width: `${calcKRCompletion(kr) ?? 0}%` }}
-                                    />
-                                  </div>
-                                  <div className="flex items-center gap-3">
-                                    <span className="text-xs font-medium text-gray-500">
-                                      {calcKRCompletion(kr) ?? 0}%
-                                    </span>
-                                    {(() => {
-                                      const last = getLastCheckIn(kr);
-                                      return last ? (
-                                        <span className="text-xs text-gray-400">
-                                          上次更新：{formatDaysAgo(daysAgo(last.date))}
-                                        </span>
-                                      ) : (
-                                        <span className="text-xs text-gray-300">尚未更新</span>
-                                      );
-                                    })()}
-                                    <button
-                                      onClick={() =>
-                                        checkInOpen === kr.id
-                                          ? setCheckInOpen(null)
-                                          : openCheckIn(kr.id)
-                                      }
-                                      className="text-xs text-indigo-500 hover:text-indigo-700 font-medium ml-auto"
-                                    >
-                                      {checkInOpen === kr.id ? "取消" : "更新進度"}
-                                    </button>
-                                    {(kr.checkIns?.length ?? 0) > 0 && (
-                                      <button
-                                        onClick={() => toggleHistory(kr.id)}
-                                        className="text-xs text-gray-400 hover:text-gray-600"
-                                      >
-                                        {historyOpen.has(kr.id)
-                                          ? "▲ 收起"
-                                          : `▼ 紀錄(${kr.checkIns!.length})`}
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Check-in form */}
-                              {checkInOpen === kr.id && (
-                                <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
-                                  <div className="flex items-center gap-2">
-                                    <label className="text-xs text-indigo-600 shrink-0">
-                                      今日進度值
-                                    </label>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={checkInVal}
-                                      onChange={(e) => setCheckInVal(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter")
-                                          submitCheckIn(o.id, kr.id);
-                                      }}
-                                      placeholder={String(kr.currentValue ?? 0)}
-                                      className="w-20 text-xs text-center border border-indigo-300 rounded px-2 py-1 focus:outline-none focus:border-indigo-500 bg-white"
-                                      autoFocus
-                                    />
-                                    {kr.unit && (
-                                      <span className="text-xs text-indigo-400">{kr.unit}</span>
-                                    )}
-                                  </div>
-                                  <textarea
-                                    value={checkInNote}
-                                    onChange={(e) => setCheckInNote(e.target.value)}
-                                    placeholder="備註（選填）"
-                                    rows={2}
-                                    className="w-full text-xs border border-indigo-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
-                                  />
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => submitCheckIn(o.id, kr.id)}
-                                      disabled={!checkInVal.trim()}
-                                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-                                    >
-                                      儲存（Enter）
-                                    </button>
-                                    <button
-                                      onClick={() => setCheckInOpen(null)}
-                                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-colors"
-                                    >
-                                      取消
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Check-in history */}
-                              {historyOpen.has(kr.id) && kr.checkIns && kr.checkIns.length > 0 && (
-                                <div className="mt-2 border border-gray-100 rounded-lg overflow-hidden">
-                                  {[...kr.checkIns].reverse().map((ci) => (
-                                    <div
-                                      key={ci.id}
-                                      className="flex items-start gap-3 px-3 py-2 border-b border-gray-50 last:border-0 text-xs"
-                                    >
-                                      <span className="text-gray-400 shrink-0 w-20">
-                                        {new Date(ci.date).toLocaleDateString("zh-TW")}
-                                      </span>
-                                      <span className="font-medium text-gray-700">
-                                        {ci.value} {kr.unit}
-                                      </span>
-                                      {ci.note && (
-                                        <span className="text-gray-400 flex-1">{ci.note}</span>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                                ))}
+                              </div>
+                            )}
                           </div>
-
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-
-                {/* Edit mode: add KR + save/cancel */}
-                {isEditing && (
-                  <div className="mt-4 flex items-center justify-between">
-                    <button
-                      onClick={addDraftKR}
-                      className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
-                    >
-                      + 新增子目標
-                    </button>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={cancelEdit}
-                        className="text-xs px-4 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
-                      >
-                        取消
-                      </button>
-                      <button
-                        onClick={saveEdit}
-                        className="text-xs px-4 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
-                      >
-                        儲存
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-              </div>
+              )}
             </div>
           );
         })}
