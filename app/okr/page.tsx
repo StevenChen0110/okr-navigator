@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, CheckIn, ObjectiveStatus, Idea } from "@/lib/types";
@@ -61,6 +62,16 @@ function getLastCheckIn(kr: KeyResult): CheckIn | undefined {
   return kr.checkIns[kr.checkIns.length - 1];
 }
 
+function getProgressTextColor(pct: number): string {
+  if (pct >= 60) return "text-indigo-600";
+  if (pct >= 30) return "text-indigo-400";
+  return "text-gray-400";
+}
+
+const TASK_STATUS_LABEL: Record<string, string> = { todo: "待辦", "in-progress": "進行中", done: "完成" };
+
+interface KRTasksPopup { krId: string; krTitle: string; objTitle: string; objId: string; }
+
 export default function OKRPage() {
   const router = useRouter();
   const [objectives, setObjectives] = useState<Objective[]>([]);
@@ -74,9 +85,8 @@ export default function OKRPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Objective | null>(null);
 
-  // Quarter scoring
-  const [scoringId, setScoringId] = useState<string | null>(null);
-  const [krScores, setKrScores] = useState<Record<string, number>>({});
+  // KR Tasks popup
+  const [krTasksPopup, setKrTasksPopup] = useState<KRTasksPopup | null>(null);
 
   // AI classifying KRs in edit mode (set of krId)
   const [classifyingKRs, setClassifyingKRs] = useState<Set<string>>(new Set());
@@ -269,41 +279,6 @@ export default function OKRPage() {
     removeObjective(id).catch(console.error);
   }
 
-  // ── Quarter Scoring ───────────────────────────────────────────────────────────
-
-  function openScoring(objectiveId: string) {
-    const o = objectives.find((o) => o.id === objectiveId);
-    if (!o) return;
-    const initial: Record<string, number> = {};
-    o.keyResults.forEach((kr) => {
-      initial[kr.id] = kr.quarterScore ?? 0.5;
-    });
-    setKrScores(initial);
-    setScoringId(objectiveId);
-  }
-
-  const [quarterVerdict, setQuarterVerdict] = useState<Record<string, { verdict: "complete" | "continue" | "reset"; reasoning: string }>>({});
-
-  function saveQuarterScores(objectiveId: string) {
-    const o = objectives.find((o) => o.id === objectiveId);
-    if (!o) return;
-    updateObjective(objectiveId, {
-      keyResults: o.keyResults.map((kr) => ({
-        ...kr,
-        quarterScore: krScores[kr.id] ?? kr.quarterScore,
-      })),
-    });
-    setScoringId(null);
-
-    callAI<{ verdict: "complete" | "continue" | "reset"; reasoning: string }>("getQuarterRecommendation", {
-      objectiveTitle: o.title,
-      okrType: o.meta?.okrType ?? "committed",
-      krScores: o.keyResults.map((kr) => ({ title: kr.title, score: krScores[kr.id] ?? kr.quarterScore ?? 0.5 })),
-    }).then((result) => {
-      setQuarterVerdict((prev) => ({ ...prev, [objectiveId]: result }));
-    }).catch(() => {});
-  }
-
   // ── Filtered list ─────────────────────────────────────────────────────────────
 
   const visibleObjectives = objectives.filter((o) => {
@@ -319,6 +294,69 @@ export default function OKRPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 md:px-6 md:py-10">
+      {/* KR Tasks Popup */}
+      {krTasksPopup && (() => {
+        const kr = objectives.find((o) => o.id === krTasksPopup.objId)?.keyResults.find((k) => k.id === krTasksPopup.krId);
+        const krCompletion = kr ? calcKRCompletion(kr) : undefined;
+        const relatedTasks = ideas.filter((i) =>
+          (i.ideaStatus ?? "active") === "active" &&
+          (i.linkedKRs ?? []).some((l) => l.krId === krTasksPopup.krId)
+        );
+        const doneCount = relatedTasks.filter((t) => t.taskStatus === "done").length;
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) setKrTasksPopup(null); }}>
+            <div className="bg-white rounded-xl w-full max-w-sm shadow-lg overflow-hidden border border-gray-200">
+              <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-400 mb-0.5">{krTasksPopup.objTitle}</p>
+                    <p className="text-sm font-semibold text-gray-800 leading-snug">{krTasksPopup.krTitle}</p>
+                  </div>
+                  <button onClick={() => setKrTasksPopup(null)} className="text-gray-300 hover:text-gray-500 text-lg leading-none shrink-0 mt-0.5">×</button>
+                </div>
+                {krCompletion !== undefined && (
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">{doneCount}/{relatedTasks.length} 任務完成</span>
+                      <span className={`text-xs font-medium font-mono ${getProgressTextColor(krCompletion)}`}>{krCompletion}%</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${krCompletion >= 60 ? "bg-indigo-300" : krCompletion >= 30 ? "bg-indigo-200" : "bg-gray-200"}`}
+                        style={{ width: `${krCompletion}%`, minWidth: "3px" }} />
+                    </div>
+                    {kr && kr.targetValue && (
+                      <p className="text-[10px] text-gray-400 text-right font-mono">
+                        {kr.currentValue ?? 0}{kr.unit ? ` ${kr.unit}` : ""} / {kr.targetValue}{kr.unit ? ` ${kr.unit}` : ""}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="divide-y divide-gray-50 max-h-56 overflow-y-auto">
+                {relatedTasks.length === 0 ? (
+                  <p className="px-4 py-6 text-xs text-gray-400 text-center">尚無相關任務</p>
+                ) : relatedTasks.map((task) => (
+                  <div key={task.id} className="px-4 py-2.5 flex items-center gap-2.5">
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${task.taskStatus === "done" ? "bg-indigo-300" : task.taskStatus === "in-progress" ? "bg-amber-300" : "bg-gray-300"}`} />
+                    <p className={`text-xs flex-1 min-w-0 truncate ${task.taskStatus === "done" ? "line-through text-gray-400" : "text-gray-700"}`}>{task.title}</p>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${task.taskStatus === "done" ? "bg-gray-50 text-gray-400" : task.taskStatus === "in-progress" ? "bg-amber-50 text-amber-500" : "bg-gray-50 text-gray-400"}`}>
+                      {task.taskStatus ? TASK_STATUS_LABEL[task.taskStatus] : "待辦"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-4 py-2.5 border-t border-gray-100">
+                <Link href={`/tasks?objectiveId=${krTasksPopup.objId}&krId=${krTasksPopup.krId}`}
+                  onClick={() => setKrTasksPopup(null)}
+                  className="text-xs text-indigo-500 hover:text-indigo-700">
+                  ＋ 新增任務
+                </Link>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">OKR 目標管理</h1>
@@ -598,38 +636,26 @@ export default function OKRPage() {
                               子目標 {kri + 1}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-start gap-1.5 flex-1 min-w-0">
-                                  <p className="text-sm text-gray-800 leading-snug flex-1">{kr.title}</p>
-                                </div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm text-gray-800 leading-snug flex-1 min-w-0">{kr.title}</p>
+                                {/* Status inline */}
+                                {kr.krType === "milestone" ? (
+                                  <span className={`text-xs font-medium shrink-0 ${kr.currentValue && kr.currentValue >= 1 ? "text-indigo-500" : "text-gray-400"}`}>
+                                    {kr.currentValue && kr.currentValue >= 1 ? "達成" : "未達成"}
+                                  </span>
+                                ) : calcKRCompletion(kr) !== undefined && (
+                                  <span className={`text-xs font-medium font-mono shrink-0 ${getProgressTextColor(calcKRCompletion(kr)!)}`}>
+                                    {calcKRCompletion(kr)}%
+                                  </span>
+                                )}
+                                {/* Tasks badge */}
                                 <button
-                                  onClick={() => router.push(`/idea/new?objectiveId=${encodeURIComponent(o.id)}&krId=${encodeURIComponent(kr.id)}`)}
-                                  className="text-xs text-indigo-400 hover:text-indigo-600 font-medium shrink-0 whitespace-nowrap"
+                                  onClick={() => setKrTasksPopup({ krId: kr.id, krTitle: kr.title, objTitle: o.title, objId: o.id })}
+                                  className="text-xs font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 shrink-0"
                                 >
-                                  + 新增 Task
+                                  Tasks
                                 </button>
                               </div>
-
-                              {/* Milestone: toggle button */}
-                              {kr.krType === "milestone" && (
-                                <div className="mt-1.5 ml-6">
-                                  <button
-                                    onClick={() => updateKRProgress(o.id, kr.id, kr.currentValue && kr.currentValue >= 1 ? 0 : 1)}
-                                    className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
-                                      kr.currentValue && kr.currentValue >= 1
-                                        ? "bg-green-50 border-green-300 text-green-700"
-                                        : "bg-gray-50 border-gray-200 text-gray-500 hover:border-green-300"
-                                    }`}
-                                  >
-                                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                                      kr.currentValue && kr.currentValue >= 1 ? "bg-green-500 border-green-500" : "border-gray-300"
-                                    }`}>
-                                      {kr.currentValue && kr.currentValue >= 1 && <span className="text-white text-[8px]">✓</span>}
-                                    </span>
-                                    {kr.currentValue && kr.currentValue >= 1 ? "已達成" : "標記達成"}
-                                  </button>
-                                </div>
-                              )}
 
                               {/* Progress row (cumulative / measurement) */}
                               {kr.krType !== "milestone" && kr.targetValue !== undefined && kr.targetValue > 0 && (
@@ -831,100 +857,6 @@ export default function OKRPage() {
                   </div>
                 )}
 
-                {/* View mode bottom actions */}
-                {!isEditing && (
-                  <div className="mt-3 flex items-center justify-end">
-                    <button
-                      onClick={() => openScoring(o.id)}
-                      className="text-xs text-gray-400 hover:text-indigo-500 font-medium transition-colors"
-                    >
-                      季度評分
-                    </button>
-                  </div>
-                )}
-
-                {/* Quarter scoring panel (no AI) */}
-                {scoringId === o.id && (
-                  <div className="mt-3 bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
-                    <p className="text-xs font-medium text-gray-700">季度評分（0.0 – 1.0）</p>
-                    {o.keyResults.map((kr) => (
-                      <div key={kr.id} className="space-y-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-xs text-gray-600 flex-1 truncate">
-                            {kr.title || "子目標"}
-                          </span>
-                          <span
-                            className={`text-xs font-bold w-8 text-right ${
-                              (krScores[kr.id] ?? 0.5) >= 0.7
-                                ? "text-green-600"
-                                : (krScores[kr.id] ?? 0.5) >= 0.4
-                                ? "text-amber-500"
-                                : "text-red-500"
-                            }`}
-                          >
-                            {(krScores[kr.id] ?? 0.5).toFixed(1)}
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.1}
-                          value={krScores[kr.id] ?? 0.5}
-                          onChange={(e) =>
-                            setKrScores((prev) => ({
-                              ...prev,
-                              [kr.id]: parseFloat(e.target.value),
-                            }))
-                          }
-                          className="w-full accent-indigo-600"
-                        />
-                      </div>
-                    ))}
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        onClick={() => saveQuarterScores(o.id)}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
-                      >
-                        儲存評分
-                      </button>
-                      <button
-                        onClick={() => setScoringId(null)}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Quarter verdict */}
-                {quarterVerdict[o.id] && (() => {
-                  const { verdict, reasoning } = quarterVerdict[o.id];
-                  const cfg = {
-                    complete: { label: "目標完成", color: "bg-green-50 border-green-200 text-green-700" },
-                    continue: { label: "繼續推進", color: "bg-indigo-50 border-indigo-200 text-indigo-700" },
-                    reset: { label: "建議重設", color: "bg-red-50 border-red-200 text-red-700" },
-                  }[verdict];
-                  return (
-                    <div className={`mt-3 border rounded-xl px-4 py-3 space-y-2 ${cfg.color}`}>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold">{cfg.label}</span>
-                        <button onClick={() => setQuarterVerdict((prev) => { const n = { ...prev }; delete n[o.id]; return n; })}
-                          className="text-xs opacity-50 hover:opacity-100">×</button>
-                      </div>
-                      <p className="text-xs">{reasoning}</p>
-                      {verdict === "complete" && (
-                        <button
-                          onClick={() => updateObjective(o.id, { status: "completed" })}
-                          className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                        >
-                          標記為完成
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
               </div>
             </div>
           );
