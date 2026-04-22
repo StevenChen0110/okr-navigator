@@ -761,7 +761,25 @@ export default function OKRPage() {
 
                             {/* Actions row */}
                             <div className="flex items-center gap-3">
-                              {kr.krType !== "milestone" && (
+                              {kr.krType === "milestone" ? (
+                                <button
+                                  onClick={() => {
+                                    const newVal = (kr.currentValue && kr.currentValue >= 1) ? 0 : 1;
+                                    const updated = objectives.find((obj) => obj.id === o.id);
+                                    if (!updated) return;
+                                    updateObjective(o.id, {
+                                      keyResults: updated.keyResults.map((k) => k.id === kr.id ? { ...k, currentValue: newVal } : k),
+                                    });
+                                  }}
+                                  className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                                    kr.currentValue && kr.currentValue >= 1
+                                      ? "border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-white"
+                                      : "border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600"
+                                  }`}
+                                >
+                                  {kr.currentValue && kr.currentValue >= 1 ? "✓ 已達成" : "標記達成"}
+                                </button>
+                              ) : (
                                 <button
                                   onClick={() => checkInOpen === kr.id ? setCheckInOpen(null) : openCheckIn(kr.id)}
                                   className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
