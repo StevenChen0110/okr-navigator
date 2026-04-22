@@ -78,8 +78,9 @@ export default function OKRPage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  // Status filter
+  // Filters
   const [statusFilter, setStatusFilter] = useState<"active" | "completed" | "shelved" | "deleted">("active");
+  const [periodFilter, setPeriodFilter] = useState<string>("all");
 
   // Edit mode
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -283,11 +284,12 @@ export default function OKRPage() {
 
   const visibleObjectives = objectives.filter((o) => {
     const s = (o.status ?? "active") as ObjectiveStatus;
-    if (statusFilter === "active") return s === "active";
-    if (statusFilter === "completed") return s === "completed";
-    if (statusFilter === "shelved") return s === "shelved" || s === ("archived" as string);
-    if (statusFilter === "deleted") return s === "deleted";
-    return false;
+    if (statusFilter === "active" && s !== "active") return false;
+    if (statusFilter === "completed" && s !== "completed") return false;
+    if (statusFilter === "shelved" && s !== "shelved" && s !== ("archived" as string)) return false;
+    if (statusFilter === "deleted" && s !== "deleted") return false;
+    if (periodFilter !== "all" && o.meta?.timeframe !== periodFilter) return false;
+    return true;
   });
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -371,18 +373,36 @@ export default function OKRPage() {
       </div>
 
       {/* Status filter tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-fit">
-        {(["active", "completed", "shelved", "deleted"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setStatusFilter(f)}
-            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === f ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
-            }`}
-          >
-            {f === "active" ? "進行中" : f === "completed" ? "已完成" : f === "shelved" ? "暫存" : "垃圾桶"}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-4 mb-6">
+        {/* Status filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-400 shrink-0">狀態</span>
+          <div className="flex gap-1">
+            {(["active", "completed", "shelved", "deleted"] as const).map((f) => (
+              <button key={f} onClick={() => setStatusFilter(f)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                  statusFilter === f ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-transparent text-gray-400 hover:text-gray-600"
+                }`}>
+                {f === "active" ? "進行中" : f === "completed" ? "已完成" : f === "shelved" ? "暫存" : "垃圾桶"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="w-px h-4 bg-gray-200 shrink-0" />
+        {/* Period filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-400 shrink-0">期間</span>
+          <div className="flex gap-1">
+            {(["all", ...TIMEFRAME_OPTIONS] as const).map((p) => (
+              <button key={p} onClick={() => setPeriodFilter(p)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                  periodFilter === p ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-transparent text-gray-400 hover:text-gray-600"
+                }`}>
+                {p === "all" ? "全部" : p}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {visibleObjectives.length === 0 && (
@@ -428,35 +448,25 @@ export default function OKRPage() {
                         autoFocus
                       />
                     ) : (
-                      <div>
-                        <span className="font-medium text-sm">
+                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                        <span className="font-medium text-sm leading-snug">
                           {o.title || <span className="text-gray-300">未命名目標</span>}
                         </span>
-                        <div className="flex items-center gap-2 flex-wrap mt-1">
-                          {o.meta?.timeframe && (
-                            <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5">{o.meta.timeframe}</span>
-                          )}
-                          {oCompletion !== undefined && (
-                            <span
-                              className={`text-xs font-bold ${
-                                oCompletion >= 70
-                                  ? "text-green-600"
-                                  : oCompletion >= 40
-                                  ? "text-amber-500"
-                                  : "text-red-500"
-                              }`}
-                            >
-                              {oCompletion}%
-                            </span>
-                          )}
-                          <button
-                            onClick={() => cycleStatus(o.id, currentStatus)}
-                            className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${STATUS_CONFIG[currentStatus].color}`}
-                            title="點擊切換狀態"
-                          >
-                            {STATUS_CONFIG[currentStatus].label}
-                          </button>
-                        </div>
+                        {o.meta?.timeframe && (
+                          <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 shrink-0">{o.meta.timeframe}</span>
+                        )}
+                        <button
+                          onClick={() => cycleStatus(o.id, currentStatus)}
+                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors shrink-0 ${STATUS_CONFIG[currentStatus].color}`}
+                          title="點擊切換狀態"
+                        >
+                          {STATUS_CONFIG[currentStatus].label}
+                        </button>
+                        {oCompletion !== undefined && (
+                          <span className={`text-xs font-medium font-mono shrink-0 ${getProgressTextColor(oCompletion)}`}>
+                            {oCompletion}%
+                          </span>
+                        )}
                       </div>
                     )}
 
@@ -505,16 +515,17 @@ export default function OKRPage() {
 
                   {/* Action buttons */}
                   {!isEditing && currentStatus !== "deleted" && (
-                    <div className="flex gap-2 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => startEdit(o)}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                        className="text-gray-300 hover:text-gray-600 transition-colors text-base leading-none px-1"
+                        title="編輯"
                       >
-                        編輯
+                        ···
                       </button>
                       <button
                         onClick={() => deleteObjective(o.id)}
-                        className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                        className="text-gray-200 hover:text-red-400 transition-colors text-lg leading-none"
                       >
                         ×
                       </button>
@@ -804,24 +815,6 @@ export default function OKRPage() {
                                   ))}
                                 </div>
                               )}
-                                {/* Linked ideas/tasks for this KR */}
-                              {(() => {
-                                const linked = ideas.filter(i => (i.linkedKRs ?? []).some(l => l.krId === kr.id));
-                                if (linked.length === 0) return null;
-                                return (
-                                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                    {linked.map(idea => (
-                                      <span key={idea.id} className={`text-xs px-2 py-0.5 rounded-full border ${
-                                        idea.taskStatus === "done"
-                                          ? "text-gray-400 bg-gray-50 border-gray-200 line-through"
-                                          : idea.taskStatus
-                                          ? "text-indigo-600 bg-indigo-50 border-indigo-200"
-                                          : "text-gray-600 bg-gray-50 border-gray-200"
-                                      }`}>{idea.title}</span>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
                           </div>
 
                           </div>
