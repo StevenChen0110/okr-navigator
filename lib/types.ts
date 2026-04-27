@@ -103,6 +103,16 @@ export interface AppSettings {
   language: "zh-TW" | "en";
 }
 
+// ── Evaluation Profile ────────────────────────────────────────────────────────
+
+export type EvalMode = "explore" | "execute" | "sustain";
+export type EvalPriority = "alignment" | "effort" | "speed" | "growth";
+
+export interface EvaluationProfile {
+  mode: EvalMode;
+  priorities: EvalPriority[]; // ordered most-important first
+}
+
 // ── Habit ─────────────────────────────────────────────────────────────────────
 
 export type HabitFrequency = "daily" | "weekly";

@@ -1,9 +1,11 @@
-import { Objective, Idea, AppSettings } from "./types";
+import { Objective, Idea, AppSettings, EvaluationProfile } from "./types";
+import { DEFAULT_EVALUATION_PROFILE } from "./evaluation-prompt";
 
 const KEYS = {
   OBJECTIVES: "okr_objectives",
   IDEAS: "okr_ideas",
   SETTINGS: "okr_settings",
+  EVAL_PROFILE: "loco_eval_profile",
 } as const;
 
 function load<T>(key: string, fallback: T): T {
@@ -64,4 +66,13 @@ export function getSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings): void {
   save(KEYS.SETTINGS, settings);
+}
+
+// Evaluation Profile
+export function getEvaluationProfile(): EvaluationProfile {
+  return load<EvaluationProfile>(KEYS.EVAL_PROFILE, DEFAULT_EVALUATION_PROFILE);
+}
+
+export function saveEvaluationProfile(profile: EvaluationProfile): void {
+  save(KEYS.EVAL_PROFILE, profile);
 }

@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
           payload.ideaNotes as string,
           payload.objectives as Parameters<typeof analyzeIdea>[7],
           payload.progressContext as string | undefined,
+          payload.evaluationContext as string | undefined,
         );
         return NextResponse.json(result);
       }

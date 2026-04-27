@@ -378,7 +378,8 @@ export async function analyzeIdea(
   ideaOutcome: string,
   ideaNotes: string,
   objectives: Objective[],
-  progressContext?: string
+  progressContext?: string,
+  evaluationContext?: string,
 ): Promise<IdeaAnalysis> {
   const client = getClient(apiKey);
 
@@ -405,7 +406,7 @@ export async function analyzeIdea(
   const message = await client.messages.create({
     model,
     max_tokens: 4096,
-    system: IDEA_SYSTEM_PROMPT + `\n\n${langInstruction(language)}`,
+    system: IDEA_SYSTEM_PROMPT + (evaluationContext ?? "") + `\n\n${langInstruction(language)}`,
     messages: [{ role: "user", content: userPrompt }],
   });
 
