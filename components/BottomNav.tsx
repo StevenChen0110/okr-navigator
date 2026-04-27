@@ -4,17 +4,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: "⊞" },
-  { href: "/okr", label: "OKR 目標", icon: "◎" },
-  { href: "/idea/new", label: "新增 Idea", icon: "＋" },
-  { href: "/settings", label: "設定", icon: "⚙" },
+  { href: "/today", label: "今天", icon: "◉" },
+  { href: "/inbox", label: "收件匣", icon: "◫" },
+  { href: "/habits", label: "習慣", icon: "⬡" },
+  { href: "/okr", label: "目標", icon: "◎" },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex md:hidden z-50">
+    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex md:hidden z-20">
       {navItems.map((item) => {
         const active =
           pathname === item.href ||

@@ -3,13 +3,14 @@ import { Geist } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import BottomNav from "@/components/BottomNav";
+import CaptureFAB from "@/components/CaptureFAB";
 import AuthProvider from "@/components/AuthProvider";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "OKR Navigator",
-  description: "Personal OKR Decision Navigation System",
+  title: "LOCO",
+  description: "Log-on to your Core",
 };
 
 export default function RootLayout({
@@ -26,6 +27,7 @@ export default function RootLayout({
             {children}
           </main>
           <BottomNav />
+          <CaptureFAB />
         </AuthProvider>
       </body>
     </html>

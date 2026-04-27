@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
-import { Objective, Idea, TaskStatus, IdeaStatus } from "./types";
+import { Objective, Idea, TaskStatus, IdeaStatus, Habit, HabitLog } from "./types";
+import { v4 as uuid } from "uuid";
 
 async function uid(): Promise<string> {
   const {
@@ -9,7 +10,7 @@ async function uid(): Promise<string> {
   return user.id;
 }
 
-// Objectives
+// ── Objectives ────────────────────────────────────────────────────────────────
 
 export async function fetchObjectives(): Promise<Objective[]> {
   const { data, error } = await supabase
@@ -46,7 +47,7 @@ export async function removeObjective(id: string): Promise<void> {
   if (error) throw error;
 }
 
-// Ideas
+// ── Ideas ─────────────────────────────────────────────────────────────────────
 
 export async function fetchIdeas(): Promise<Idea[]> {
   const { data, error } = await supabase
@@ -113,3 +114,102 @@ export async function removeIdea(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// ── Habits ────────────────────────────────────────────────────────────────────
+
+export async function fetchHabits(): Promise<Habit[]> {
+  const { data, error } = await supabase
+    .from("habits")
+    .select("*")
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.warn("habits table not ready:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    cue: r.cue ?? undefined,
+    frequency: r.frequency ?? "daily",
+    streakCount: r.streak_count ?? 0,
+    lastDoneAt: r.last_done_at ?? undefined,
+    createdAt: r.created_at,
+    archivedAt: r.archived_at ?? undefined,
+  }));
+}
+
+export async function saveHabit(habit: Habit): Promise<void> {
+  const userId = await uid();
+  const { error } = await supabase.from("habits").upsert({
+    id: habit.id,
+    user_id: userId,
+    name: habit.name,
+    cue: habit.cue ?? null,
+    frequency: habit.frequency,
+    streak_count: habit.streakCount,
+    last_done_at: habit.lastDoneAt ?? null,
+    created_at: habit.createdAt,
+    archived_at: habit.archivedAt ?? null,
+  });
+  if (error) throw error;
+}
+
+export async function removeHabit(id: string): Promise<void> {
+  const { error } = await supabase.from("habits").update({ archived_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function fetchTodayHabitLogs(): Promise<HabitLog[]> {
+  const today = new Date().toISOString().split("T")[0];
+  const { data, error } = await supabase
+    .from("habit_logs")
+    .select("*")
+    .eq("logged_at", today);
+  if (error) {
+    console.warn("habit_logs table not ready:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    habitId: r.habit_id,
+    loggedAt: r.logged_at,
+    skipped: r.skipped ?? false,
+  }));
+}
+
+export async function logHabitDone(habitId: string, habit: Habit): Promise<Habit> {
+  const userId = await uid();
+  const today = new Date().toISOString().split("T")[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+
+  const logId = uuid();
+  const { error: logError } = await supabase.from("habit_logs").upsert({
+    id: logId,
+    habit_id: habitId,
+    user_id: userId,
+    logged_at: today,
+    skipped: false,
+  });
+  if (logError) throw logError;
+
+  const newStreak = habit.lastDoneAt === yesterday ? habit.streakCount + 1 : 1;
+  const updatedHabit: Habit = { ...habit, streakCount: newStreak, lastDoneAt: today };
+  await saveHabit(updatedHabit);
+  return updatedHabit;
+}
+
+export async function undoHabitLog(habitId: string, habit: Habit): Promise<Habit> {
+  const today = new Date().toISOString().split("T")[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+
+  await supabase.from("habit_logs").delete().eq("habit_id", habitId).eq("logged_at", today);
+
+  const newStreak = Math.max(0, habit.streakCount - 1);
+  const updatedHabit: Habit = {
+    ...habit,
+    streakCount: newStreak,
+    lastDoneAt: newStreak > 0 ? yesterday : undefined,
+  };
+  await saveHabit(updatedHabit);
+  return updatedHabit;
+}

@@ -73,7 +73,7 @@ export interface IdeaAnalysis {
 }
 
 export type TaskStatus = "todo" | "in-progress" | "done";
-export type IdeaStatus = "active" | "shelved" | "deleted";
+export type IdeaStatus = "active" | "shelved" | "deleted" | "inbox";
 
 export interface TodoItem {
   id: string;
@@ -92,7 +92,7 @@ export interface Idea {
   completedAt?: string;
   linkedKRs?: IdeaKRLink[];
   taskStatus?: TaskStatus; // set when idea is promoted to a task
-  ideaStatus?: IdeaStatus; // lifecycle status for ideas and tasks
+  ideaStatus?: IdeaStatus; // lifecycle status
   quickAnalysis?: boolean;
   needsReanalysis?: boolean;
   todos?: TodoItem[];
@@ -103,3 +103,24 @@ export interface AppSettings {
   language: "zh-TW" | "en";
 }
 
+// ── Habit ─────────────────────────────────────────────────────────────────────
+
+export type HabitFrequency = "daily" | "weekly";
+
+export interface Habit {
+  id: string;
+  name: string;
+  cue?: string;
+  frequency: HabitFrequency;
+  streakCount: number;
+  lastDoneAt?: string; // YYYY-MM-DD
+  createdAt: string;
+  archivedAt?: string;
+}
+
+export interface HabitLog {
+  id: string;
+  habitId: string;
+  loggedAt: string; // YYYY-MM-DD
+  skipped: boolean;
+}

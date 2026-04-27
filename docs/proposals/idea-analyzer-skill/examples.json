@@ -1,0 +1,136 @@
+{
+  "_comment": "Few-shot 校準錨點。每個 case 都會被自動注入 prompt。改動任何一個都需 +版本號並重跑 golden eval。",
+  "version": "0.1",
+  "examples": [
+    {
+      "id": "ex-001-direct-strong",
+      "context": {
+        "objective": "Q3 內推出 v2.0 並有 1000 個付費使用者",
+        "keyResults": [
+          { "title": "v2.0 上線", "type": "milestone", "current": 0, "target": 1 },
+          { "title": "付費使用者數", "type": "measurement", "current": 120, "target": 1000 }
+        ]
+      },
+      "idea": "重寫 onboarding 流程，把首次成功時間從 10 分鐘降到 3 分鐘",
+      "expected": {
+        "finalScore": 8,
+        "reasoning": "直接攻擊『付費使用者數』KR 的轉換瓶頸，且離 deadline 不到 60 天（套用時間敏感加權 +0.5）。"
+      }
+    },
+    {
+      "id": "ex-002-vague-learning",
+      "context": {
+        "objective": "Q3 內推出 v2.0 並有 1000 個付費使用者",
+        "keyResults": [{ "title": "付費使用者數", "current": 120, "target": 1000 }]
+      },
+      "idea": "學習 GraphQL",
+      "expected": {
+        "finalScore": 2,
+        "reasoning": "「學習 X」類，X 未出現在 Objective / KR 中，套用邊界規則，預設給 2 分。"
+      }
+    },
+    {
+      "id": "ex-003-meta-organize",
+      "context": {
+        "objective": "Q3 內推出 v2.0",
+        "keyResults": [{ "title": "v2.0 上線", "current": 0, "target": 1 }]
+      },
+      "idea": "整理一下我的 idea backlog",
+      "expected": {
+        "finalScore": 1,
+        "reasoning": "整理 / 規劃 / 思考類，後設行為非執行行為，套用邊界規則，給 1 分。"
+      }
+    },
+    {
+      "id": "ex-004-meet-undefined",
+      "context": {
+        "objective": "Q3 簽下 3 個企業客戶",
+        "keyResults": [{ "title": "簽約企業客戶數", "current": 0, "target": 3 }]
+      },
+      "idea": "跟一些人聊聊",
+      "expected": {
+        "finalScore": 2,
+        "reasoning": "「跟人聊聊」未指明對象與議題，套用邊界規則，給 2 分；建議使用者補充對方是誰。"
+      }
+    },
+    {
+      "id": "ex-005-meet-defined",
+      "context": {
+        "objective": "Q3 簽下 3 個企業客戶",
+        "keyResults": [{ "title": "簽約企業客戶數", "current": 0, "target": 3 }]
+      },
+      "idea": "跟 ACME 公司的 IT 主管 Alice 約一次需求訪談",
+      "expected": {
+        "finalScore": 7,
+        "reasoning": "明確 prospect + 具體階段（需求訪談），直接推進簽約 KR 的初期漏斗。"
+      }
+    },
+    {
+      "id": "ex-006-progress-laggard",
+      "context": {
+        "objective": "Q3 跑步累積 100 公里",
+        "keyResults": [
+          { "title": "累積跑步公里數", "current": 5, "target": 100, "deadlineProgress": 0.6 }
+        ]
+      },
+      "idea": "今晚去操場跑 5 公里",
+      "expected": {
+        "finalScore": 7,
+        "reasoning": "KR 大幅落後（5/100 vs 預期 60/100），套用進度落後加權 +2，從 5 升至 7。"
+      }
+    },
+    {
+      "id": "ex-007-side-effect",
+      "context": {
+        "objectives": [
+          { "title": "Q3 推出 v2.0", "kr": [{ "title": "v2.0 上線", "current": 0, "target": 1 }] },
+          { "title": "Q3 不熬夜，11:30 前睡", "kr": [{ "title": "11:30 前入睡天數", "current": 30, "target": 75 }] }
+        ]
+      },
+      "idea": "本週每晚熬夜衝刺 v2.0 開發",
+      "expected": {
+        "finalScoreOnObjective1": 6,
+        "finalScoreOnObjective2": 0,
+        "risks": ["直接違反『不熬夜』Objective"],
+        "finalScore": 4,
+        "reasoning": "對 Obj1 強貢獻（6），但對 Obj2 反向（0），套用風險扣權 −1，整體 finalScore = 4。"
+      }
+    },
+    {
+      "id": "ex-008-duplicate",
+      "context": {
+        "objective": "Q3 內推出 v2.0",
+        "recentSimilarIdeasCount": 4
+      },
+      "idea": "想一下 v2.0 該有什麼功能",
+      "expected": {
+        "finalScore": 0,
+        "reasoning": "30 天內已有 4 個語意相似 idea（套用重複性扣權 −1），且本身屬於『思考』類（基底分 1），最終 0。建議使用者選擇其中一個既有 idea 推進。"
+      }
+    },
+    {
+      "id": "ex-009-no-objective",
+      "context": {
+        "objective": null
+      },
+      "idea": "今天去買菜",
+      "expected": {
+        "finalScore": null,
+        "status": "no-objective",
+        "reasoning": "尚未設定任何 Objective，不強行打分。建議先建立至少一個 Objective。"
+      }
+    },
+    {
+      "id": "ex-010-tiny-direct",
+      "context": {
+        "objective": "Q3 內推出 v2.0",
+        "keyResults": [{ "title": "v2.0 上線", "current": 0, "target": 1 }]
+      },
+      "idea": "把 PR #42 review 完並合併",
+      "expected": {
+        "finalScore": 6,
+        "reasoning": "明確的下一步行動，直接推進 milestone KR；屬中等貢獻（單一 PR 不會決定 Obj 成敗）。"
+      }
+    }
+  ]
+}

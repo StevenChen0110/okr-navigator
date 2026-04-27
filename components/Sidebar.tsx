@@ -5,9 +5,12 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 
 const navItems = [
-  { href: "/", label: "總覽", icon: "⊞" },
+  { href: "/today", label: "今天", icon: "◉" },
+  { href: "/inbox", label: "收件匣", icon: "◫" },
+  { href: "/habits", label: "習慣", icon: "⬡" },
   { href: "/okr", label: "目標管理", icon: "◎" },
   { href: "/tasks", label: "任務管理", icon: "◈" },
+  { href: "/overview", label: "總覽", icon: "⊞" },
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
