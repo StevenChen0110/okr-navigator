@@ -19,7 +19,6 @@ import {
   updateIdeaStatus,
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
-import ScoreBar from "@/components/ScoreBar";
 import Markdown from "@/components/Markdown";
 
 type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
@@ -465,59 +464,15 @@ export default function HomePage() {
                           {os.overallScore.toFixed(1)}
                         </span>
                       </div>
-                      <Markdown className="text-xs text-gray-500 mb-2">
+                      <Markdown className="text-xs text-gray-500">
                         {os.reasoning}
                       </Markdown>
-                      <div className="space-y-1">
-                        {os.keyResultScores.map((krs) => (
-                          <div key={krs.keyResultId}>
-                            <ScoreBar score={krs.score} label={krs.keyResultTitle} />
-                            <Markdown className="text-xs text-gray-400 mt-0.5">
-                              {krs.reasoning}
-                            </Markdown>
-                          </div>
-                        ))}
-                      </div>
                     </div>
                   ))}
                   {modalAnalysis.risks.length > 0 && (
                     <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
                       <span className="font-medium">風險：</span>
                       {modalAnalysis.risks.join("；")}
-                    </div>
-                  )}
-                  {modalSuggestedLinks.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-gray-600">連結至子目標</p>
-                      {modalSuggestedLinks.map((l) => (
-                        <label key={l.krId} className="flex items-center gap-2.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={modalSelectedLinkIds.has(l.krId)}
-                            onChange={() => {
-                              setModalSelectedLinkIds((prev) => {
-                                const s = new Set(prev);
-                                s.has(l.krId) ? s.delete(l.krId) : s.add(l.krId);
-                                return s;
-                              });
-                            }}
-                            className="accent-indigo-600 shrink-0"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
-                            <p className="text-xs text-gray-400 truncate">
-                              {l.objectiveTitle}
-                            </p>
-                          </div>
-                          <span
-                            className={`text-xs font-bold shrink-0 ${
-                              l.score >= 7 ? "text-indigo-600" : "text-amber-500"
-                            }`}
-                          >
-                            {l.score.toFixed(1)}
-                          </span>
-                        </label>
-                      ))}
                     </div>
                   )}
                   {modalErrorMsg && (
