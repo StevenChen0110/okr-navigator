@@ -67,6 +67,8 @@ export async function fetchIdeas(): Promise<Idea[]> {
     taskStatus: (r.task_status as TaskStatus) ?? undefined,
     ideaStatus: (r.idea_status as IdeaStatus) ?? "active",
     todos: r.todos ?? [],
+    quickAnalysis: r.quick_analysis ?? false,
+    needsReanalysis: r.needs_reanalysis ?? false,
   }));
 }
 
@@ -85,6 +87,8 @@ export async function saveIdea(idea: Idea): Promise<void> {
     task_status: idea.taskStatus ?? null,
     idea_status: idea.ideaStatus ?? "active",
     todos: idea.todos ?? [],
+    quick_analysis: idea.quickAnalysis ?? false,
+    needs_reanalysis: idea.needsReanalysis ?? false,
   });
   if (error) throw error;
 }
