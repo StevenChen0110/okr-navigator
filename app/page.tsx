@@ -371,7 +371,7 @@ export default function HomePage() {
                   <input
                     value={modalTitle}
                     onChange={(e) => setModalTitle(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
+                    onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleAnalyze()}
                     placeholder="用一句話描述這個想法"
                     autoFocus
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"

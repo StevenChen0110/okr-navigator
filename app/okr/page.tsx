@@ -36,7 +36,7 @@ function GoalForm({
       <input
         value={form.title}
         onChange={(e) => setForm({ ...form, title: e.target.value })}
-        onKeyDown={(e) => e.key === "Enter" && onSave()}
+        onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && onSave()}
         placeholder="目標名稱"
         autoFocus
         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
