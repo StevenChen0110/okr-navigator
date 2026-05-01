@@ -70,6 +70,7 @@ export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [showShelved, setShowShelved] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -272,6 +273,13 @@ export default function HomePage() {
     await updateIdeaStatus(item.id, "deleted").catch(console.error);
   }
 
+  async function restoreIdea(item: Idea) {
+    setIdeas((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "active" as IdeaStatus } : i))
+    );
+    await updateIdeaStatus(item.id, "active").catch(console.error);
+  }
+
   function setTaskStatus(ideaId: string, status: TaskStatus) {
     setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, taskStatus: status } : i)));
     updateIdeaTaskStatus(ideaId, status).catch(console.error);
@@ -290,6 +298,7 @@ export default function HomePage() {
     (i) => (i.ideaStatus ?? "active") === "active" && !i.analysis
   );
   const pendingItems = [...inboxItems, ...unevaluated];
+  const shelved = ideas.filter((i) => i.ideaStatus === "shelved");
 
   const evaluated = ideas
     .filter((i) => (i.ideaStatus ?? "active") === "active" && i.analysis)
@@ -702,6 +711,36 @@ export default function HomePage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Shelved */}
+      {shelved.length > 0 && (
+        <div className="space-y-2">
+          <button
+            onClick={() => setShowShelved((v) => !v)}
+            className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-600"
+          >
+            <span className={`transition-transform ${showShelved ? "rotate-90" : ""}`}>›</span>
+            暫存 ({shelved.length})
+          </button>
+          {showShelved && shelved.map((item) => (
+            <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
+              <p className="text-sm text-gray-400 flex-1 truncate">{item.title}</p>
+              <button
+                onClick={() => restoreIdea(item)}
+                className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
+              >
+                恢復
+              </button>
+              <button
+                onClick={() => deleteIdea(item)}
+                className="text-xs text-gray-300 hover:text-red-400 shrink-0"
+              >
+                刪除
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
