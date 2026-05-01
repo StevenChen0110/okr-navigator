@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { Objective } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
@@ -149,9 +150,12 @@ export default function GoalsPage() {
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 pb-32 space-y-5">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">判斷標準</h1>
-          <p className="text-xs text-gray-400 mt-0.5">AI 根據這些目標評估你的每個想法</p>
+        <div className="flex items-center gap-3">
+          <Link href="/" className="text-gray-400 hover:text-gray-600 text-lg leading-none">‹</Link>
+          <div>
+            <h1 className="text-xl font-semibold">判斷標準</h1>
+            <p className="text-xs text-gray-400 mt-0.5">AI 根據這些目標評估你的每個想法</p>
+          </div>
         </div>
         {!adding && (
           <button
