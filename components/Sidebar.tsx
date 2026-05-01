@@ -6,10 +6,7 @@ import { useAuth } from "./AuthProvider";
 
 const navItems: { href: string; label: string; icon: string; exact?: boolean }[] = [
   { href: "/", label: "總覽", icon: "⊞", exact: true },
-  { href: "/today", label: "今天", icon: "◉" },
   { href: "/ideas", label: "想法庫", icon: "◈" },
-  { href: "/okr", label: "目標", icon: "◎" },
-  { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
 export default function Sidebar() {
@@ -44,6 +41,9 @@ export default function Sidebar() {
         })}
       </nav>
       <div className="border-t border-gray-100 px-4 py-4">
+        <Link href="/okr" className="text-xs text-gray-400 hover:text-gray-600 block mb-3">
+          目標設定 →
+        </Link>
         <p className="text-xs text-gray-400 truncate mb-2">{user?.email}</p>
         <button
           onClick={signOut}

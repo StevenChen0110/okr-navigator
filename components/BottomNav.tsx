@@ -5,9 +5,7 @@ import { usePathname } from "next/navigation";
 
 const navItems: { href: string; label: string; icon: string; exact?: boolean }[] = [
   { href: "/", label: "總覽", icon: "⊞", exact: true },
-  { href: "/today", label: "今天", icon: "◉" },
   { href: "/ideas", label: "想法庫", icon: "◈" },
-  { href: "/okr", label: "目標", icon: "◎" },
 ];
 
 export default function BottomNav() {

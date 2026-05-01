@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import {
   Idea,
@@ -564,6 +565,16 @@ export default function IdeasPage() {
           + 新增想法
         </button>
       </div>
+
+      {/* No objectives banner */}
+      {objectives.length === 0 && (
+        <Link
+          href="/okr"
+          className="block bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm text-amber-700 hover:bg-amber-100 transition-colors"
+        >
+          先設定你的目標，AI 才能判斷想法是否值得做 →
+        </Link>
+      )}
 
       {/* Pending evaluation */}
       {pendingItems.length > 0 && (
