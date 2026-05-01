@@ -318,7 +318,13 @@ export async function clarifyIdea(
     model,
     max_tokens: 200,
     system: `You are an OKR coach. A user just typed an idea title. Decide whether you need one clarifying question to score it accurately against their OKRs.
-Only ask if the title is genuinely ambiguous — e.g. "學習新技術" could mean many things. Self-explanatory titles should NOT trigger a question.
+
+Ask (shouldClarify: true) when ANY of these apply:
+- The title is very short (fewer than 3 meaningful words) and its meaning isn't obvious
+- The title looks like a test input, typo, abbreviation, or placeholder (e.g. "m/4", "test", "aaa")
+- The title is genuinely ambiguous — the same words could mean very different things relative to the OKRs (e.g. "學習新技術" could mean many things)
+
+Do NOT ask for self-explanatory, specific titles that clearly map to a domain.
 ${langInstruction(language)}
 Output ONLY valid JSON: {"shouldClarify":true|false,"question":"one focused question, or empty string if false"}
 No markdown fences.`,
