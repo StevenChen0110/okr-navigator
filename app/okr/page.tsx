@@ -7,9 +7,9 @@ import { Objective } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective } from "@/lib/db";
 
 const PRIORITY_CONFIG = {
-  1: { label: "P1", style: "bg-red-100 text-red-600 border-red-200" },
-  2: { label: "P2", style: "bg-amber-100 text-amber-600 border-amber-200" },
-  3: { label: "P3", style: "bg-gray-100 text-gray-500 border-gray-200" },
+  1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
+  2: { label: "2", style: "bg-amber-100 text-amber-600 border-amber-200" },
+  3: { label: "3", style: "bg-gray-100 text-gray-500 border-gray-200" },
 } as const;
 
 type Priority = 1 | 2 | 3;
@@ -60,7 +60,7 @@ function GoalForm({
                 : "border-gray-200 text-gray-400 hover:border-gray-300"
             }`}
           >
-            P{p}
+            {p}
           </button>
         ))}
       </div>
@@ -89,6 +89,7 @@ export default function GoalsPage() {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [sortAsc, setSortAsc] = useState(true);
 
   useEffect(() => {
     fetchObjectives().then(setObjectives).catch(console.error);
@@ -145,7 +146,13 @@ export default function GoalsPage() {
     });
   }
 
-  const active = objectives.filter((o) => !o.status || o.status === "active");
+  const active = objectives
+    .filter((o) => !o.status || o.status === "active")
+    .sort((a, b) => {
+      const pa = a.meta?.priority ?? 2;
+      const pb = b.meta?.priority ?? 2;
+      return sortAsc ? pa - pb : pb - pa;
+    });
 
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 pb-32 space-y-5">
@@ -157,18 +164,27 @@ export default function GoalsPage() {
             <p className="text-xs text-gray-400 mt-0.5">AI 根據這些目標評估你的每個想法</p>
           </div>
         </div>
-        {!adding && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              setAdding(true);
-              setEditingId(null);
-              setForm(emptyForm());
-            }}
-            className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            onClick={() => setSortAsc((v) => !v)}
+            className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors"
+            title={sortAsc ? "重要度升序" : "重要度降序"}
           >
-            + 新增
+            {sortAsc ? "1→3" : "3→1"}
           </button>
-        )}
+          {!adding && (
+            <button
+              onClick={() => {
+                setAdding(true);
+                setEditingId(null);
+                setForm(emptyForm());
+              }}
+              className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            >
+              + 新增
+            </button>
+          )}
+        </div>
       </div>
 
       {adding && (
