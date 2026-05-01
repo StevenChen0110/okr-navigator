@@ -513,12 +513,17 @@ export default function HomePage() {
           <h1 className="text-xl font-semibold">想法</h1>
           <p className="text-xs text-gray-400 mt-0.5">AI 幫你判斷哪個最值得做</p>
         </div>
-        <button
-          onClick={openNewModal}
-          className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-        >
-          + 新增
-        </button>
+        <div className="flex items-center gap-2">
+          <Link href="/okr" className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
+            判斷標準
+          </Link>
+          <button
+            onClick={openNewModal}
+            className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          >
+            + 新增
+          </button>
+        </div>
       </div>
 
       {/* No objectives banner */}
