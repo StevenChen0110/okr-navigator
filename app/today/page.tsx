@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { fetchIdeas, fetchHabits, fetchTodayHabitLogs, logHabitDone, undoHabitLog, saveHabit, updateIdeaTaskStatus } from "@/lib/db";
-import { Idea, Habit, HabitLog } from "@/lib/types";
+import { fetchIdeas, fetchObjectives, fetchHabits, fetchTodayHabitLogs, logHabitDone, undoHabitLog, saveHabit, saveObjective, updateIdeaTaskStatus } from "@/lib/db";
+import { Idea, Objective, Habit, HabitLog, TaskStatus } from "@/lib/types";
 import { v4 as uuid } from "uuid";
 
 const TODAY_KEY = () => `mit_${new Date().toISOString().split("T")[0]}`;
@@ -20,6 +20,7 @@ function formatDate() {
 export default function TodayPage() {
   const router = useRouter();
   const [ideas, setIdeas] = useState<Idea[]>([]);
+  const [objectives, setObjectives] = useState<Objective[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [mitIds, setMitIds] = useState<string[]>([]);
@@ -33,6 +34,7 @@ export default function TodayPage() {
 
   useEffect(() => {
     fetchIdeas().then(setIdeas).catch(console.error);
+    fetchObjectives().then(setObjectives).catch(console.error);
     fetchHabits().then(setHabits).catch(console.error);
     fetchTodayHabitLogs().then(setHabitLogs).catch(console.error);
     const stored = localStorage.getItem(TODAY_KEY());
@@ -69,9 +71,47 @@ export default function TodayPage() {
   });
 
   async function toggleMITDone(task: Idea) {
-    const next = task.taskStatus === "done" ? "todo" : "done";
-    setIdeas((prev) => prev.map((i) => i.id === task.id ? { ...i, taskStatus: next } : i));
+    const next: TaskStatus = task.taskStatus === "done" ? "todo" : "done";
+    const updatedIdeas = ideas.map((i) => i.id === task.id ? { ...i, taskStatus: next } : i);
+    setIdeas(updatedIdeas);
     await updateIdeaTaskStatus(task.id, next).catch(console.error);
+
+    const linkedLinks = (task.linkedKRs ?? []).filter((l) => l.krId);
+    if (linkedLinks.length === 0) return;
+    setObjectives((prevObjs) => {
+      const updatedMap = new Map();
+      for (const link of linkedLinks) {
+        const obj = prevObjs.find((o) => o.id === link.objectiveId);
+        if (!obj || !link.krId) continue;
+        const current = updatedMap.get(obj.id) ?? obj;
+        const kr = current.keyResults.find((k: { id: string }) => k.id === link.krId);
+        if (!kr) continue;
+        const krType = kr.krType ?? "cumulative";
+        let newValue: number | undefined;
+        if (krType === "cumulative") {
+          newValue = updatedIdeas.filter(
+            (i) => (i.ideaStatus ?? "active") !== "deleted" &&
+              i.taskStatus === "done" &&
+              (i.linkedKRs ?? []).some((l) => l.krId === link.krId)
+          ).length;
+          if (kr.targetValue) newValue = Math.min(kr.targetValue, newValue);
+        } else if (krType === "milestone") {
+          newValue = next === "done" ? 1 : 0;
+        }
+        if (newValue !== undefined) {
+          updatedMap.set(obj.id, {
+            ...current,
+            keyResults: current.keyResults.map((k: { id: string }) =>
+              k.id === link.krId ? { ...k, currentValue: newValue } : k
+            ),
+          });
+        }
+      }
+      updatedMap.forEach((o: { id: string }) =>
+        saveObjective(o as Parameters<typeof saveObjective>[0]).catch(console.error)
+      );
+      return prevObjs.map((o) => updatedMap.get(o.id) ?? o);
+    });
   }
 
   function removeMIT(id: string) {
@@ -126,7 +166,7 @@ export default function TodayPage() {
               {availableTasks.length === 0 ? (
                 <div className="px-5 py-8 text-center text-sm text-gray-400">
                   沒有待辦任務了<br />
-                  <button onClick={() => { setShowPicker(false); router.push("/inbox"); }} className="mt-2 text-indigo-500 text-xs">去收件匣找找</button>
+                  <button onClick={() => { setShowPicker(false); router.push("/ideas"); }} className="mt-2 text-indigo-500 text-xs">去想法庫找找</button>
                 </div>
               ) : availableTasks.map((task) => (
                 <button key={task.id} onClick={() => addMIT(task.id)}
@@ -306,7 +346,7 @@ export default function TodayPage() {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">今天的習慣</h2>
-            <button onClick={() => router.push("/habits")} className="text-xs text-gray-400 hover:text-gray-600">管理</button>
+            <button onClick={() => router.push("/habits")} className="text-xs text-gray-400 hover:text-gray-600">+ 新增</button>
           </div>
           <div className="grid grid-cols-2 gap-2">
             {todayHabits.map((habit) => {
@@ -339,7 +379,7 @@ export default function TodayPage() {
           </div>
           <button onClick={() => router.push("/habits")}
             className="w-full py-4 rounded-xl border border-dashed border-gray-200 text-xs text-gray-400 hover:border-indigo-200 hover:text-indigo-400 transition-colors">
-            + 建立第一個習慣
+            + 建立習慣
           </button>
         </div>
       )}

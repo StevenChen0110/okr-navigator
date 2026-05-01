@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const navItems = [
+const navItems: { href: string; label: string; icon: string; exact?: boolean }[] = [
+  { href: "/", label: "總覽", icon: "⊞", exact: true },
   { href: "/today", label: "今天", icon: "◉" },
-  { href: "/inbox", label: "收件匣", icon: "◫" },
-  { href: "/habits", label: "習慣", icon: "⬡" },
+  { href: "/ideas", label: "想法庫", icon: "◈" },
   { href: "/okr", label: "目標", icon: "◎" },
 ];
 
@@ -16,9 +16,9 @@ export default function BottomNav() {
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex md:hidden z-20">
       {navItems.map((item) => {
-        const active =
-          pathname === item.href ||
-          (item.href !== "/" && pathname.startsWith(item.href));
+        const active = item.exact
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(item.href + "/");
         return (
           <Link
             key={item.href}

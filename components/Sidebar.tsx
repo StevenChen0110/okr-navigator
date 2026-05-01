@@ -4,13 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 
-const navItems = [
+const navItems: { href: string; label: string; icon: string; exact?: boolean }[] = [
+  { href: "/", label: "總覽", icon: "⊞", exact: true },
   { href: "/today", label: "今天", icon: "◉" },
-  { href: "/inbox", label: "收件匣", icon: "◫" },
-  { href: "/habits", label: "習慣", icon: "⬡" },
-  { href: "/okr", label: "目標管理", icon: "◎" },
-  { href: "/tasks", label: "任務管理", icon: "◈" },
-  { href: "/overview", label: "總覽", icon: "⊞" },
+  { href: "/ideas", label: "想法庫", icon: "◈" },
+  { href: "/okr", label: "目標", icon: "◎" },
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
@@ -26,9 +24,9 @@ export default function Sidebar() {
       </div>
       <nav className="flex-1 px-3 py-4 space-y-0.5">
         {navItems.map((item) => {
-          const active =
-            pathname === item.href ||
-            (item.href !== "/" && pathname.startsWith(item.href));
+          const active = item.exact
+              ? pathname === item.href
+              : pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
