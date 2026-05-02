@@ -19,6 +19,7 @@ import {
   updateIdeaStatus,
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
+import { useAuth } from "@/components/AuthProvider";
 
 
 type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
@@ -69,6 +70,7 @@ const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
 export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
+  const { signOut } = useAuth();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
   const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
@@ -593,6 +595,13 @@ export default function HomePage() {
           >
             + 新增
           </button>
+          <button
+            onClick={signOut}
+            className="text-xs text-gray-300 hover:text-gray-500 px-2 py-2 rounded-xl hover:bg-gray-100 transition-colors"
+            title="登出"
+          >
+            ↩
+          </button>
         </div>
       </div>
 
@@ -632,36 +641,23 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Objective filter chips — only when there are evaluated ideas */}
+      {/* Objective filter dropdown — only when there are evaluated ideas */}
       {activeTab === "tasks" && evaluated.length > 0 && objectives.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-0.5 -mx-4 px-4 md:-mx-6 md:px-6">
-          <button
-            onClick={() => setSelectedObjId(null)}
-            className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${
-              selectedObjId === null
-                ? "bg-indigo-600 text-white border-indigo-600"
-                : "border-gray-200 text-gray-500 hover:border-gray-300"
-            }`}
-          >
-            全部
-          </button>
+        <select
+          value={selectedObjId ?? ""}
+          onChange={(e) => setSelectedObjId(e.target.value || null)}
+          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="">全部目標</option>
           {objectives
             .filter((o) => !o.status || o.status === "active")
             .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
             .map((o) => (
-              <button
-                key={o.id}
-                onClick={() => setSelectedObjId(o.id === selectedObjId ? null : o.id)}
-                className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors max-w-[160px] truncate ${
-                  selectedObjId === o.id
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "border-gray-200 text-gray-500 hover:border-gray-300"
-                }`}
-              >
+              <option key={o.id} value={o.id}>
                 {o.title}
-              </button>
+              </option>
             ))}
-        </div>
+        </select>
       )}
 
       {/* Tasks tab */}
