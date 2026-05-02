@@ -70,7 +70,7 @@ export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [showShelved, setShowShelved] = useState(false);
+  const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -299,6 +299,7 @@ export default function HomePage() {
   );
   const pendingItems = [...inboxItems, ...unevaluated];
   const shelved = ideas.filter((i) => i.ideaStatus === "shelved");
+  const deleted = ideas.filter((i) => i.ideaStatus === "deleted");
 
   const evaluated = ideas
     .filter((i) => (i.ideaStatus ?? "active") === "active" && i.analysis)
@@ -535,8 +536,36 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+        {([
+          { key: "tasks", label: "任務", count: pendingItems.length + evaluated.length },
+          { key: "shelved", label: "暫存", count: shelved.length },
+          { key: "deleted", label: "刪除", count: deleted.length },
+        ] as const).map(({ key, label, count }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === key
+                ? "bg-white text-gray-800 shadow-sm"
+                : "text-gray-400 hover:text-gray-600"
+            }`}
+          >
+            {label}
+            {count > 0 && (
+              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                activeTab === key ? "bg-gray-100 text-gray-500" : "bg-gray-200 text-gray-400"
+              }`}>
+                {count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* No objectives banner */}
-      {objectives.length === 0 && (
+      {objectives.length === 0 && activeTab === "tasks" && (
         <Link
           href="/okr"
           className="block bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm text-amber-700 hover:bg-amber-100 transition-colors"
@@ -545,218 +574,245 @@ export default function HomePage() {
         </Link>
       )}
 
-      {/* Pending evaluation */}
-      {pendingItems.length > 0 && (
+      {/* Tasks tab */}
+      {activeTab === "tasks" && (
+        <>
+          {/* Pending evaluation */}
+          {pendingItems.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  待評估
+                </h2>
+                <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">
+                  {pendingItems.length}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400">
+                點「AI 評估」讓 AI 根據你的目標判斷這件事值不值得做
+              </p>
+              {pendingItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-white rounded-xl border border-amber-100 px-4 py-3"
+                >
+                  <p className="text-sm text-gray-800 mb-3 leading-snug">{item.title}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => openAnalyzeInbox(item)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
+                    >
+                      AI 評估
+                    </button>
+                    {item.ideaStatus === "inbox" && (
+                      <button
+                        onClick={() => promoteToTask(item)}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                      >
+                        直接轉任務
+                      </button>
+                    )}
+                    <button
+                      onClick={() => archiveIdea(item)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors"
+                    >
+                      存起來
+                    </button>
+                    <button
+                      onClick={() => deleteIdea(item)}
+                      className="text-xs text-gray-300 hover:text-red-400 ml-auto transition-colors"
+                    >
+                      刪除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Evaluated ranked list */}
+          {evaluated.length > 0 && (
+            <div className="space-y-2">
+              <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                AI 評分排行
+              </h2>
+              <div className="space-y-1.5">
+                {evaluated.map((idea) => {
+                  const isExpanded = expandedIds.has(idea.id);
+                  const isDone = idea.taskStatus === "done";
+                  return (
+                    <div
+                      key={idea.id}
+                      className={`bg-white rounded-xl border transition-all ${
+                        isDone
+                          ? "border-gray-100 opacity-60"
+                          : isExpanded
+                          ? "border-indigo-100"
+                          : "border-gray-200"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 px-4 py-3">
+                        <button
+                          onClick={() => toggleExpand(idea.id)}
+                          className="flex-1 text-left min-w-0"
+                        >
+                          <p
+                            className={`text-sm font-medium truncate ${
+                              isDone ? "line-through text-gray-400" : "text-gray-800"
+                            }`}
+                          >
+                            {idea.title}
+                          </p>
+                        </button>
+                        <span
+                          className={`text-xs font-bold font-mono px-2 py-0.5 rounded-lg shrink-0 ${
+                            idea.analysis!.finalScore >= 7
+                              ? "bg-indigo-50 text-indigo-600"
+                              : idea.analysis!.finalScore >= 4
+                              ? "bg-amber-50 text-amber-600"
+                              : "bg-gray-100 text-gray-500"
+                          }`}
+                        >
+                          {idea.analysis!.finalScore.toFixed(1)}
+                        </span>
+                        <div className="flex gap-1 shrink-0">
+                          {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => setTaskStatus(idea.id, s)}
+                              className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${
+                                idea.taskStatus === s
+                                  ? TASK_STATUS_STYLE[s] + " font-medium"
+                                  : "text-gray-300 hover:text-gray-500"
+                              }`}
+                            >
+                              {TASK_STATUS_LABEL[s]}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => toggleExpand(idea.id)}
+                          className="text-gray-300 text-xs shrink-0 ml-1"
+                        >
+                          {isExpanded ? "▲" : "▼"}
+                        </button>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-1 border-t border-gray-50 space-y-3">
+                          {idea.analysis!.objectiveScores.map((os) => (
+                            <div key={os.objectiveId}>
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-xs font-medium text-gray-600">
+                                  {os.objectiveTitle}
+                                </p>
+                                <span
+                                  className={`text-xs font-bold ${
+                                    os.overallScore >= 7
+                                      ? "text-indigo-600"
+                                      : os.overallScore >= 4
+                                      ? "text-amber-500"
+                                      : "text-red-500"
+                                  }`}
+                                >
+                                  {os.overallScore.toFixed(1)}
+                                </span>
+                              </div>
+                              <Markdown className="text-xs text-gray-500">
+                                {os.reasoning}
+                              </Markdown>
+                            </div>
+                          ))}
+                          <div className="flex gap-3 pt-1 border-t border-gray-50">
+                            <button
+                              onClick={() => archiveIdea(idea)}
+                              className="text-xs text-gray-400 hover:text-gray-600"
+                            >
+                              存起來
+                            </button>
+                            <button
+                              onClick={() => deleteIdea(idea)}
+                              className="text-xs text-gray-300 hover:text-red-400"
+                            >
+                              刪除
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {evaluated.length === 0 && pendingItems.length === 0 && (
+            <div className="text-center py-20">
+              <div className="text-4xl mb-3 text-gray-200">◎</div>
+              <p className="text-sm text-gray-500">還沒有想法</p>
+              <p className="text-xs text-gray-400 mt-1 mb-5">
+                輸入一個想法，AI 會幫你判斷值不值得做
+              </p>
+              <button
+                onClick={openNewModal}
+                className="text-sm text-indigo-500 hover:text-indigo-700"
+              >
+                新增第一個想法 →
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Shelved tab */}
+      {activeTab === "shelved" && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              待評估
-            </h2>
-            <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">
-              {pendingItems.length}
-            </span>
-          </div>
-          <p className="text-xs text-gray-400">
-            點「AI 評估」讓 AI 根據你的目標判斷這件事值不值得做
-          </p>
-          {pendingItems.map((item) => (
-            <div
-              key={item.id}
-              className="bg-white rounded-xl border border-amber-100 px-4 py-3"
-            >
-              <p className="text-sm text-gray-800 mb-3 leading-snug">{item.title}</p>
-              <div className="flex items-center gap-2 flex-wrap">
+          {shelved.length === 0 ? (
+            <div className="text-center py-20">
+              <p className="text-sm text-gray-400">沒有暫存的想法</p>
+            </div>
+          ) : (
+            shelved.map((item) => (
+              <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
+                <p className="text-sm text-gray-500 flex-1 truncate">{item.title}</p>
                 <button
-                  onClick={() => openAnalyzeInbox(item)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
+                  onClick={() => restoreIdea(item)}
+                  className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
                 >
-                  AI 評估
-                </button>
-                {item.ideaStatus === "inbox" && (
-                  <button
-                    onClick={() => promoteToTask(item)}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-                  >
-                    直接轉任務
-                  </button>
-                )}
-                <button
-                  onClick={() => archiveIdea(item)}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors"
-                >
-                  存起來
+                  恢復
                 </button>
                 <button
                   onClick={() => deleteIdea(item)}
-                  className="text-xs text-gray-300 hover:text-red-400 ml-auto transition-colors"
+                  className="text-xs text-gray-300 hover:text-red-400 shrink-0"
                 >
                   刪除
                 </button>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       )}
 
-      {/* Evaluated ranked list */}
-      {evaluated.length > 0 && (
+      {/* Deleted tab */}
+      {activeTab === "deleted" && (
         <div className="space-y-2">
-          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-            AI 評分排行
-          </h2>
-          <div className="space-y-1.5">
-            {evaluated.map((idea) => {
-              const isExpanded = expandedIds.has(idea.id);
-              const isDone = idea.taskStatus === "done";
-              return (
-                <div
-                  key={idea.id}
-                  className={`bg-white rounded-xl border transition-all ${
-                    isDone
-                      ? "border-gray-100 opacity-60"
-                      : isExpanded
-                      ? "border-indigo-100"
-                      : "border-gray-200"
-                  }`}
+          {deleted.length === 0 ? (
+            <div className="text-center py-20">
+              <p className="text-sm text-gray-400">沒有刪除的想法</p>
+            </div>
+          ) : (
+            deleted.map((item) => (
+              <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
+                <p className="text-sm text-gray-400 flex-1 truncate line-through">{item.title}</p>
+                <button
+                  onClick={() => restoreIdea(item)}
+                  className="text-xs text-gray-400 hover:text-indigo-600 shrink-0"
                 >
-                  <div className="flex items-center gap-2 px-4 py-3">
-                    <button
-                      onClick={() => toggleExpand(idea.id)}
-                      className="flex-1 text-left min-w-0"
-                    >
-                      <p
-                        className={`text-sm font-medium truncate ${
-                          isDone ? "line-through text-gray-400" : "text-gray-800"
-                        }`}
-                      >
-                        {idea.title}
-                      </p>
-                    </button>
-                    <span
-                      className={`text-xs font-bold font-mono px-2 py-0.5 rounded-lg shrink-0 ${
-                        idea.analysis!.finalScore >= 7
-                          ? "bg-indigo-50 text-indigo-600"
-                          : idea.analysis!.finalScore >= 4
-                          ? "bg-amber-50 text-amber-600"
-                          : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      {idea.analysis!.finalScore.toFixed(1)}
-                    </span>
-                    <div className="flex gap-1 shrink-0">
-                      {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => setTaskStatus(idea.id, s)}
-                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${
-                            idea.taskStatus === s
-                              ? TASK_STATUS_STYLE[s] + " font-medium"
-                              : "text-gray-300 hover:text-gray-500"
-                          }`}
-                        >
-                          {TASK_STATUS_LABEL[s]}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => toggleExpand(idea.id)}
-                      className="text-gray-300 text-xs shrink-0 ml-1"
-                    >
-                      {isExpanded ? "▲" : "▼"}
-                    </button>
-                  </div>
-
-                  {isExpanded && (
-                    <div className="px-4 pb-4 pt-1 border-t border-gray-50 space-y-3">
-                      {idea.analysis!.objectiveScores.map((os) => (
-                        <div key={os.objectiveId}>
-                          <div className="flex items-center justify-between mb-1">
-                            <p className="text-xs font-medium text-gray-600">
-                              {os.objectiveTitle}
-                            </p>
-                            <span
-                              className={`text-xs font-bold ${
-                                os.overallScore >= 7
-                                  ? "text-indigo-600"
-                                  : os.overallScore >= 4
-                                  ? "text-amber-500"
-                                  : "text-red-500"
-                              }`}
-                            >
-                              {os.overallScore.toFixed(1)}
-                            </span>
-                          </div>
-                          <Markdown className="text-xs text-gray-500">
-                            {os.reasoning}
-                          </Markdown>
-                        </div>
-                      ))}
-                      <div className="flex gap-3 pt-1 border-t border-gray-50">
-                        <button
-                          onClick={() => archiveIdea(idea)}
-                          className="text-xs text-gray-400 hover:text-gray-600"
-                        >
-                          存起來
-                        </button>
-                        <button
-                          onClick={() => deleteIdea(idea)}
-                          className="text-xs text-gray-300 hover:text-red-400"
-                        >
-                          刪除
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Shelved */}
-      {shelved.length > 0 && (
-        <div className="space-y-2">
-          <button
-            onClick={() => setShowShelved((v) => !v)}
-            className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-600"
-          >
-            <span className={`transition-transform ${showShelved ? "rotate-90" : ""}`}>›</span>
-            暫存 ({shelved.length})
-          </button>
-          {showShelved && shelved.map((item) => (
-            <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
-              <p className="text-sm text-gray-400 flex-1 truncate">{item.title}</p>
-              <button
-                onClick={() => restoreIdea(item)}
-                className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
-              >
-                恢復
-              </button>
-              <button
-                onClick={() => deleteIdea(item)}
-                className="text-xs text-gray-300 hover:text-red-400 shrink-0"
-              >
-                刪除
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {evaluated.length === 0 && pendingItems.length === 0 && (
-        <div className="text-center py-20">
-          <div className="text-4xl mb-3 text-gray-200">◎</div>
-          <p className="text-sm text-gray-500">還沒有想法</p>
-          <p className="text-xs text-gray-400 mt-1 mb-5">
-            輸入一個想法，AI 會幫你判斷值不值得做
-          </p>
-          <button
-            onClick={openNewModal}
-            className="text-sm text-indigo-500 hover:text-indigo-700"
-          >
-            新增第一個想法 →
-          </button>
+                  恢復
+                </button>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
