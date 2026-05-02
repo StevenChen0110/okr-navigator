@@ -118,6 +118,14 @@ export async function removeIdea(id: string): Promise<void> {
   if (error) throw error;
 }
 
+export async function markAllIdeasForReanalysis(): Promise<void> {
+  const { error } = await supabase
+    .from("ideas")
+    .update({ needs_reanalysis: true })
+    .eq("idea_status", "active");
+  if (error) throw error;
+}
+
 // ── Habits ────────────────────────────────────────────────────────────────────
 
 export async function fetchHabits(): Promise<Habit[]> {

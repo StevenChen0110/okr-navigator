@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import {
@@ -71,6 +71,8 @@ export default function HomePage() {
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
+  const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
+  const autoReanalyzeDone = useRef(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -88,8 +90,54 @@ export default function HomePage() {
   const [pendingInboxId, setPendingInboxId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchIdeas().then(setIdeas).catch(console.error);
-    fetchObjectives().then(setObjectives).catch(console.error);
+    let cancelled = false;
+
+    Promise.all([fetchIdeas(), fetchObjectives()])
+      .then(([loadedIdeas, loadedObjectives]) => {
+        if (cancelled) return;
+        setIdeas(loadedIdeas);
+        setObjectives(loadedObjectives);
+
+        if (autoReanalyzeDone.current) return;
+        const toReanalyze = loadedIdeas.filter(
+          (i) => i.needsReanalysis && i.analysis && (i.ideaStatus ?? "active") === "active"
+        );
+        if (toReanalyze.length === 0) return;
+
+        autoReanalyzeDone.current = true;
+        setReanalyzingIds(new Set(toReanalyze.map((i) => i.id)));
+
+        (async () => {
+          for (const item of toReanalyze) {
+            if (cancelled) break;
+            try {
+              const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
+                ideaTitle: item.title,
+                ideaWhy: "",
+                ideaOutcome: "",
+                ideaNotes: item.description || "",
+                objectives: loadedObjectives,
+                progressContext: buildProgressContext(loadedObjectives),
+              });
+              const updated: Idea = { ...item, analysis, needsReanalysis: false };
+              await saveIdea(updated);
+              if (!cancelled) setIdeas((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
+            } catch (e) {
+              console.error("auto re-analysis failed:", item.title, e);
+            } finally {
+              if (!cancelled)
+                setReanalyzingIds((prev) => {
+                  const s = new Set(prev);
+                  s.delete(item.id);
+                  return s;
+                });
+            }
+          }
+        })();
+      })
+      .catch(console.error);
+
+    return () => { cancelled = true; };
   }, []);
 
   const hasDetails = modalWhy.trim() || modalOutcome.trim() || modalNotes.trim();
@@ -570,6 +618,14 @@ export default function HomePage() {
         ))}
       </div>
 
+      {/* Re-analysis in progress banner */}
+      {reanalyzingIds.size > 0 && activeTab === "tasks" && (
+        <div className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
+          <span className="animate-pulse">◎</span>
+          AI 正在重新分析 {reanalyzingIds.size} 個想法…
+        </div>
+      )}
+
       {/* No objectives banner */}
       {objectives.length === 0 && activeTab === "tasks" && (
         <Link
@@ -669,6 +725,9 @@ export default function HomePage() {
                           >
                             {idea.title}
                           </p>
+                          {reanalyzingIds.has(idea.id) && (
+                            <span className="text-[10px] text-indigo-400 animate-pulse">重新分析中…</span>
+                          )}
                         </button>
                         <span
                           className={`text-xs font-bold font-mono px-2 py-0.5 rounded-lg shrink-0 ${
