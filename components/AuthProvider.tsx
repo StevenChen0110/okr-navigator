@@ -15,12 +15,14 @@ interface AuthContextType {
   user: User | null;
   signOut: () => Promise<void>;
   openLogin: () => void;
+  requireAuth: () => void; // shows "need login" gate modal
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   signOut: async () => {},
   openLogin: () => {},
+  requireAuth: () => {},
 });
 
 export function useAuth() {
@@ -31,6 +33,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -45,9 +48,9 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Auto-close login modal when user authenticates
+  // Auto-close modals when user authenticates
   useEffect(() => {
-    if (user) setShowLogin(false);
+    if (user) { setShowLogin(false); setShowAuthGate(false); }
   }, [user]);
 
   if (loading) {
@@ -64,10 +67,12 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
         user,
         signOut: async () => { await supabase.auth.signOut(); },
         openLogin: () => setShowLogin(true),
+        requireAuth: () => setShowAuthGate(true),
       }}
     >
       {children}
 
+      {/* Full login form modal */}
       {showLogin && !user && (
         <div
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 overflow-y-auto"
@@ -75,6 +80,36 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
         >
           <div className="w-full max-w-sm py-6">
             <LoginContent onClose={() => setShowLogin(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* Auth gate — lightweight "need to login" prompt */}
+      {showAuthGate && !user && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAuthGate(false); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-xs p-6 space-y-4 text-center">
+            <div className="text-3xl">🔒</div>
+            <div>
+              <p className="text-sm font-semibold text-gray-800">需要登入</p>
+              <p className="text-xs text-gray-400 mt-1">請先登入才能使用此功能</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowAuthGate(false)}
+                className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => { setShowAuthGate(false); setShowLogin(true); }}
+                className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+              >
+                前往登入
+              </button>
+            </div>
           </div>
         </div>
       )}

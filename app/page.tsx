@@ -70,7 +70,7 @@ const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
 export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const { user, signOut, openLogin } = useAuth();
+  const { user, signOut, openLogin, requireAuth } = useAuth();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
   const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
@@ -153,7 +153,7 @@ export default function HomePage() {
   const isQuickMode = !hasDetails;
 
   function openNewModal() {
-    if (!user) { openLogin(); return; }
+    if (!user) { requireAuth(); return; }
     setPendingInboxId(null);
     setModalTitle("");
     setModalWhy("");
@@ -171,6 +171,7 @@ export default function HomePage() {
   }
 
   function openAnalyzeInbox(item: Idea) {
+    if (!user) { requireAuth(); return; }
     setPendingInboxId(item.id);
     setModalTitle(item.title);
     setModalWhy("");
@@ -314,12 +315,14 @@ export default function HomePage() {
   }
 
   async function promoteToTask(item: Idea) {
+    if (!user) { requireAuth(); return; }
     const updated: Idea = { ...item, ideaStatus: "active", taskStatus: "todo" };
     setIdeas((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
     await saveIdea(updated).catch(console.error);
   }
 
   async function archiveIdea(item: Idea) {
+    if (!user) { requireAuth(); return; }
     setIdeas((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "shelved" as IdeaStatus } : i))
     );
@@ -327,11 +330,13 @@ export default function HomePage() {
   }
 
   async function deleteIdea(item: Idea) {
+    if (!user) { requireAuth(); return; }
     setIdeas((prev) => prev.filter((i) => i.id !== item.id));
     await updateIdeaStatus(item.id, "deleted").catch(console.error);
   }
 
   async function restoreIdea(item: Idea) {
+    if (!user) { requireAuth(); return; }
     setIdeas((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "active" as IdeaStatus } : i))
     );
@@ -339,6 +344,7 @@ export default function HomePage() {
   }
 
   function setTaskStatus(ideaId: string, status: TaskStatus) {
+    if (!user) { requireAuth(); return; }
     setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, taskStatus: status } : i)));
     updateIdeaTaskStatus(ideaId, status).catch(console.error);
   }
