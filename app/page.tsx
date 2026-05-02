@@ -70,7 +70,7 @@ const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
 export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const { signOut } = useAuth();
+  const { user, signOut, openLogin } = useAuth();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
   const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
@@ -93,6 +93,12 @@ export default function HomePage() {
   const [pendingInboxId, setPendingInboxId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!user) {
+      setIdeas([]);
+      setObjectives([]);
+      autoReanalyzeDone.current = false;
+      return;
+    }
     let cancelled = false;
 
     Promise.all([fetchIdeas(), fetchObjectives()])
@@ -141,12 +147,13 @@ export default function HomePage() {
       .catch(console.error);
 
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasDetails = modalWhy.trim() || modalOutcome.trim() || modalNotes.trim();
   const isQuickMode = !hasDetails;
 
   function openNewModal() {
+    if (!user) { openLogin(); return; }
     setPendingInboxId(null);
     setModalTitle("");
     setModalWhy("");
@@ -595,13 +602,21 @@ export default function HomePage() {
           >
             + 新增
           </button>
-          <button
-            onClick={signOut}
-            className="text-xs text-gray-300 hover:text-gray-500 px-2 py-2 rounded-xl hover:bg-gray-100 transition-colors"
-            title="登出"
-          >
-            ↩
-          </button>
+          {user ? (
+            <button
+              onClick={signOut}
+              className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
+            >
+              登出
+            </button>
+          ) : (
+            <button
+              onClick={openLogin}
+              className="text-xs font-medium px-3 py-2 rounded-xl border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors"
+            >
+              登入
+            </button>
+          )}
         </div>
       </div>
 
