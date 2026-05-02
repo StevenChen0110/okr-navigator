@@ -71,6 +71,7 @@ export default function HomePage() {
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
+  const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
   const autoReanalyzeDone = useRef(false);
 
@@ -355,6 +356,11 @@ export default function HomePage() {
       const aDone = a.taskStatus === "done" ? 1 : 0;
       const bDone = b.taskStatus === "done" ? 1 : 0;
       if (aDone !== bDone) return aDone - bDone;
+      if (selectedObjId) {
+        const aScore = a.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? 0;
+        const bScore = b.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? 0;
+        return bScore - aScore;
+      }
       return (b.analysis!.finalScore ?? 0) - (a.analysis!.finalScore ?? 0);
     });
 
@@ -626,14 +632,36 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* No objectives banner */}
-      {objectives.length === 0 && activeTab === "tasks" && (
-        <Link
-          href="/okr"
-          className="block bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm text-amber-700 hover:bg-amber-100 transition-colors"
-        >
-          先設定你的目標，AI 才能判斷想法是否值得做 →
-        </Link>
+      {/* Objective filter chips — only when there are evaluated ideas */}
+      {activeTab === "tasks" && evaluated.length > 0 && objectives.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-0.5 -mx-4 px-4 md:-mx-6 md:px-6">
+          <button
+            onClick={() => setSelectedObjId(null)}
+            className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${
+              selectedObjId === null
+                ? "bg-indigo-600 text-white border-indigo-600"
+                : "border-gray-200 text-gray-500 hover:border-gray-300"
+            }`}
+          >
+            全部
+          </button>
+          {objectives
+            .filter((o) => !o.status || o.status === "active")
+            .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
+            .map((o) => (
+              <button
+                key={o.id}
+                onClick={() => setSelectedObjId(o.id === selectedObjId ? null : o.id)}
+                className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors max-w-[160px] truncate ${
+                  selectedObjId === o.id
+                    ? "bg-indigo-600 text-white border-indigo-600"
+                    : "border-gray-200 text-gray-500 hover:border-gray-300"
+                }`}
+              >
+                {o.title}
+              </button>
+            ))}
+        </div>
       )}
 
       {/* Tasks tab */}
@@ -678,7 +706,7 @@ export default function HomePage() {
                       onClick={() => archiveIdea(item)}
                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors"
                     >
-                      存起來
+                      暫存
                     </button>
                     <button
                       onClick={() => deleteIdea(item)}
@@ -702,6 +730,9 @@ export default function HomePage() {
                 {evaluated.map((idea) => {
                   const isExpanded = expandedIds.has(idea.id);
                   const isDone = idea.taskStatus === "done";
+                  const displayScore = selectedObjId
+                    ? (idea.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? idea.analysis!.finalScore)
+                    : idea.analysis!.finalScore;
                   return (
                     <div
                       key={idea.id}
@@ -731,14 +762,14 @@ export default function HomePage() {
                         </button>
                         <span
                           className={`text-xs font-bold font-mono px-2 py-0.5 rounded-lg shrink-0 ${
-                            idea.analysis!.finalScore >= 7
+                            displayScore >= 7
                               ? "bg-indigo-50 text-indigo-600"
-                              : idea.analysis!.finalScore >= 4
+                              : displayScore >= 4
                               ? "bg-amber-50 text-amber-600"
                               : "bg-gray-100 text-gray-500"
                           }`}
                         >
-                          {idea.analysis!.finalScore.toFixed(1)}
+                          {displayScore.toFixed(1)}
                         </span>
                         <div className="flex gap-1 shrink-0">
                           {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
@@ -795,7 +826,7 @@ export default function HomePage() {
                               onClick={() => archiveIdea(idea)}
                               className="text-xs text-gray-400 hover:text-gray-600"
                             >
-                              存起來
+                              暫存
                             </button>
                             <button
                               onClick={() => deleteIdea(idea)}
@@ -814,19 +845,40 @@ export default function HomePage() {
           )}
 
           {evaluated.length === 0 && pendingItems.length === 0 && (
-            <div className="text-center py-20">
-              <div className="text-4xl mb-3 text-gray-200">◎</div>
-              <p className="text-sm text-gray-500">還沒有想法</p>
-              <p className="text-xs text-gray-400 mt-1 mb-5">
-                輸入一個想法，AI 會幫你判斷值不值得做
-              </p>
-              <button
-                onClick={openNewModal}
-                className="text-sm text-indigo-500 hover:text-indigo-700"
-              >
-                新增第一個想法 →
-              </button>
-            </div>
+            objectives.length === 0 ? (
+              <div className="py-10 space-y-4">
+                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider text-center">開始使用</p>
+                {[
+                  { step: "1", title: "設定判斷標準", desc: "告訴 AI 你現在最重要的目標是什麼", href: "/okr", cta: "去設定 →", active: true },
+                  { step: "2", title: "輸入想法", desc: "把腦中任何想做的事情丟進來", href: null, cta: null, active: false },
+                  { step: "3", title: "AI 評估優先級", desc: "AI 根據你的目標判斷哪個最值得做", href: null, cta: null, active: false },
+                ].map(({ step, title, desc, href, cta, active }) => (
+                  <div key={step} className={`flex gap-4 items-start rounded-xl border px-4 py-3 ${active ? "bg-indigo-50 border-indigo-100" : "bg-white border-gray-100 opacity-50"}`}>
+                    <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${active ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-400"}`}>
+                      {step}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${active ? "text-indigo-800" : "text-gray-500"}`}>{title}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+                    </div>
+                    {href && cta && (
+                      <Link href={href} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800 mt-0.5">
+                        {cta}
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-20">
+                <div className="text-4xl mb-3 text-gray-200">◎</div>
+                <p className="text-sm text-gray-500">還沒有想法</p>
+                <p className="text-xs text-gray-400 mt-1 mb-5">輸入一個想法，AI 會幫你判斷值不值得做</p>
+                <button onClick={openNewModal} className="text-sm text-indigo-500 hover:text-indigo-700">
+                  新增第一個想法 →
+                </button>
+              </div>
+            )
           )}
         </>
       )}
