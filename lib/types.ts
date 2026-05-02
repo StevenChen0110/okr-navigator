@@ -59,12 +59,14 @@ export interface KeyResultScore {
 export interface ObjectiveScore {
   objectiveId: string;
   objectiveTitle: string;
+  objectiveDescription?: string; // AI-generated if user didn't provide one
   overallScore: number; // 0-10
   keyResultScores: KeyResultScore[];
-  reasoning: string;
+  reasoning: string; // ≤15 chars
 }
 
 export interface IdeaAnalysis {
+  summary: string; // overall verdict, 1-2 sentences
   objectiveScores: ObjectiveScore[];
   finalScore: number; // 0-10
   risks: string[];

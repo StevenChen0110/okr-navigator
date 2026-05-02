@@ -19,7 +19,7 @@ import {
   updateIdeaStatus,
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
-import Markdown from "@/components/Markdown";
+
 
 type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
 
@@ -440,45 +440,51 @@ export default function HomePage() {
               )}
 
               {modalStatus === "confirm" && modalAnalysis && (
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">{modalTitle}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">分析結果</p>
-                    </div>
+                <div className="space-y-3">
+                  {/* Score + title */}
+                  <div className="flex items-center gap-3">
                     <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
                       <span className="text-2xl font-bold font-mono text-indigo-600">
                         {modalAnalysis.finalScore.toFixed(1)}
                       </span>
-                      <span className="text-[10px] text-gray-400 mt-0.5">綜合分</span>
+                      <span className="text-[10px] text-gray-400">綜合</span>
                     </div>
+                    <p className="text-sm font-medium text-gray-800 leading-snug">{modalTitle}</p>
                   </div>
-                  {modalAnalysis.objectiveScores.map((os) => (
-                    <div
-                      key={os.objectiveId}
-                      className="bg-gray-50 rounded-lg border border-gray-100 p-4"
-                    >
-                      <div className="flex items-center justify-between mb-1.5">
-                        <h3 className="text-xs font-medium text-gray-700">
-                          {os.objectiveTitle}
-                        </h3>
-                        <span
-                          className={`text-xs font-bold ${
-                            os.overallScore >= 7
-                              ? "text-indigo-600"
-                              : os.overallScore >= 4
-                              ? "text-amber-500"
-                              : "text-red-500"
-                          }`}
-                        >
-                          {os.overallScore.toFixed(1)}
-                        </span>
-                      </div>
-                      <Markdown className="text-xs text-gray-500">
-                        {os.reasoning}
-                      </Markdown>
+
+                  {/* Summary */}
+                  {modalAnalysis.summary && (
+                    <div className="bg-indigo-50 rounded-xl px-3 py-2.5 text-xs text-indigo-700 leading-relaxed">
+                      {modalAnalysis.summary}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Per-objective breakdown */}
+                  <div className="space-y-2">
+                    {modalAnalysis.objectiveScores.map((os) => {
+                      const obj = objectives.find((o) => o.id === os.objectiveId);
+                      const desc = obj?.description || os.objectiveDescription;
+                      return (
+                        <div key={os.objectiveId} className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-gray-700 truncate">{os.objectiveTitle}</p>
+                              {desc && <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{desc}</p>}
+                            </div>
+                            <span className={`text-sm font-bold font-mono shrink-0 ${
+                              os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"
+                            }`}>
+                              {os.overallScore.toFixed(1)}
+                            </span>
+                          </div>
+                          {os.reasoning && (
+                            <p className="text-[11px] text-gray-500">{os.reasoning}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
                   {modalAnalysis.risks.length > 0 && (
                     <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
                       <span className="font-medium">風險：</span>
@@ -699,30 +705,32 @@ export default function HomePage() {
                       </div>
 
                       {isExpanded && (
-                        <div className="px-4 pb-4 pt-1 border-t border-gray-50 space-y-3">
-                          {idea.analysis!.objectiveScores.map((os) => (
-                            <div key={os.objectiveId}>
-                              <div className="flex items-center justify-between mb-1">
-                                <p className="text-xs font-medium text-gray-600">
-                                  {os.objectiveTitle}
-                                </p>
-                                <span
-                                  className={`text-xs font-bold ${
-                                    os.overallScore >= 7
-                                      ? "text-indigo-600"
-                                      : os.overallScore >= 4
-                                      ? "text-amber-500"
-                                      : "text-red-500"
-                                  }`}
-                                >
+                        <div className="px-4 pb-4 pt-2 border-t border-gray-50 space-y-2">
+                          {/* Summary */}
+                          {idea.analysis!.summary && (
+                            <p className="text-xs text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5 leading-relaxed">
+                              {idea.analysis!.summary}
+                            </p>
+                          )}
+                          {/* Per-objective */}
+                          {idea.analysis!.objectiveScores.map((os) => {
+                            const obj = objectives.find((o) => o.id === os.objectiveId);
+                            const desc = obj?.description || os.objectiveDescription;
+                            return (
+                              <div key={os.objectiveId} className="flex items-start gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-gray-600 truncate">{os.objectiveTitle}</p>
+                                  {desc && <p className="text-[11px] text-gray-400 leading-snug">{desc}</p>}
+                                  {os.reasoning && <p className="text-[11px] text-gray-500 mt-0.5">{os.reasoning}</p>}
+                                </div>
+                                <span className={`text-xs font-bold font-mono shrink-0 mt-0.5 ${
+                                  os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"
+                                }`}>
                                   {os.overallScore.toFixed(1)}
                                 </span>
                               </div>
-                              <Markdown className="text-xs text-gray-500">
-                                {os.reasoning}
-                              </Markdown>
-                            </div>
-                          ))}
+                            );
+                          })}
                           <div className="flex gap-3 pt-1 border-t border-gray-50">
                             <button
                               onClick={() => archiveIdea(idea)}

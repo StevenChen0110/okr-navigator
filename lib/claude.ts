@@ -345,20 +345,22 @@ const IDEA_SYSTEM_PROMPT = `You are an OKR decision navigator. Given a user's Ob
 
 Output ONLY valid JSON matching this exact schema:
 {
+  "summary": "string (1-2 sentences overall verdict — the most important conclusion the user needs to know)",
   "objectiveScores": [
     {
       "objectiveId": "string",
       "objectiveTitle": "string",
+      "objectiveDescription": "string (if the objective has no user description, write a concise 1-line explanation of what this objective means, ≤20 chars; if user provided a description, copy it verbatim here)",
       "overallScore": number (0-10, how much this idea helps achieve this Objective),
       "keyResultScores": [
         {
           "keyResultId": "string",
           "keyResultTitle": "string",
           "score": number (0-10),
-          "reasoning": "string (1-2 sentences)"
+          "reasoning": "string (≤15 Chinese characters — the single most critical point only)"
         }
       ],
-      "reasoning": "string (2-3 sentences explaining the O-level score)"
+      "reasoning": "string (≤15 Chinese characters — the single most critical point explaining this objective's score)"
     }
   ],
   "finalScore": number (0-10, weighted average priority across all objectives),
@@ -373,7 +375,7 @@ Scoring guide:
 - 7-8: Strong contribution
 - 9-10: This idea is central to achieving the objective
 
-When progress context is provided, reference the current completion % in your reasoning and adjust urgency accordingly — an idea that moves a lagging KR forward should score higher. The finalScore should reflect overall priority considering all objectives together. Weigh objectives equally unless context suggests otherwise. Output ONLY the JSON object, no markdown fences.`;
+When progress context is provided, adjust urgency accordingly — an idea that moves a lagging KR forward should score higher. The finalScore should reflect overall priority considering all objectives together. Weigh objectives equally unless context suggests otherwise. Output ONLY the JSON object, no markdown fences.`;
 
 export async function analyzeIdea(
   apiKey: string,
