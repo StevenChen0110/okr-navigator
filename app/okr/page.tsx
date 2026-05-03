@@ -81,7 +81,7 @@ function GoalForm({
 
   const validKrCount = form.krs.filter((k) => k.trim()).length;
   const canSave = form.title.trim() && validKrCount > 0 && !saving;
-  const hasAdvanced = form.description || form.motivation || form.expectedOutcome || form.deadline || form.groupId;
+  const hasAdvanced = form.description || form.motivation || form.expectedOutcome || form.deadline;
 
   return (
     <div className="space-y-3">
@@ -95,7 +95,7 @@ function GoalForm({
         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-gray-500 mr-1">重要度</span>
         {([1, 2, 3] as Priority[]).map((p) => (
           <button key={p} onClick={() => setForm({ ...form, priority: p })}
@@ -105,6 +105,22 @@ function GoalForm({
             {p}
           </button>
         ))}
+        {groups.length > 0 && (
+          <>
+            <span className="text-xs text-gray-300">|</span>
+            <span className="text-xs text-gray-500">群組</span>
+            <button onClick={() => setForm({ ...form, groupId: "" })}
+              className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                form.groupId === "" ? "bg-gray-800 text-white border-gray-800" : "border-gray-200 text-gray-400 hover:border-gray-300"
+              }`}>無</button>
+            {groups.map((g) => (
+              <button key={g.id} onClick={() => setForm({ ...form, groupId: g.id })}
+                className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                  form.groupId === g.id ? "bg-gray-800 text-white border-gray-800" : "border-gray-200 text-gray-400 hover:border-gray-300"
+                }`}>{g.name}</button>
+            ))}
+          </>
+        )}
       </div>
 
       {/* KR section */}
@@ -164,23 +180,6 @@ function GoalForm({
 
         {showAdvanced && (
           <div className="mt-3 space-y-2 pl-3 border-l-2 border-gray-100">
-            {groups.length > 0 && (
-              <div>
-                <label className="text-[11px] text-gray-400 block mb-1">群組</label>
-                <div className="flex gap-1.5 flex-wrap">
-                  <button onClick={() => setForm({ ...form, groupId: "" })}
-                    className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
-                      form.groupId === "" ? "bg-gray-800 text-white border-gray-800" : "border-gray-200 text-gray-400 hover:border-gray-300"
-                    }`}>無</button>
-                  {groups.map((g) => (
-                    <button key={g.id} onClick={() => setForm({ ...form, groupId: g.id })}
-                      className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
-                        form.groupId === g.id ? "bg-gray-800 text-white border-gray-800" : "border-gray-200 text-gray-400 hover:border-gray-300"
-                      }`}>{g.name}</button>
-                  ))}
-                </div>
-              </div>
-            )}
             <div>
               <label className="text-[11px] text-gray-400 block mb-1">截止時間</label>
               <input type="date" value={form.deadline}
@@ -227,7 +226,7 @@ export default function GoalsPage() {
   const [sortAsc, setSortAsc] = useState(true);
   const [reanalysisTriggered, setReanalysisTriggered] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
-  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user) { requireAuth(); router.replace("/"); return; }
@@ -240,15 +239,18 @@ export default function GoalsPage() {
   }
 
   function metaFromForm(form: FormState, existing?: Objective["meta"]) {
-    return {
-      ...(existing ?? {}),
+    const base = { ...(existing ?? {}) };
+    // Always overwrite these so clearing them actually clears
+    const meta = {
+      ...base,
       priority: form.priority,
-      ...(form.deadline ? { deadline: form.deadline } : {}),
-      ...(form.groupId ? { groupId: form.groupId } : {}),
-      ...(form.description.trim() ? {} : {}), // description goes to objective.description
-      ...(form.motivation.trim() ? { motivation: form.motivation.trim() } : {}),
-      ...(form.expectedOutcome.trim() ? { expectedOutcome: form.expectedOutcome.trim() } : {}),
+      deadline: form.deadline || undefined,
+      groupId: form.groupId || undefined,
+      motivation: form.motivation.trim() || undefined,
+      expectedOutcome: form.expectedOutcome.trim() || undefined,
     };
+    // Remove undefined keys
+    return Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined)) as Objective["meta"];
   }
 
   async function handleAdd() {
@@ -381,89 +383,123 @@ export default function GoalsPage() {
           <p className="text-sm text-gray-400">還沒有目標</p>
           <p className="text-xs text-gray-300 mt-1">設定目標後，AI 才能評估你的想法</p>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {active.map((o) => {
-            const group = groups.find((g) => g.id === o.meta?.groupId);
-            return (
-              <div key={o.id} className="bg-white rounded-xl border border-gray-200">
-                {editingId === o.id ? (
-                  <div className="p-4">
-                    <GoalForm form={form} setForm={setForm} onSave={() => handleUpdate(o.id)} onCancel={() => setEditingId(null)} saving={saving} groups={groups} />
-                  </div>
-                ) : (
-                  <div className="px-4 py-3">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded border shrink-0 ${PRIORITY_CONFIG[o.meta?.priority ?? 2].style}`}>
-                            {PRIORITY_CONFIG[o.meta?.priority ?? 2].label}
-                          </span>
-                          {group && (
-                            <span className="text-xs px-1.5 py-0.5 rounded border border-gray-200 bg-gray-50 text-gray-500 shrink-0">
-                              {group.name}
-                            </span>
-                          )}
-                          {o.meta?.deadline && (
-                            <span className="text-xs px-1.5 py-0.5 rounded border border-amber-100 bg-amber-50 text-amber-600 shrink-0">
-                              {o.meta.deadline}
-                            </span>
-                          )}
-                          <p className="text-sm font-medium text-gray-800 truncate">{o.title}</p>
-                        </div>
-                        {o.description && (
-                          <p className="text-xs text-gray-400 mt-1 leading-snug">{o.description}</p>
-                        )}
-                      </div>
-                      <div className="flex gap-3 shrink-0">
-                        <button onClick={() => startEdit(o)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">編輯</button>
-                        <button onClick={() => handleDelete(o.id)} className="text-xs text-gray-300 hover:text-red-400 transition-colors">刪除</button>
-                      </div>
+      ) : (() => {
+        const renderObj = (o: typeof active[0]) => (
+          <div key={o.id} className="bg-white rounded-xl border border-gray-200">
+            {editingId === o.id ? (
+              <div className="p-4">
+                <GoalForm form={form} setForm={setForm} onSave={() => handleUpdate(o.id)} onCancel={() => setEditingId(null)} saving={saving} groups={groups} />
+              </div>
+            ) : (
+              <div className="px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded border shrink-0 ${PRIORITY_CONFIG[o.meta?.priority ?? 2].style}`}>
+                        {PRIORITY_CONFIG[o.meta?.priority ?? 2].label}
+                      </span>
+                      {o.meta?.deadline && (
+                        <span className="text-xs px-1.5 py-0.5 rounded border border-amber-100 bg-amber-50 text-amber-600 shrink-0">
+                          {o.meta.deadline}
+                        </span>
+                      )}
+                      <p className="text-sm font-medium text-gray-800 truncate">{o.title}</p>
                     </div>
-                    {o.keyResults.length > 0 && (
-                      <div className="mt-2 space-y-1 pl-1">
-                        {o.keyResults.map((kr) => (
-                          <p key={kr.id} className="text-xs text-gray-400 flex items-start gap-1.5">
-                            <span className="text-gray-300 shrink-0 mt-0.5">—</span>
-                            {kr.title}
-                          </p>
-                        ))}
-                      </div>
+                    {o.description && (
+                      <p className="text-xs text-gray-400 mt-1 leading-snug">{o.description}</p>
                     )}
+                  </div>
+                  <div className="flex gap-3 shrink-0">
+                    <button onClick={() => startEdit(o)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">編輯</button>
+                    <button onClick={() => handleDelete(o.id)} className="text-xs text-gray-300 hover:text-red-400 transition-colors">刪除</button>
+                  </div>
+                </div>
+                {o.keyResults.length > 0 && (
+                  <div className="mt-2 space-y-1 pl-1">
+                    {o.keyResults.map((kr) => (
+                      <p key={kr.id} className="text-xs text-gray-400 flex items-start gap-1.5">
+                        <span className="text-gray-300 shrink-0 mt-0.5">—</span>
+                        {kr.title}
+                      </p>
+                    ))}
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
+          </div>
+        );
+
+        const groupSections = groups
+          .slice().sort((a, b) => a.priority - b.priority)
+          .map((g) => ({ group: g, objs: active.filter((o) => o.meta?.groupId === g.id) }))
+          .filter((s) => s.objs.length > 0);
+        const ungrouped = active.filter((o) => !o.meta?.groupId);
+        const hasGroupSections = groupSections.length > 0;
+
+        return (
+          <div className="space-y-3">
+            {hasGroupSections ? (
+              <>
+                {groupSections.map(({ group: g, objs }) => {
+                  const collapsed = collapsedGroups.has(g.id);
+                  return (
+                    <div key={g.id} className="space-y-2">
+                      <button
+                        onClick={() => setCollapsedGroups((prev) => {
+                          const next = new Set(prev);
+                          next.has(g.id) ? next.delete(g.id) : next.add(g.id);
+                          return next;
+                        })}
+                        className="flex items-center gap-2 w-full text-left py-0.5"
+                      >
+                        <span className={`text-gray-400 text-xs transition-transform leading-none ${collapsed ? "" : "rotate-90"}`}>›</span>
+                        <span className="text-sm font-semibold text-gray-700">{g.name}</span>
+                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded border ${PRIORITY_CONFIG[g.priority].style}`}>{g.priority}</span>
+                        <span className="text-xs text-gray-400">{objs.length} 個目標</span>
+                      </button>
+                      {!collapsed && (
+                        <div className="space-y-2 pl-3 border-l-2 border-gray-100">
+                          {objs.map(renderObj)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {ungrouped.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-400 font-medium pl-0.5">未分組</p>
+                    {ungrouped.map(renderObj)}
+                  </div>
+                )}
+              </>
+            ) : (
+              active.map(renderObj)
+            )}
+          </div>
+        );
+      })()}
 
       {/* Group management */}
       <div className="space-y-3 pt-2 border-t border-gray-100">
         <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">目標群組</h2>
         <div className="space-y-2">
           {groups.map((g) => (
-            <div key={g.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
-              {editingGroupId === g.id ? (
-                <input
-                  autoFocus
-                  value={g.name}
-                  onChange={(e) => {
-                    const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
-                    setGroups(updated);
-                    saveObjGroups(updated);
-                  }}
-                  onBlur={() => setEditingGroupId(null)}
-                  onKeyDown={(e) => { if (e.key === "Enter") setEditingGroupId(null); }}
-                  className="flex-1 text-sm border-b border-gray-300 focus:outline-none focus:border-indigo-500 bg-transparent"
-                />
-              ) : (
-                <span className="flex-1 text-sm text-gray-700">{g.name}</span>
-              )}
+            <div key={g.id} className="bg-white rounded-xl border border-gray-200 px-3 py-2.5 flex items-center gap-2">
+              <input
+                value={g.name}
+                onChange={(e) => {
+                  const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
+                  setGroups(updated);
+                  saveObjGroups(updated);
+                }}
+                className="flex-1 text-sm bg-transparent focus:outline-none text-gray-700 placeholder:text-gray-300"
+                placeholder="群組名稱"
+              />
               <div className="flex items-center gap-1 shrink-0">
                 {([1, 2, 3] as const).map((p) => (
                   <button
                     key={p}
+                    onMouseDown={(e) => { e.preventDefault(); }}
                     onClick={() => {
                       const updated = groups.map((x) => x.id === g.id ? { ...x, priority: p } : x);
                       setGroups(updated);
@@ -475,14 +511,14 @@ export default function GoalsPage() {
                   >{p}</button>
                 ))}
               </div>
-              <button onClick={() => setEditingGroupId(g.id)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">編輯</button>
               <button
+                onMouseDown={(e) => { e.preventDefault(); }}
                 onClick={() => {
                   const updated = groups.filter((x) => x.id !== g.id);
                   setGroups(updated);
                   saveObjGroups(updated);
                 }}
-                className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none shrink-0"
               >×</button>
             </div>
           ))}
