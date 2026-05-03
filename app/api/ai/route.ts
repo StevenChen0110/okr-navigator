@@ -11,12 +11,14 @@ import {
   refineKRTitle,
 } from "@/lib/claude";
 
-export async function POST(req: NextRequest) {
-  const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: "CLAUDE_API_KEY not configured" }, { status: 500 });
-  }
+const ENV_KEYS: Record<string, string | undefined> = {
+  anthropic: process.env.CLAUDE_API_KEY,
+  openai: process.env.OPENAI_API_KEY,
+  gemini: process.env.GEMINI_API_KEY,
+  grok: process.env.GROK_API_KEY,
+};
 
+export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -24,12 +26,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { action, model, language, ...payload } = body as {
+  const { action, model, language, provider: providerRaw, apiKey: apiKeyFromBody, ...payload } = body as {
     action: string;
     model: string;
     language: "zh-TW" | "en";
+    provider?: string;
+    apiKey?: string;
     [key: string]: unknown;
   };
+
+  const provider = (providerRaw ?? "anthropic") as import("@/lib/types").AIProvider;
+  const apiKey = (apiKeyFromBody as string | undefined) || ENV_KEYS[provider];
+  if (!apiKey) {
+    return NextResponse.json({ error: `API key not configured for provider: ${provider}` }, { status: 500 });
+  }
 
   try {
     switch (action) {
@@ -41,6 +51,7 @@ export async function POST(req: NextRequest) {
           payload.objectives as Parameters<typeof analyzeIdea>[5],
           payload.evaluationContext as string | undefined,
           payload.groups as Parameters<typeof analyzeIdea>[7],
+          provider,
         );
         return NextResponse.json(result);
       }
@@ -49,11 +60,12 @@ export async function POST(req: NextRequest) {
           apiKey, model, language,
           payload.krTitle as string,
           payload.objectiveTitle as string,
+          provider,
         );
         return NextResponse.json(result);
       }
       case "refineObjective": {
-        const result = await refineObjective(apiKey, model, language, payload.rawInput as string);
+        const result = await refineObjective(apiKey, model, language, payload.rawInput as string, provider);
         return NextResponse.json(result);
       }
       case "suggestKeyResults": {
@@ -62,6 +74,7 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.objectiveDescription as string | undefined,
           payload.existingKRs as string[] | undefined,
+          provider,
         );
         return NextResponse.json(result);
       }
@@ -71,6 +84,7 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.okrType as "committed" | "aspirational",
           payload.krScores as Array<{ title: string; score: number }>,
+          provider,
         );
         return NextResponse.json(result);
       }
@@ -80,6 +94,7 @@ export async function POST(req: NextRequest) {
           payload.krTitle as string,
           payload.objectiveTitle as string,
           payload.confidence as Parameters<typeof analyzeConfidenceDrop>[5],
+          provider,
         );
         return NextResponse.json(result);
       }
@@ -89,6 +104,7 @@ export async function POST(req: NextRequest) {
           payload.krs as string[],
           payload.objectiveTitle as string,
           payload.timeframe as string,
+          provider,
         );
         return NextResponse.json(result);
       }
@@ -98,6 +114,7 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.currentTitle as string,
           payload.userInstruction as string,
+          provider,
         );
         return NextResponse.json(result);
       }
@@ -106,6 +123,7 @@ export async function POST(req: NextRequest) {
           apiKey, model, language,
           payload.ideaTitle as string,
           payload.objectives as Parameters<typeof clarifyIdea>[4],
+          provider,
         );
         return NextResponse.json(result);
       }

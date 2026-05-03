@@ -1,9 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { complete } from "./llm";
+import type { AIProvider } from "./types";
 import { Objective, ObjGroup, IdeaAnalysis, KRConfidence } from "./types";
-
-function getClient(apiKey: string) {
-  return new Anthropic({ apiKey });
-}
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -44,181 +41,108 @@ function currentDateInstruction(): string {
 // ── Stage 1: Refine one-liner into structured Objective ──────────────────────
 
 export async function refineObjective(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  rawInput: string
+  apiKey: string, model: string, language: "zh-TW" | "en", rawInput: string,
+  provider: AIProvider = "anthropic",
 ): Promise<{ title: string; timeframe: string }> {
-  const client = getClient(apiKey);
-  const message = await client.messages.create({
-    model,
-    max_tokens: 256,
-    system: `You are an OKR coach. The user describes a goal in one sentence. Infer:
+  const text = await complete(provider, apiKey, model, `You are an OKR coach. The user describes a goal in one sentence. Infer:
 - title: a concise, action-oriented Objective title (≤15 words)
 - timeframe: one of "本月", "本季", "半年", "全年"
 
 ${langInstruction(language)}
 Output ONLY valid JSON: {"title":"...","timeframe":"..."}
-No markdown fences.`,
-    messages: [{ role: "user", content: rawInput }],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw));
+No markdown fences.`, rawInput, 256);
+  return JSON.parse(extractJSON(stripFences(text)));
 }
 
 // ── Stage 2: Propose SMART KRs ───────────────────────────────────────────────
 
 export async function suggestKeyResults(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  objectiveTitle: string,
-  objectiveDescription?: string,
-  existingKRs?: string[]
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  objectiveTitle: string, objectiveDescription?: string, existingKRs?: string[],
+  provider: AIProvider = "anthropic",
 ): Promise<string[]> {
-  const client = getClient(apiKey);
   const existing = existingKRs?.length
-    ? `\nExisting KRs (do NOT duplicate): ${existingKRs.map((k) => `"${k}"`).join(", ")}`
-    : "";
-  const message = await client.messages.create({
-    model,
-    max_tokens: 512,
-    system: `You are an OKR expert. Suggest 3-5 Key Results for the given Objective.
+    ? `\nExisting KRs (do NOT duplicate): ${existingKRs.map((k) => `"${k}"`).join(", ")}` : "";
+  const text = await complete(provider, apiKey, model, `You are an OKR expert. Suggest 3-5 Key Results for the given Objective.
 Each KR should describe an observable end state — what will be clearly true when the objective is achieved.
 Use plain, concrete language. Prefer patterns like "不再需要手動做 X" or "從 A 狀態變成 B 狀態".
 Do NOT include deadlines or verbose metric formulas in the KR title. Keep each KR to one sentence.
 ${currentDateInstruction()}
 ${langInstruction(language)}
 Output ONLY a JSON array of strings. No markdown fences.`,
-    messages: [
-      {
-        role: "user",
-        content: `Objective: ${objectiveTitle}${objectiveDescription ? `\nContext: ${objectiveDescription}` : ""}${existing}`,
-      },
-    ],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw)) as string[];
+    `Objective: ${objectiveTitle}${objectiveDescription ? `\nContext: ${objectiveDescription}` : ""}${existing}`, 512);
+  return JSON.parse(extractJSON(stripFences(text))) as string[];
 }
 
 // ── Stage 2: Convert user-written KRs to SMART format ────────────────────────
 
 export async function convertAllToSMART(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  krs: string[],
-  objectiveTitle: string,
-  timeframe: string
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  krs: string[], objectiveTitle: string, timeframe: string,
+  provider: AIProvider = "anthropic",
 ): Promise<string[]> {
-  const client = getClient(apiKey);
-  const message = await client.messages.create({
-    model,
-    max_tokens: 768,
-    system: `You are an OKR coach. Convert each Key Result to SMART format (specific, measurable, time-bound).
+  const text = await complete(provider, apiKey, model, `You are an OKR coach. Convert each Key Result to SMART format (specific, measurable, time-bound).
 Keep the user's original intent. Add numbers or deadlines only if missing. Use the timeframe hint if no deadline is specified.
 ${currentDateInstruction()}
 ${langInstruction(language)}
 Output ONLY a JSON array of strings in the same order as input. No markdown fences.`,
-    messages: [
-      {
-        role: "user",
-        content: `Objective: ${objectiveTitle}\nTimeframe: ${timeframe}\nKRs to convert:\n${JSON.stringify(krs)}`,
-      },
-    ],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw)) as string[];
+    `Objective: ${objectiveTitle}\nTimeframe: ${timeframe}\nKRs to convert:\n${JSON.stringify(krs)}`, 768);
+  return JSON.parse(extractJSON(stripFences(text))) as string[];
 }
 
 // ── Confidence: Analyze why confidence dropped ───────────────────────────────
 
 export async function analyzeConfidenceDrop(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  krTitle: string,
-  objectiveTitle: string,
-  confidence: KRConfidence
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  krTitle: string, objectiveTitle: string, confidence: KRConfidence,
+  provider: AIProvider = "anthropic",
 ): Promise<string> {
-  const client = getClient(apiKey);
   const levelMap = {
     "at-risk": "at-risk (struggling but might still achieve)",
     "needs-rethink": "needs rethink (unlikely to achieve)",
   };
-  const message = await client.messages.create({
-    model,
-    max_tokens: 300,
-    system: `You are an OKR coach. The user marked a KR as "${levelMap[confidence as keyof typeof levelMap]}". Give a 2-3 sentence response:
+  return complete(provider, apiKey, model, `You are an OKR coach. The user marked a KR as "${levelMap[confidence as keyof typeof levelMap]}". Give a 2-3 sentence response:
 1. Ask whether the issue is execution difficulty or the KR itself is no longer suitable
 2. Suggest one concrete next step based on the confidence level
 Keep it practical and direct. ${langInstruction(language)}`,
-    messages: [
-      {
-        role: "user",
-        content: `Objective: ${objectiveTitle}\nKR: ${krTitle}`,
-      },
-    ],
-  });
-  return (message.content[0] as { type: string; text: string }).text.trim();
+    `Objective: ${objectiveTitle}\nKR: ${krTitle}`, 300);
 }
 
 // ── Quarter scoring: Get AI recommendation ───────────────────────────────────
 
 export async function getQuarterRecommendation(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  objectiveTitle: string,
-  okrType: "committed" | "aspirational",
-  krScores: Array<{ title: string; score: number }>
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  objectiveTitle: string, okrType: "committed" | "aspirational",
+  krScores: Array<{ title: string; score: number }>,
+  provider: AIProvider = "anthropic",
 ): Promise<{ verdict: "complete" | "continue" | "reset"; reasoning: string }> {
-  const client = getClient(apiKey);
   const typeLabel = okrType === "committed" ? "committed" : "aspirational";
   const avgScore = krScores.reduce((s, k) => s + k.score, 0) / krScores.length;
-  const message = await client.messages.create({
-    model,
-    max_tokens: 400,
-    system: `You are an OKR coach. Based on the quarterly scores, give a recommendation.
+  const text = await complete(provider, apiKey, model, `You are an OKR coach. Based on the quarterly scores, give a recommendation.
 For committed OKRs: avg ≥ 0.9 → "complete", 0.5-0.9 → "continue", < 0.5 → "reset"
 For aspirational OKRs: avg ≥ 0.7 → "complete", 0.4-0.7 → "continue", < 0.4 → "reset"
 ${langInstruction(language)}
 Output ONLY valid JSON: {"verdict":"complete"|"continue"|"reset","reasoning":"2-3 sentences explaining why and what to do next"}
 No markdown fences.`,
-    messages: [
-      {
-        role: "user",
-        content: `Objective: ${objectiveTitle}\nType: ${typeLabel}\nAverage score: ${avgScore.toFixed(2)}\nKR scores:\n${krScores.map((k) => `- ${k.title}: ${k.score.toFixed(1)}`).join("\n")}`,
-      },
-    ],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw));
+    `Objective: ${objectiveTitle}\nType: ${typeLabel}\nAverage score: ${avgScore.toFixed(2)}\nKR scores:\n${krScores.map((k) => `- ${k.title}: ${k.score.toFixed(1)}`).join("\n")}`, 400);
+  return JSON.parse(extractJSON(stripFences(text)));
 }
 
 // ── KR Metric Parsing ────────────────────────────────────────────────────────
 
 export async function parseKRMetrics(
-  apiKey: string,
-  model: string,
-  krTitle: string
+  apiKey: string, model: string, krTitle: string,
+  provider: AIProvider = "anthropic",
 ): Promise<{ metricName: string; targetValue: number; unit: string; deadline: string | null }> {
-  const client = getClient(apiKey);
-  const message = await client.messages.create({
-    model,
-    max_tokens: 200,
-    system: `You are an OKR analyst. Extract the measurable metric from a SMART Key Result.
+  const text = await complete(provider, apiKey, model, `You are an OKR analyst. Extract the measurable metric from a SMART Key Result.
 ${currentDateInstruction()}
 Output ONLY valid JSON: {"metricName":"...","targetValue":number,"unit":"...","deadline":"YYYY-MM-DD or null"}
 - metricName: short noun phrase for what is tracked (≤6 words)
 - targetValue: the numeric goal
 - unit: unit of measurement (e.g. 個, 本, %, 小時, sessions)
 - deadline: YYYY-MM-DD if mentioned, else null
-No markdown fences.`,
-    messages: [{ role: "user", content: krTitle }],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw));
+No markdown fences.`, krTitle, 200);
+  return JSON.parse(extractJSON(stripFences(text)));
 }
 
 // ── KR Classification ────────────────────────────────────────────────────────
@@ -233,17 +157,11 @@ export interface KRClassification {
 }
 
 export async function classifyKR(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  krTitle: string,
-  objectiveTitle: string
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  krTitle: string, objectiveTitle: string,
+  provider: AIProvider = "anthropic",
 ): Promise<KRClassification> {
-  const client = getClient(apiKey);
-  const message = await client.messages.create({
-    model,
-    max_tokens: 300,
-    system: `You are an OKR analyst. Given a Key Result title and its parent Objective, classify the KR into one of three types and extract measurement details.
+  const text = await complete(provider, apiKey, model, `You are an OKR analyst. Given a Key Result title and its parent Objective, classify the KR into one of three types and extract measurement details.
 
 KR Types:
 - "milestone": binary done/not-done, no tracking number needed (e.g. 取得證照, 完成上線, 發布產品, 通過考試)
@@ -263,61 +181,34 @@ Output ONLY valid JSON:
   "incrementPerTask": number (for cumulative: units per task, e.g. 1; for others: 1)
 }
 No markdown fences.`,
-    messages: [
-      {
-        role: "user",
-        content: `Objective: ${objectiveTitle}\nKR: ${krTitle}`,
-      },
-    ],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw)) as KRClassification;
+    `Objective: ${objectiveTitle}\nKR: ${krTitle}`, 300);
+  return JSON.parse(extractJSON(stripFences(text))) as KRClassification;
 }
 
 // ── KR Title Refinement ──────────────────────────────────────────────────────
 
 export async function refineKRTitle(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  objectiveTitle: string,
-  currentTitle: string,
-  userInstruction: string
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  objectiveTitle: string, currentTitle: string, userInstruction: string,
+  provider: AIProvider = "anthropic",
 ): Promise<string> {
-  const client = getClient(apiKey);
-  const message = await client.messages.create({
-    model,
-    max_tokens: 200,
-    system: `You are an OKR coach. The user has a Key Result and wants to refine its wording based on their instruction.
+  return complete(provider, apiKey, model, `You are an OKR coach. The user has a Key Result and wants to refine its wording based on their instruction.
 Keep the SMART properties (specific, measurable, time-bound) intact. Apply only what the user asks for.
 ${currentDateInstruction()}
 ${langInstruction(language)}
 Output ONLY the revised KR title as plain text. No quotes, no markdown.`,
-    messages: [
-      {
-        role: "user",
-        content: `Objective: ${objectiveTitle}\nCurrent KR: ${currentTitle}\nUser instruction: ${userInstruction}`,
-      },
-    ],
-  });
-  return (message.content[0] as { type: string; text: string }).text.trim();
+    `Objective: ${objectiveTitle}\nCurrent KR: ${currentTitle}\nUser instruction: ${userInstruction}`, 200);
 }
 
 // ── Idea Clarification Gate ──────────────────────────────────────────────────
 
 export async function clarifyIdea(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  ideaTitle: string,
-  objectives: Objective[]
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  ideaTitle: string, objectives: Objective[],
+  provider: AIProvider = "anthropic",
 ): Promise<{ shouldClarify: boolean; question: string }> {
-  const client = getClient(apiKey);
   const objList = objectives.map((o) => `- ${o.title}`).join("\n");
-  const message = await client.messages.create({
-    model,
-    max_tokens: 200,
-    system: `You are an OKR coach. A user just typed an idea title. Decide whether you need one clarifying question to score it accurately against their OKRs.
+  const text = await complete(provider, apiKey, model, `You are an OKR coach. A user just typed an idea title. Decide whether you need one clarifying question to score it accurately against their OKRs.
 
 Ask (shouldClarify: true) when ANY of these apply:
 - The title is very short (fewer than 3 meaningful words) and its meaning isn't obvious
@@ -328,15 +219,8 @@ Do NOT ask for self-explanatory, specific titles that clearly map to a domain.
 ${langInstruction(language)}
 Output ONLY valid JSON: {"shouldClarify":true|false,"question":"one focused question, or empty string if false"}
 No markdown fences.`,
-    messages: [
-      {
-        role: "user",
-        content: `Idea: ${ideaTitle}\n\nUser's OKRs:\n${objList}`,
-      },
-    ],
-  });
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  return JSON.parse(extractJSON(raw));
+    `Idea: ${ideaTitle}\n\nUser's OKRs:\n${objList}`, 200);
+  return JSON.parse(extractJSON(stripFences(text)));
 }
 
 // ── Idea Analysis ─────────────────────────────────────────────────────────────
@@ -378,18 +262,12 @@ Scoring guide:
 finalScore must be a weighted average: weight = objective_priority_weight × group_priority_weight (both use P1=3, P2=2, P3=1; no group = group weight 1). Output ONLY the JSON object, no markdown fences.`;
 
 export async function analyzeIdea(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  ideaTitle: string,
-  ideaNotes: string,
-  objectives: Objective[],
-  evaluationContext?: string,
-  groups?: ObjGroup[],
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  ideaTitle: string, ideaNotes: string, objectives: Objective[],
+  evaluationContext?: string, groups?: ObjGroup[],
+  provider: AIProvider = "anthropic",
 ): Promise<IdeaAnalysis> {
-  const client = getClient(apiKey);
   const groupMap = new Map((groups ?? []).map((g) => [g.id, g]));
-
   const okrContext = objectives
     .map((o) => {
       const group = o.meta?.groupId ? groupMap.get(o.meta.groupId) : undefined;
@@ -407,17 +285,12 @@ export async function analyzeIdea(
   const parts = [`Title: ${ideaTitle}`];
   if (ideaNotes.trim()) parts.push(`Additional notes: ${ideaNotes}`);
 
-  const userPrompt = `USER'S OKRs:\n${okrContext}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
-
-  const message = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system: IDEA_SYSTEM_PROMPT + (evaluationContext ?? "") + `\n\n${langInstruction(language)}`,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  const raw = stripFences((message.content[0] as { type: string; text: string }).text.trim());
-  const parsed = JSON.parse(extractJSON(raw)) as Omit<IdeaAnalysis, "analyzedAt">;
-
+  const text = await complete(
+    provider, apiKey, model,
+    IDEA_SYSTEM_PROMPT + (evaluationContext ?? "") + `\n\n${langInstruction(language)}`,
+    `USER'S OKRs:\n${okrContext}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`,
+    4096,
+  );
+  const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<IdeaAnalysis, "analyzedAt">;
   return { ...parsed, analyzedAt: new Date().toISOString() };
 }

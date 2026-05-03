@@ -59,10 +59,14 @@ export function deleteIdea(id: string): void {
 
 // Settings
 export function getSettings(): AppSettings {
-  return load<AppSettings>(KEYS.SETTINGS, {
-    claudeModel: "claude-haiku-4-5-20251001",
-    language: "zh-TW",
-  });
+  const raw = load<Partial<AppSettings> & { claudeModel?: string }>(KEYS.SETTINGS, {});
+  return {
+    language: raw.language ?? "zh-TW",
+    provider: raw.provider ?? "anthropic",
+    model: raw.model ?? raw.claudeModel ?? "claude-haiku-4-5-20251001",
+    apiKeys: raw.apiKeys ?? {},
+    claudeModel: raw.claudeModel,
+  };
 }
 
 export function saveSettings(settings: AppSettings): void {

@@ -3,23 +3,21 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getSettings, saveSettings, getEvaluationProfile, saveEvaluationProfile } from "@/lib/storage";
-import { AppSettings, EvaluationProfile, EvalMode } from "@/lib/types";
+import { AppSettings, EvaluationProfile, EvalMode, AIProvider } from "@/lib/types";
 import { MODE_LABELS, MODE_DESCRIPTIONS, DEFAULT_EVALUATION_PROFILE } from "@/lib/evaluation-prompt";
+import { PROVIDER_LABEL, PROVIDER_MODELS, DEFAULT_MODEL } from "@/lib/llm";
 import { useAuth } from "@/components/AuthProvider";
 
-const MODELS = [
-  { id: "claude-haiku-4-5-20251001", label: "快速模式（Haiku）" },
-  { id: "claude-sonnet-4-6", label: "均衡模式（Sonnet）" },
-  { id: "claude-opus-4-6", label: "深度分析模式（Opus）" },
-];
-
+const PROVIDERS: AIProvider[] = ["anthropic", "openai", "gemini", "grok"];
 
 export default function SettingsPage() {
   const { user, requireAuth } = useAuth();
   const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>({
-    claudeModel: "claude-haiku-4-5-20251001",
     language: "zh-TW",
+    provider: "anthropic",
+    model: "claude-haiku-4-5-20251001",
+    apiKeys: {},
   });
   const [profile, setProfile] = useState<EvaluationProfile>(DEFAULT_EVALUATION_PROFILE);
   const [saved, setSaved] = useState(false);
@@ -37,6 +35,9 @@ export default function SettingsPage() {
     setTimeout(() => setSaved(false), 2000);
   }
 
+  const activeProvider = settings.provider ?? "anthropic";
+  const models = PROVIDER_MODELS[activeProvider] ?? [];
+
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
       <div>
@@ -44,24 +45,64 @@ export default function SettingsPage() {
         <p className="text-sm text-gray-500">AI 模型與評估方式</p>
       </div>
 
-      {/* AI Model */}
+      {/* AI Provider + Model */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
         <p className="text-sm font-medium text-gray-700">AI 模型</p>
-        <div className="space-y-2">
+
+        {/* Provider tabs */}
+        <div className="flex gap-1.5 flex-wrap">
+          {PROVIDERS.map((p) => (
+            <button key={p}
+              onClick={() => setSettings((s) => ({
+                ...s,
+                provider: p,
+                model: DEFAULT_MODEL[p],
+              }))}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                activeProvider === p
+                  ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                  : "border-gray-200 text-gray-500 hover:border-gray-300"
+              }`}>
+              {PROVIDER_LABEL[p]}
+            </button>
+          ))}
+        </div>
+
+        {/* API Key */}
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-gray-600">
+            {PROVIDER_LABEL[activeProvider]} API Key
+          </label>
+          <input
+            type="password"
+            placeholder="sk-..."
+            value={settings.apiKeys?.[activeProvider] ?? ""}
+            onChange={(e) => setSettings((s) => ({
+              ...s,
+              apiKeys: { ...s.apiKeys, [activeProvider]: e.target.value },
+            }))}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="text-[10px] text-gray-400">API Key 僅儲存在本機，不會上傳伺服器</p>
+        </div>
+
+        {/* Model dropdown */}
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-gray-600">模型</label>
           <select
-            value={settings.claudeModel}
-            onChange={(e) => setSettings((s) => ({ ...s, claudeModel: e.target.value }))}
+            value={settings.model ?? DEFAULT_MODEL[activeProvider]}
+            onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            {MODELS.map((m) => (
+            {models.map((m) => (
               <option key={m.id} value={m.id}>{m.label}</option>
             ))}
           </select>
-          <p className="text-xs text-gray-400">建議一般使用均衡模式</p>
         </div>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">AI 回應語言</label>
+        {/* Language */}
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-gray-600">AI 回應語言</label>
           <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
             {(["zh-TW", "en"] as const).map((lang) => (
               <button key={lang}
