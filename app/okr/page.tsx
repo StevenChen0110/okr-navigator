@@ -17,15 +17,19 @@ const PRIORITY_CONFIG = {
 
 type Priority = 1 | 2 | 3;
 
+const TIMEFRAMES = ["本月", "本季", "半年", "全年"] as const;
+type Timeframe = typeof TIMEFRAMES[number];
+
 interface FormState {
   title: string;
   description: string;
   priority: Priority;
+  timeframe: Timeframe;
   krs: string[];
 }
 
 function emptyForm(): FormState {
-  return { title: "", description: "", priority: 2, krs: [] };
+  return { title: "", description: "", priority: 2, timeframe: "本季", krs: [] };
 }
 
 function GoalForm({
@@ -102,7 +106,7 @@ function GoalForm({
         rows={2}
         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none"
       />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-gray-500 mr-1">重要度</span>
         {([1, 2, 3] as Priority[]).map((p) => (
           <button
@@ -115,6 +119,21 @@ function GoalForm({
             }`}
           >
             {p}
+          </button>
+        ))}
+        <span className="text-xs text-gray-300">|</span>
+        <span className="text-xs text-gray-500 mr-1">時間範圍</span>
+        {TIMEFRAMES.map((t) => (
+          <button
+            key={t}
+            onClick={() => setForm({ ...form, timeframe: t })}
+            className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+              form.timeframe === t
+                ? "bg-indigo-50 text-indigo-600 border-indigo-200"
+                : "border-gray-200 text-gray-400 hover:border-gray-300"
+            }`}
+          >
+            {t}
           </button>
         ))}
       </div>
@@ -241,7 +260,7 @@ export default function GoalsPage() {
       keyResults: krsFromForm(form),
       createdAt: new Date().toISOString(),
       status: "active",
-      meta: { priority: form.priority },
+      meta: { priority: form.priority, timeframe: form.timeframe },
     };
     await saveObjective(newObj);
     setObjectives((prev) => [newObj, ...prev]);
@@ -270,7 +289,7 @@ export default function GoalsPage() {
       title: form.title.trim(),
       description: form.description.trim() || undefined,
       keyResults,
-      meta: { ...existing.meta, priority: form.priority },
+      meta: { ...existing.meta, priority: form.priority, timeframe: form.timeframe },
     };
 
     // Detect meaningful changes that affect AI scoring
@@ -307,6 +326,7 @@ export default function GoalsPage() {
       title: o.title,
       description: o.description ?? "",
       priority: o.meta?.priority ?? 2,
+      timeframe: (o.meta?.timeframe as Timeframe) ?? "本季",
       krs: o.keyResults.map((kr) => kr.title),
     });
   }
@@ -401,6 +421,11 @@ export default function GoalsPage() {
                         >
                           {PRIORITY_CONFIG[o.meta?.priority ?? 2].label}
                         </span>
+                        {o.meta?.timeframe && (
+                          <span className="text-xs px-1.5 py-0.5 rounded border border-indigo-100 bg-indigo-50 text-indigo-500 shrink-0 font-medium">
+                            {o.meta.timeframe}
+                          </span>
+                        )}
                         <p className="text-sm font-medium text-gray-800 truncate">{o.title}</p>
                       </div>
                       {o.description && (

@@ -10,6 +10,9 @@ import {
   IdeaKRLink,
   TaskStatus,
   IdeaStatus,
+  EvaluationProfile,
+  EvalMode,
+  EvalPriority,
 } from "@/lib/types";
 import {
   fetchIdeas,
@@ -20,6 +23,14 @@ import {
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
+import { getEvaluationProfile, saveEvaluationProfile } from "@/lib/storage";
+import {
+  buildEvaluationPrompt,
+  DEFAULT_EVALUATION_PROFILE,
+  MODE_LABELS,
+  MODE_DESCRIPTIONS,
+  PRIORITY_LABELS,
+} from "@/lib/evaluation-prompt";
 
 
 type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
@@ -32,29 +43,6 @@ interface SuggestedLink {
   score: number;
 }
 
-function buildProgressContext(objectives: Objective[]): string {
-  return objectives
-    .map((o) => {
-      const krLines = o.keyResults
-        .map((kr) => {
-          const pct =
-            kr.krType === "milestone"
-              ? kr.currentValue && kr.currentValue >= 1
-                ? 100
-                : 0
-              : kr.targetValue && kr.targetValue > 0
-              ? Math.min(
-                  100,
-                  Math.round(((kr.currentValue ?? 0) / kr.targetValue) * 100)
-                )
-              : undefined;
-          return `    - ${kr.title}${pct !== undefined ? ` (${pct}% complete)` : ""}`;
-        })
-        .join("\n");
-      return `${o.title}:\n${krLines}`;
-    })
-    .join("\n\n");
-}
 
 const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   todo: "待辦",
@@ -77,11 +65,12 @@ export default function HomePage() {
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
   const autoReanalyzeDone = useRef(false);
 
+  const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(DEFAULT_EVALUATION_PROFILE);
+  const [showEvalSettings, setShowEvalSettings] = useState(false);
+
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
   const [modalTitle, setModalTitle] = useState("");
-  const [modalWhy, setModalWhy] = useState("");
-  const [modalOutcome, setModalOutcome] = useState("");
   const [modalNotes, setModalNotes] = useState("");
   const [modalDetailsOpen, setModalDetailsOpen] = useState(false);
   const [modalAnalysis, setModalAnalysis] = useState<IdeaAnalysis | null>(null);
@@ -91,6 +80,11 @@ export default function HomePage() {
   const [clarifyQuestion, setClarifyQuestion] = useState("");
   const [clarifyAnswer, setClarifyAnswer] = useState("");
   const [pendingInboxId, setPendingInboxId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const profile = getEvaluationProfile();
+    setEvalProfile(profile);
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -116,17 +110,16 @@ export default function HomePage() {
         autoReanalyzeDone.current = true;
         setReanalyzingIds(new Set(toReanalyze.map((i) => i.id)));
 
+        const currentProfile = getEvaluationProfile();
         (async () => {
           for (const item of toReanalyze) {
             if (cancelled) break;
             try {
               const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
                 ideaTitle: item.title,
-                ideaWhy: "",
-                ideaOutcome: "",
                 ideaNotes: item.description || "",
                 objectives: loadedObjectives,
-                progressContext: buildProgressContext(loadedObjectives),
+                evaluationContext: buildEvaluationPrompt(currentProfile),
               });
               const updated: Idea = { ...item, analysis, needsReanalysis: false };
               await saveIdea(updated);
@@ -149,15 +142,12 @@ export default function HomePage() {
     return () => { cancelled = true; };
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const hasDetails = modalWhy.trim() || modalOutcome.trim() || modalNotes.trim();
-  const isQuickMode = !hasDetails;
+  const isQuickMode = !modalNotes.trim();
 
   function openNewModal() {
     if (!user) { requireAuth(); return; }
     setPendingInboxId(null);
     setModalTitle("");
-    setModalWhy("");
-    setModalOutcome("");
     setModalNotes("");
     setModalDetailsOpen(false);
     setModalAnalysis(null);
@@ -174,8 +164,6 @@ export default function HomePage() {
     if (!user) { requireAuth(); return; }
     setPendingInboxId(item.id);
     setModalTitle(item.title);
-    setModalWhy("");
-    setModalOutcome("");
     setModalNotes("");
     setModalDetailsOpen(false);
     setModalAnalysis(null);
@@ -201,11 +189,9 @@ export default function HomePage() {
       const combinedNotes = [modalNotes, extraNotes].filter(Boolean).join("\n");
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
         ideaTitle: modalTitle,
-        ideaWhy: modalWhy,
-        ideaOutcome: modalOutcome,
         ideaNotes: combinedNotes,
         objectives,
-        progressContext: buildProgressContext(objectives),
+        evaluationContext: buildEvaluationPrompt(evalProfile),
       });
       setModalAnalysis(result);
       const links: SuggestedLink[] = [];
@@ -288,9 +274,7 @@ export default function HomePage() {
       }
     } else {
       const descParts: string[] = [];
-      if (modalWhy.trim()) descParts.push(`為什麼要做：${modalWhy}`);
-      if (modalOutcome.trim()) descParts.push(`預期成效：${modalOutcome}`);
-      if (modalNotes.trim()) descParts.push(`備註：${modalNotes}`);
+      if (modalNotes.trim()) descParts.push(modalNotes.trim());
       const newIdea: Idea = {
         id: uuid(),
         title: modalTitle,
@@ -464,31 +448,17 @@ export default function HomePage() {
                       ›
                     </span>
                     補充說明（選填）
-                    {hasDetails && (
+                    {modalNotes.trim() && (
                       <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />
                     )}
                   </button>
                   {modalDetailsOpen && (
-                    <div className="space-y-2 pl-3 border-l-2 border-gray-100">
-                      <textarea
-                        value={modalWhy}
-                        onChange={(e) => setModalWhy(e.target.value)}
-                        placeholder="為什麼要做？"
-                        rows={2}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none"
-                      />
-                      <textarea
-                        value={modalOutcome}
-                        onChange={(e) => setModalOutcome(e.target.value)}
-                        placeholder="預期成效"
-                        rows={2}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none"
-                      />
+                    <div className="pl-3 border-l-2 border-gray-100">
                       <textarea
                         value={modalNotes}
                         onChange={(e) => setModalNotes(e.target.value)}
-                        placeholder="備註"
-                        rows={2}
+                        placeholder="備註，幫助 AI 更準確判斷"
+                        rows={3}
                         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none"
                       />
                     </div>
@@ -602,6 +572,12 @@ export default function HomePage() {
           <Link href="/okr" className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
             判斷標準
           </Link>
+          <button
+            onClick={() => setShowEvalSettings(true)}
+            className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
+          >
+            評估設定
+          </button>
           <button
             onClick={openNewModal}
             className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
@@ -962,6 +938,90 @@ export default function HomePage() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+
+      {/* Eval settings modal */}
+      {showEvalSettings && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowEvalSettings(false); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-5">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-gray-800">評估設定</p>
+              <button onClick={() => setShowEvalSettings(false)} className="text-gray-300 hover:text-gray-500 text-xl leading-none">×</button>
+            </div>
+
+            {/* Mode */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-500">本季模式</p>
+              <div className="grid grid-cols-3 gap-2">
+                {(["explore", "execute", "sustain"] as EvalMode[]).map((m) => (
+                  <button key={m}
+                    onClick={() => {
+                      const updated = { ...evalProfile, mode: m };
+                      setEvalProfile(updated);
+                      saveEvaluationProfile(updated);
+                    }}
+                    className={`rounded-xl border px-2 py-2.5 text-left transition-all ${
+                      evalProfile.mode === m ? "border-indigo-300 bg-indigo-50" : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <p className={`text-xs font-semibold ${evalProfile.mode === m ? "text-indigo-700" : "text-gray-700"}`}>
+                      {MODE_LABELS[m]}
+                    </p>
+                    <p className="text-[10px] text-gray-400 mt-0.5 leading-snug">{MODE_DESCRIPTIONS[m]}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Priority order */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-500">評分考慮順序（拖拉排序）</p>
+              <div className="space-y-1">
+                {evalProfile.priorities.map((p, i) => (
+                  <div key={p} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                    <span className="text-[10px] text-gray-300 font-mono w-3">{i + 1}</span>
+                    <span className="flex-1 text-xs text-gray-700">{PRIORITY_LABELS[p]}</span>
+                    <div className="flex gap-1">
+                      <button
+                        disabled={i === 0}
+                        onClick={() => {
+                          const next = [...evalProfile.priorities];
+                          [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                          const updated = { ...evalProfile, priorities: next as EvalPriority[] };
+                          setEvalProfile(updated);
+                          saveEvaluationProfile(updated);
+                        }}
+                        className="text-gray-300 hover:text-gray-500 disabled:opacity-20 text-sm px-1"
+                      >↑</button>
+                      <button
+                        disabled={i === evalProfile.priorities.length - 1}
+                        onClick={() => {
+                          const next = [...evalProfile.priorities];
+                          [next[i], next[i + 1]] = [next[i + 1], next[i]];
+                          const updated = { ...evalProfile, priorities: next as EvalPriority[] };
+                          setEvalProfile(updated);
+                          saveEvaluationProfile(updated);
+                        }}
+                        className="text-gray-300 hover:text-gray-500 disabled:opacity-20 text-sm px-1"
+                      >↓</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowEvalSettings(false)}
+              className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+            >
+              完成
+            </button>
+          </div>
         </div>
       )}
     </div>

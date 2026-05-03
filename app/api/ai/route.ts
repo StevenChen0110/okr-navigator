@@ -37,11 +37,8 @@ export async function POST(req: NextRequest) {
         const result = await analyzeIdea(
           apiKey, model, language,
           payload.ideaTitle as string,
-          payload.ideaWhy as string,
-          payload.ideaOutcome as string,
           payload.ideaNotes as string,
-          payload.objectives as Parameters<typeof analyzeIdea>[7],
-          payload.progressContext as string | undefined,
+          payload.objectives as Parameters<typeof analyzeIdea>[5],
           payload.evaluationContext as string | undefined,
         );
         return NextResponse.json(result);

@@ -363,7 +363,7 @@ Output ONLY valid JSON matching this exact schema:
       "reasoning": "string (≤15 Chinese characters — the single most critical point explaining this objective's score)"
     }
   ],
-  "finalScore": number (0-10, weighted average priority across all objectives),
+  "finalScore": number (0-10, weighted average across all objectives — Priority 1 objectives count 3×, Priority 2 count 2×, Priority 3 count 1×),
   "risks": ["string", ...] (list of risks or negative side effects, empty array if none),
   "executionSuggestions": ["string", ...] (2-3 concrete action steps to execute this idea)
 }
@@ -375,18 +375,15 @@ Scoring guide:
 - 7-8: Strong contribution
 - 9-10: This idea is central to achieving the objective
 
-When progress context is provided, adjust urgency accordingly — an idea that moves a lagging KR forward should score higher. The finalScore should reflect overall priority considering all objectives together. Weigh objectives equally unless context suggests otherwise. Output ONLY the JSON object, no markdown fences.`;
+finalScore must be a weighted average where each objective's weight is determined by its Priority field (1=highest importance=weight 3, 2=medium=weight 2, 3=lowest=weight 1). Output ONLY the JSON object, no markdown fences.`;
 
 export async function analyzeIdea(
   apiKey: string,
   model: string,
   language: "zh-TW" | "en",
   ideaTitle: string,
-  ideaWhy: string,
-  ideaOutcome: string,
   ideaNotes: string,
   objectives: Objective[],
-  progressContext?: string,
   evaluationContext?: string,
 ): Promise<IdeaAnalysis> {
   const client = getClient(apiKey);
@@ -394,22 +391,16 @@ export async function analyzeIdea(
   const okrContext = objectives
     .map(
       (o) =>
-        `Objective ID: ${o.id}\nObjective: ${o.title}${o.description ? `\nDescription: ${o.description}` : ""}${o.meta?.timeframe ? `\nTimeframe: ${o.meta.timeframe}` : ""}\nKey Results:\n${o.keyResults
+        `Objective ID: ${o.id}\nObjective: ${o.title}${o.description ? `\nDescription: ${o.description}` : ""}${o.meta?.timeframe ? `\nTimeframe: ${o.meta.timeframe}` : ""}\nPriority: ${o.meta?.priority ?? 2} (1=highest importance, 3=lowest)\nKey Results:\n${o.keyResults
           .map((kr) => `  - KR ID: ${kr.id}\n    KR: ${kr.title}`)
           .join("\n")}`
     )
     .join("\n\n");
 
   const parts = [`Title: ${ideaTitle}`];
-  if (ideaWhy.trim()) parts.push(`Why (motivation): ${ideaWhy}`);
-  if (ideaOutcome.trim()) parts.push(`Expected outcome: ${ideaOutcome}`);
   if (ideaNotes.trim()) parts.push(`Additional notes: ${ideaNotes}`);
 
-  const progressSection = progressContext
-    ? `\n\nCURRENT OKR PROGRESS:\n${progressContext}\nReflect actual progress in urgency and reasoning — ideas that advance lagging KRs should score higher.`
-    : "";
-
-  const userPrompt = `USER'S OKRs:\n${okrContext}${progressSection}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
+  const userPrompt = `USER'S OKRs:\n${okrContext}\n\nIDEA TO ANALYZE:\n${parts.join("\n")}`;
 
   const message = await client.messages.create({
     model,
