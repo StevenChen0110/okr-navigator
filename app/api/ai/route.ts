@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AIProvider } from "@/lib/types";
 import {
   analyzeIdea,
   clarifyIdea,
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
     [key: string]: unknown;
   };
 
-  const provider = (providerRaw ?? "anthropic") as import("@/lib/types").AIProvider;
+  const provider = (providerRaw ?? "anthropic") as AIProvider;
   const apiKey = (apiKeyFromBody as string | undefined) || ENV_KEYS[provider];
   if (!apiKey) {
     return NextResponse.json({ error: `API key not configured for provider: ${provider}` }, { status: 500 });
