@@ -1,4 +1,4 @@
-import { Objective, Idea, AppSettings, EvaluationProfile } from "./types";
+import { Objective, Idea, AppSettings, EvaluationProfile, ObjGroup } from "./types";
 import { DEFAULT_EVALUATION_PROFILE } from "./evaluation-prompt";
 
 const KEYS = {
@@ -6,6 +6,7 @@ const KEYS = {
   IDEAS: "okr_ideas",
   SETTINGS: "okr_settings",
   EVAL_PROFILE: "loco_eval_profile",
+  OBJ_GROUPS: "loco_obj_groups",
 } as const;
 
 function load<T>(key: string, fallback: T): T {
@@ -70,9 +71,19 @@ export function saveSettings(settings: AppSettings): void {
 
 // Evaluation Profile
 export function getEvaluationProfile(): EvaluationProfile {
-  return load<EvaluationProfile>(KEYS.EVAL_PROFILE, DEFAULT_EVALUATION_PROFILE);
+  const raw = load<Partial<EvaluationProfile>>(KEYS.EVAL_PROFILE, {});
+  return { ...DEFAULT_EVALUATION_PROFILE, ...raw };
 }
 
 export function saveEvaluationProfile(profile: EvaluationProfile): void {
   save(KEYS.EVAL_PROFILE, profile);
+}
+
+// Objective Groups
+export function getObjGroups(): ObjGroup[] {
+  return load<ObjGroup[]>(KEYS.OBJ_GROUPS, []);
+}
+
+export function saveObjGroups(groups: ObjGroup[]): void {
+  save(KEYS.OBJ_GROUPS, groups);
 }

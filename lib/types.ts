@@ -33,10 +33,19 @@ export interface IdeaKRLink {
   krId?: string; // optional: absent means linked to the whole objective
 }
 
+export interface ObjGroup {
+  id: string;
+  name: string;
+}
+
 export interface OKRMeta {
   okrType?: "committed" | "aspirational";
   timeframe?: string;
+  deadline?: string;        // ISO date YYYY-MM-DD
   priority?: 1 | 2 | 3;
+  groupId?: string;
+  motivation?: string;
+  expectedOutcome?: string;
 }
 
 export interface Objective {
@@ -108,11 +117,12 @@ export interface AppSettings {
 // ── Evaluation Profile ────────────────────────────────────────────────────────
 
 export type EvalMode = "explore" | "execute" | "sustain";
-export type EvalPriority = "alignment" | "effort" | "speed" | "growth";
 
 export interface EvaluationProfile {
   mode: EvalMode;
-  priorities: EvalPriority[]; // ordered most-important first
+  considerPriority: boolean;  // weight finalScore by objective priority
+  considerDeadline: boolean;  // boost urgency when deadline is near
+  activeGroupIds: string[] | null; // null = all groups; [] = no filter
 }
 
 // ── Habit ─────────────────────────────────────────────────────────────────────

@@ -3,11 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getSettings, saveSettings, getEvaluationProfile, saveEvaluationProfile } from "@/lib/storage";
-import { AppSettings, EvaluationProfile, EvalMode, EvalPriority } from "@/lib/types";
-import {
-  MODE_LABELS, MODE_DESCRIPTIONS,
-  PRIORITY_LABELS, DEFAULT_EVALUATION_PROFILE,
-} from "@/lib/evaluation-prompt";
+import { AppSettings, EvaluationProfile, EvalMode } from "@/lib/types";
+import { MODE_LABELS, MODE_DESCRIPTIONS, DEFAULT_EVALUATION_PROFILE } from "@/lib/evaluation-prompt";
 import { useAuth } from "@/components/AuthProvider";
 
 const MODELS = [
@@ -16,7 +13,6 @@ const MODELS = [
   { id: "claude-opus-4-6", label: "深度分析模式（Opus）" },
 ];
 
-const ALL_PRIORITIES: EvalPriority[] = ["alignment", "effort", "speed", "growth"];
 
 export default function SettingsPage() {
   const { user, requireAuth } = useAuth();
@@ -39,14 +35,6 @@ export default function SettingsPage() {
     saveEvaluationProfile(profile);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  }
-
-  function movePriority(index: number, dir: -1 | 1) {
-    const next = [...profile.priorities];
-    const target = index + dir;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    setProfile((p) => ({ ...p, priorities: next }));
   }
 
   return (
@@ -95,7 +83,7 @@ export default function SettingsPage() {
 
         {/* Mode */}
         <div className="space-y-2">
-          <label className="text-xs text-gray-500 font-medium block">本季模式</label>
+          <label className="text-xs text-gray-500 font-medium block">模式</label>
           <div className="grid grid-cols-3 gap-2">
             {(["explore", "execute", "sustain"] as EvalMode[]).map((m) => (
               <button key={m}
@@ -114,41 +102,33 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Priority order */}
+        {/* Consideration toggles */}
         <div className="space-y-2">
-          <label className="text-xs text-gray-500 font-medium block">評估優先順序（從高到低）</label>
-          <div className="space-y-1.5">
-            {profile.priorities.map((p, i) => (
-              <div key={p}
-                className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
-                <span className="text-xs font-mono text-gray-300 w-4 shrink-0">{i + 1}</span>
-                <span className="text-sm text-gray-700 flex-1">{PRIORITY_LABELS[p]}</span>
-                <div className="flex gap-1 shrink-0">
-                  <button onClick={() => movePriority(i, -1)} disabled={i === 0}
-                    className="w-6 h-6 flex items-center justify-center rounded text-gray-300 hover:text-gray-600 disabled:opacity-20 transition-colors text-xs">
-                    ↑
-                  </button>
-                  <button onClick={() => movePriority(i, 1)} disabled={i === profile.priorities.length - 1}
-                    className="w-6 h-6 flex items-center justify-center rounded text-gray-300 hover:text-gray-600 disabled:opacity-20 transition-colors text-xs">
-                    ↓
-                  </button>
-                </div>
-              </div>
+          <label className="text-xs text-gray-500 font-medium block">評分參考</label>
+          <div className="space-y-2">
+            {([
+              { key: "considerPriority" as const, label: "重要度", desc: "P1 目標權重 3×，P2 為 2×，P3 為 1×" },
+              { key: "considerDeadline" as const, label: "截止時間", desc: "30 天內到期的目標優先度提升" },
+            ] as const).map(({ key, label, desc }) => (
+              <button key={key}
+                onClick={() => setProfile((p) => ({ ...p, [key]: !p[key] }))}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
+                  profile[key] ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                }`}
+              >
+                <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                  profile[key] ? "bg-indigo-500 border-indigo-500" : "border-gray-300"
+                }`}>
+                  {profile[key] && <span className="text-white text-[10px] font-bold">✓</span>}
+                </span>
+                <span>
+                  <span className={`text-xs font-medium block ${profile[key] ? "text-indigo-700" : "text-gray-700"}`}>{label}</span>
+                  <span className="text-[10px] text-gray-400">{desc}</span>
+                </span>
+              </button>
             ))}
           </div>
-          <p className="text-[10px] text-gray-400">順序影響 AI 在多個因素衝突時的取捨方式</p>
         </div>
-
-        {/* Preview */}
-        <details className="group">
-          <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 list-none flex items-center gap-1">
-            <span className="group-open:rotate-90 transition-transform inline-block">›</span>
-            預覽 AI 收到的指令
-          </summary>
-          <pre className="mt-2 text-[10px] text-gray-400 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap leading-relaxed border border-gray-100">
-            {`模式：${MODE_LABELS[profile.mode]}\n優先順序：${profile.priorities.map((p, i) => `${i + 1}. ${PRIORITY_LABELS[p]}`).join("、")}`}
-          </pre>
-        </details>
       </div>
 
       <button onClick={handleSave}

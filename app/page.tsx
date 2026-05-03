@@ -12,7 +12,7 @@ import {
   IdeaStatus,
   EvaluationProfile,
   EvalMode,
-  EvalPriority,
+  ObjGroup,
 } from "@/lib/types";
 import {
   fetchIdeas,
@@ -23,13 +23,12 @@ import {
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, saveEvaluationProfile } from "@/lib/storage";
+import { getEvaluationProfile, saveEvaluationProfile, getObjGroups, saveObjGroups } from "@/lib/storage";
 import {
   buildEvaluationPrompt,
   DEFAULT_EVALUATION_PROFILE,
   MODE_LABELS,
   MODE_DESCRIPTIONS,
-  PRIORITY_LABELS,
 } from "@/lib/evaluation-prompt";
 
 
@@ -66,7 +65,9 @@ export default function HomePage() {
   const autoReanalyzeDone = useRef(false);
 
   const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(DEFAULT_EVALUATION_PROFILE);
+  const [groups, setGroups] = useState<ObjGroup[]>([]);
   const [showEvalSettings, setShowEvalSettings] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -82,8 +83,8 @@ export default function HomePage() {
   const [pendingInboxId, setPendingInboxId] = useState<string | null>(null);
 
   useEffect(() => {
-    const profile = getEvaluationProfile();
-    setEvalProfile(profile);
+    setEvalProfile(getEvaluationProfile());
+    setGroups(getObjGroups());
   }, []);
 
   useEffect(() => {
@@ -956,7 +957,7 @@ export default function HomePage() {
 
             {/* Mode */}
             <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500">本季模式</p>
+              <p className="text-xs font-medium text-gray-500">模式</p>
               <div className="grid grid-cols-3 gap-2">
                 {(["explore", "execute", "sustain"] as EvalMode[]).map((m) => (
                   <button key={m}
@@ -978,40 +979,90 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Priority order */}
+            {/* Consideration toggles */}
             <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500">評分考慮順序（拖拉排序）</p>
-              <div className="space-y-1">
-                {evalProfile.priorities.map((p, i) => (
-                  <div key={p} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
-                    <span className="text-[10px] text-gray-300 font-mono w-3">{i + 1}</span>
-                    <span className="flex-1 text-xs text-gray-700">{PRIORITY_LABELS[p]}</span>
-                    <div className="flex gap-1">
-                      <button
-                        disabled={i === 0}
-                        onClick={() => {
-                          const next = [...evalProfile.priorities];
-                          [next[i - 1], next[i]] = [next[i], next[i - 1]];
-                          const updated = { ...evalProfile, priorities: next as EvalPriority[] };
-                          setEvalProfile(updated);
-                          saveEvaluationProfile(updated);
-                        }}
-                        className="text-gray-300 hover:text-gray-500 disabled:opacity-20 text-sm px-1"
-                      >↑</button>
-                      <button
-                        disabled={i === evalProfile.priorities.length - 1}
-                        onClick={() => {
-                          const next = [...evalProfile.priorities];
-                          [next[i], next[i + 1]] = [next[i + 1], next[i]];
-                          const updated = { ...evalProfile, priorities: next as EvalPriority[] };
-                          setEvalProfile(updated);
-                          saveEvaluationProfile(updated);
-                        }}
-                        className="text-gray-300 hover:text-gray-500 disabled:opacity-20 text-sm px-1"
-                      >↓</button>
-                    </div>
+              <p className="text-xs font-medium text-gray-500">評分參考</p>
+              <div className="space-y-2">
+                {([
+                  { key: "considerPriority" as const, label: "重要度", desc: "P1 目標權重 3×，P2 為 2×，P3 為 1×" },
+                  { key: "considerDeadline" as const, label: "截止時間", desc: "30 天內到期的目標優先度提升" },
+                ] as const).map(({ key, label, desc }) => (
+                  <button key={key}
+                    onClick={() => {
+                      const updated = { ...evalProfile, [key]: !evalProfile[key] };
+                      setEvalProfile(updated);
+                      saveEvaluationProfile(updated);
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
+                      evalProfile[key] ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                    }`}
+                  >
+                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                      evalProfile[key] ? "bg-indigo-500 border-indigo-500" : "border-gray-300"
+                    }`}>
+                      {evalProfile[key] && <span className="text-white text-[10px] font-bold">✓</span>}
+                    </span>
+                    <span>
+                      <span className={`text-xs font-medium block ${evalProfile[key] ? "text-indigo-700" : "text-gray-700"}`}>{label}</span>
+                      <span className="text-[10px] text-gray-400">{desc}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Group management */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-500">目標群組</p>
+              <div className="space-y-1.5">
+                {groups.map((g) => (
+                  <div key={g.id} className="flex items-center gap-2">
+                    <input
+                      value={g.name}
+                      onChange={(e) => {
+                        const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
+                        setGroups(updated);
+                        saveObjGroups(updated);
+                      }}
+                      className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      onClick={() => {
+                        const updated = groups.filter((x) => x.id !== g.id);
+                        setGroups(updated);
+                        saveObjGroups(updated);
+                      }}
+                      className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none px-1"
+                    >×</button>
                   </div>
                 ))}
+                <div className="flex gap-2">
+                  <input
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing && newGroupName.trim()) {
+                        const updated = [...groups, { id: uuid(), name: newGroupName.trim() }];
+                        setGroups(updated);
+                        saveObjGroups(updated);
+                        setNewGroupName("");
+                      }
+                    }}
+                    placeholder="新增群組名稱"
+                    className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    onClick={() => {
+                      if (!newGroupName.trim()) return;
+                      const updated = [...groups, { id: uuid(), name: newGroupName.trim() }];
+                      setGroups(updated);
+                      saveObjGroups(updated);
+                      setNewGroupName("");
+                    }}
+                    disabled={!newGroupName.trim()}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors"
+                  >新增</button>
+                </div>
               </div>
             </div>
 

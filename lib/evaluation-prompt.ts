@@ -1,8 +1,10 @@
-import { EvaluationProfile, EvalMode, EvalPriority } from "./types";
+import { EvaluationProfile, EvalMode } from "./types";
 
 export const DEFAULT_EVALUATION_PROFILE: EvaluationProfile = {
   mode: "execute",
-  priorities: ["alignment", "effort", "speed", "growth"],
+  considerPriority: true,
+  considerDeadline: false,
+  activeGroupIds: null,
 };
 
 export const MODE_LABELS: Record<EvalMode, string> = {
@@ -15,13 +17,6 @@ export const MODE_DESCRIPTIONS: Record<EvalMode, string> = {
   explore: "快速看到結果，避免過度承諾",
   execute: "高影響力，值得持續投入",
   sustain: "建立系統和習慣，長期複利",
-};
-
-export const PRIORITY_LABELS: Record<EvalPriority, string> = {
-  alignment: "OKR 對齊",
-  effort:    "執行成本",
-  speed:     "速度（快贏）",
-  growth:    "個人成長",
 };
 
 const MODE_PROMPT: Record<EvalMode, string> = {
@@ -39,24 +34,22 @@ const MODE_PROMPT: Record<EvalMode, string> = {
     "De-prioritize one-off tasks with no lasting effect.",
 };
 
-const PRIORITY_PROMPT: Record<EvalPriority, string> = {
-  alignment: "OKR alignment — how directly and strongly this advances key results",
-  effort:    "execution cost — lower time/energy investment is better, all else equal",
-  speed:     "time to visible results — faster feedback loops score higher",
-  growth:    "personal learning value — does this build skills or knowledge that compounds?",
-};
-
 export function buildEvaluationPrompt(profile: EvaluationProfile): string {
-  const modeText = MODE_PROMPT[profile.mode];
-  const priorityLines = profile.priorities
-    .map((p, i) => `  ${i + 1}. ${PRIORITY_PROMPT[p]}`)
-    .join("\n");
+  const lines: string[] = ["\n\nUSER EVALUATION CONTEXT:", MODE_PROMPT[profile.mode]];
 
-  return (
-    `\n\nUSER EVALUATION CONTEXT:\n` +
-    `${modeText}\n` +
-    `When computing scores, weigh these dimensions in this priority order:\n` +
-    `${priorityLines}\n` +
-    `A higher-ranked dimension should outweigh lower-ranked ones when trade-offs exist.`
-  );
+  if (profile.considerPriority) {
+    lines.push(
+      "When computing finalScore, weight objectives by their Priority field: Priority 1 = weight 3×, Priority 2 = weight 2×, Priority 3 = weight 1×."
+    );
+  } else {
+    lines.push("Treat all objectives as equally important when computing finalScore.");
+  }
+
+  if (profile.considerDeadline) {
+    lines.push(
+      "If an objective has a Deadline field, factor in urgency: ideas that advance objectives with deadlines within 30 days should score higher."
+    );
+  }
+
+  return lines.join("\n");
 }
