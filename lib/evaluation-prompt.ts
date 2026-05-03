@@ -14,9 +14,9 @@ export const MODE_LABELS: Record<EvalMode, string> = {
 };
 
 export const MODE_DESCRIPTIONS: Record<EvalMode, string> = {
-  explore: "快速看到結果，避免過度承諾",
-  execute: "高影響力，值得持續投入",
-  sustain: "建立系統和習慣，長期複利",
+  explore: "偏好 2 週內能看到結果的想法，適合還在探索期、不確定方向時",
+  execute: "偏重高影響力、值得持續投入的想法，適合已確定方向在衝刺時",
+  sustain: "偏重能建立習慣或系統的想法，適合追求長期複利效果時",
 };
 
 const MODE_PROMPT: Record<EvalMode, string> = {
