@@ -662,23 +662,36 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Objective filter dropdown — only when there are evaluated ideas */}
+      {/* Objective filter pills — only when there are evaluated ideas */}
       {activeTab === "tasks" && evaluated.length > 0 && objectives.length > 0 && (
-        <select
-          value={selectedObjId ?? ""}
-          onChange={(e) => setSelectedObjId(e.target.value || null)}
-          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="">全部目標</option>
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+          <button
+            onClick={() => setSelectedObjId(null)}
+            className={`shrink-0 text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+              selectedObjId === null
+                ? "bg-gray-800 text-white border-gray-800"
+                : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
+            }`}
+          >
+            全部
+          </button>
           {objectives
             .filter((o) => !o.status || o.status === "active")
             .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
             .map((o) => (
-              <option key={o.id} value={o.id}>
+              <button
+                key={o.id}
+                onClick={() => setSelectedObjId(o.id === selectedObjId ? null : o.id)}
+                className={`shrink-0 text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+                  selectedObjId === o.id
+                    ? "bg-gray-800 text-white border-gray-800"
+                    : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
+                }`}
+              >
                 {o.title}
-              </option>
+              </button>
             ))}
-        </select>
+        </div>
       )}
 
       {/* Tasks tab */}
