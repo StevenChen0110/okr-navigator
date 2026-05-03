@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { getSettings, saveSettings, getEvaluationProfile, saveEvaluationProfile } from "@/lib/storage";
 import { AppSettings, EvaluationProfile, EvalMode, EvalPriority } from "@/lib/types";
 import {
   MODE_LABELS, MODE_DESCRIPTIONS,
   PRIORITY_LABELS, DEFAULT_EVALUATION_PROFILE,
 } from "@/lib/evaluation-prompt";
+import { useAuth } from "@/components/AuthProvider";
 
 const MODELS = [
   { id: "claude-haiku-4-5-20251001", label: "快速模式（Haiku）" },
@@ -17,6 +19,8 @@ const MODELS = [
 const ALL_PRIORITIES: EvalPriority[] = ["alignment", "effort", "speed", "growth"];
 
 export default function SettingsPage() {
+  const { user, requireAuth } = useAuth();
+  const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>({
     claudeModel: "claude-haiku-4-5-20251001",
     language: "zh-TW",
@@ -25,9 +29,10 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    if (!user) { requireAuth(); router.replace("/"); return; }
     setSettings(getSettings());
     setProfile(getEvaluationProfile());
-  }, []);
+  }, [user]);
 
   function handleSave() {
     saveSettings(settings);

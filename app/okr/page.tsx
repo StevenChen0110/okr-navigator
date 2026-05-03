@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective, markAllIdeasForReanalysis } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
+import { useAuth } from "@/components/AuthProvider";
 
 const PRIORITY_CONFIG = {
   1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
@@ -208,6 +210,8 @@ function GoalForm({
 }
 
 export default function GoalsPage() {
+  const { user, requireAuth } = useAuth();
+  const router = useRouter();
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -217,8 +221,9 @@ export default function GoalsPage() {
   const [reanalysisTriggered, setReanalysisTriggered] = useState(false);
 
   useEffect(() => {
+    if (!user) { requireAuth(); router.replace("/"); return; }
     fetchObjectives().then(setObjectives).catch(console.error);
-  }, []);
+  }, [user]);
 
   function krsFromForm(form: FormState): KeyResult[] {
     return form.krs
