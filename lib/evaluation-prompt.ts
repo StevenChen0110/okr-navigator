@@ -3,7 +3,9 @@ import { EvaluationProfile, EvalMode } from "./types";
 export const DEFAULT_EVALUATION_PROFILE: EvaluationProfile = {
   mode: "execute",
   considerPriority: true,
+  priorityWeights: { 1: 3, 2: 2, 3: 1 },
   considerDeadline: false,
+  deadlineUrgencyDays: 30,
   activeGroupIds: null,
 };
 
@@ -37,17 +39,19 @@ const MODE_PROMPT: Record<EvalMode, string> = {
 export function buildEvaluationPrompt(profile: EvaluationProfile): string {
   const lines: string[] = ["\n\nUSER EVALUATION CONTEXT:", MODE_PROMPT[profile.mode]];
 
+  const w = profile.priorityWeights ?? DEFAULT_EVALUATION_PROFILE.priorityWeights;
   if (profile.considerPriority) {
     lines.push(
-      "When computing finalScore, weight objectives by their Priority field: Priority 1 = weight 3×, Priority 2 = weight 2×, Priority 3 = weight 1×."
+      `When computing finalScore, weight objectives by their Priority field: Priority 1 = weight ${w[1]}×, Priority 2 = weight ${w[2]}×, Priority 3 = weight ${w[3]}×.`
     );
   } else {
     lines.push("Treat all objectives as equally important when computing finalScore.");
   }
 
+  const urgencyDays = profile.deadlineUrgencyDays ?? DEFAULT_EVALUATION_PROFILE.deadlineUrgencyDays;
   if (profile.considerDeadline) {
     lines.push(
-      "If an objective has a Deadline field, factor in urgency: ideas that advance objectives with deadlines within 30 days should score higher."
+      `If an objective has a Deadline field, factor in urgency: ideas that advance objectives with deadlines within ${urgencyDays} days should score higher.`
     );
   }
 

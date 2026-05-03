@@ -72,7 +72,11 @@ export function saveSettings(settings: AppSettings): void {
 // Evaluation Profile
 export function getEvaluationProfile(): EvaluationProfile {
   const raw = load<Partial<EvaluationProfile>>(KEYS.EVAL_PROFILE, {});
-  return { ...DEFAULT_EVALUATION_PROFILE, ...raw };
+  return {
+    ...DEFAULT_EVALUATION_PROFILE,
+    ...raw,
+    priorityWeights: { ...DEFAULT_EVALUATION_PROFILE.priorityWeights, ...raw.priorityWeights },
+  };
 }
 
 export function saveEvaluationProfile(profile: EvaluationProfile): void {
