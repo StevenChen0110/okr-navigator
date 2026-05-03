@@ -579,7 +579,7 @@ export default function HomePage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">想法</h1>
+          <h1 className="text-xl font-semibold">任務</h1>
           <p className="text-xs text-gray-400 mt-0.5">AI 幫你判斷哪個最值得做</p>
         </div>
         <div className="flex items-center gap-2">
@@ -916,10 +916,10 @@ export default function HomePage() {
             ) : (
               <div className="text-center py-20">
                 <div className="text-4xl mb-3 text-gray-200">◎</div>
-                <p className="text-sm text-gray-500">還沒有想法</p>
-                <p className="text-xs text-gray-400 mt-1 mb-5">輸入一個想法，AI 會幫你判斷值不值得做</p>
+                <p className="text-sm text-gray-500">還沒有任務</p>
+                <p className="text-xs text-gray-400 mt-1 mb-5">輸入一個任務，AI 會幫你判斷值不值得做</p>
                 <button onClick={openNewModal} className="text-sm text-indigo-500 hover:text-indigo-700">
-                  新增第一個想法 →
+                  新增第一個任務 →
                 </button>
               </div>
             )
@@ -932,7 +932,7 @@ export default function HomePage() {
         <div className="space-y-2">
           {shelved.length === 0 ? (
             <div className="text-center py-20">
-              <p className="text-sm text-gray-400">沒有暫存的想法</p>
+              <p className="text-sm text-gray-400">沒有暫存的任務</p>
             </div>
           ) : (
             shelved.map((item) => (
