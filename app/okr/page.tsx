@@ -353,6 +353,10 @@ export default function GoalsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowGroupModal(true)}
+            className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
+            群組{groups.length > 0 ? ` (${groups.length})` : ""}
+          </button>
           <button onClick={() => setSortAsc((v) => !v)}
             className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
             {sortAsc ? "1→3" : "3→1"}
@@ -479,17 +483,6 @@ export default function GoalsPage() {
           </div>
         );
       })()}
-
-      {/* Group management button */}
-      <div className="pt-1 border-t border-gray-100">
-        <button
-          onClick={() => setShowGroupModal(true)}
-          className="text-xs text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1.5"
-        >
-          <span className="text-base leading-none">⊕</span> 管理群組
-          {groups.length > 0 && <span className="text-gray-300">({groups.length})</span>}
-        </button>
-      </div>
 
       {/* Group modal */}
       {showGroupModal && (
