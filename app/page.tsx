@@ -317,7 +317,7 @@ export default function HomePage() {
 
   async function deleteIdea(item: Idea) {
     if (!user) { requireAuth(); return; }
-    setIdeas((prev) => prev.filter((i) => i.id !== item.id));
+    setIdeas((prev) => prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "deleted" as IdeaStatus } : i)));
     await updateIdeaStatus(item.id, "deleted").catch(console.error);
   }
 
