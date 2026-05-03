@@ -122,9 +122,11 @@ export type EvalMode = "explore" | "execute" | "sustain";
 export interface EvaluationProfile {
   mode: EvalMode;
   considerPriority: boolean;
-  priorityWeights: { 1: number; 2: number; 3: number }; // multiplier per priority level
+  priorityWeights: { 1: number; 2: number; 3: number };
+  considerGroupPriority: boolean;
+  groupPriorityWeights: { 1: number; 2: number; 3: number };
   considerDeadline: boolean;
-  deadlineUrgencyDays: number; // days before deadline when urgency boost activates
+  deadlineUrgencyDays: number;
   activeGroupIds: string[] | null; // null = all groups; [] = no filter
 }
 

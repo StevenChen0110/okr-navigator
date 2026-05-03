@@ -76,6 +76,7 @@ export function getEvaluationProfile(): EvaluationProfile {
     ...DEFAULT_EVALUATION_PROFILE,
     ...raw,
     priorityWeights: { ...DEFAULT_EVALUATION_PROFILE.priorityWeights, ...raw.priorityWeights },
+    groupPriorityWeights: { ...DEFAULT_EVALUATION_PROFILE.groupPriorityWeights, ...raw.groupPriorityWeights },
   };
 }
 

@@ -1065,6 +1065,51 @@ export default function HomePage() {
                   )}
                 </div>
 
+                {/* Group priority toggle + weight inputs */}
+                <div className={`rounded-xl border transition-all ${evalProfile.considerGroupPriority ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white"}`}>
+                  <button
+                    onClick={() => {
+                      const updated = { ...evalProfile, considerGroupPriority: !evalProfile.considerGroupPriority };
+                      setEvalProfile(updated);
+                      saveEvaluationProfile(updated);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+                  >
+                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${evalProfile.considerGroupPriority ? "bg-indigo-500 border-indigo-500" : "border-gray-300"}`}>
+                      {evalProfile.considerGroupPriority && <span className="text-white text-[10px] font-bold">✓</span>}
+                    </span>
+                    <span>
+                      <span className={`text-xs font-medium block ${evalProfile.considerGroupPriority ? "text-indigo-700" : "text-gray-700"}`}>群組重要度</span>
+                      <span className="text-[10px] text-gray-400">依群組優先級加權計分</span>
+                    </span>
+                  </button>
+                  {evalProfile.considerGroupPriority && (
+                    <div className="px-3 pb-3 flex items-center gap-3">
+                      {([1, 2, 3] as const).map((p) => (
+                        <div key={p} className="flex items-center gap-1.5">
+                          <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border shrink-0 ${
+                            p === 1 ? "bg-red-100 text-red-600 border-red-200" :
+                            p === 2 ? "bg-amber-100 text-amber-600 border-amber-200" :
+                            "bg-gray-100 text-gray-500 border-gray-200"
+                          }`}>P{p}</span>
+                          <input
+                            type="number" min="0" max="10" step="0.5"
+                            value={evalProfile.groupPriorityWeights[p]}
+                            onChange={(e) => {
+                              const val = Math.max(0, Math.min(10, parseFloat(e.target.value) || 0));
+                              const updated = { ...evalProfile, groupPriorityWeights: { ...evalProfile.groupPriorityWeights, [p]: val } };
+                              setEvalProfile(updated);
+                              saveEvaluationProfile(updated);
+                            }}
+                            className="w-12 text-center text-xs rounded-lg border border-indigo-200 bg-white px-1 py-1 focus:outline-none focus:border-indigo-400"
+                          />
+                          <span className="text-[11px] text-gray-400">×</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Deadline toggle */}
                 <button
                   onClick={() => {
