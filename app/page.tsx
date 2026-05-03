@@ -23,7 +23,7 @@ import {
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, saveEvaluationProfile, getObjGroups, saveObjGroups } from "@/lib/storage";
+import { getEvaluationProfile, saveEvaluationProfile, getObjGroups } from "@/lib/storage";
 import {
   buildEvaluationPrompt,
   DEFAULT_EVALUATION_PROFILE,
@@ -60,14 +60,13 @@ export default function HomePage() {
   const { user, signOut, openLogin, requireAuth } = useAuth();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
-  const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
+  const [filterValue, setFilterValue] = useState("");
   const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
   const autoReanalyzeDone = useRef(false);
 
   const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(DEFAULT_EVALUATION_PROFILE);
   const [groups, setGroups] = useState<ObjGroup[]>([]);
   const [showEvalSettings, setShowEvalSettings] = useState(false);
-  const [newGroupName, setNewGroupName] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -121,6 +120,7 @@ export default function HomePage() {
                 ideaNotes: item.description || "",
                 objectives: loadedObjectives,
                 evaluationContext: buildEvaluationPrompt(currentProfile),
+                groups: getObjGroups(),
               });
               const updated: Idea = { ...item, analysis, needsReanalysis: false };
               await saveIdea(updated);
@@ -193,6 +193,7 @@ export default function HomePage() {
         ideaNotes: combinedNotes,
         objectives,
         evaluationContext: buildEvaluationPrompt(evalProfile),
+        groups,
       });
       setModalAnalysis(result);
       const links: SuggestedLink[] = [];
@@ -350,6 +351,9 @@ export default function HomePage() {
   const shelved = ideas.filter((i) => i.ideaStatus === "shelved");
   const deleted = ideas.filter((i) => i.ideaStatus === "deleted");
 
+  const selectedObjId = filterValue.startsWith("g:") || filterValue === "" ? null : filterValue;
+  const selectedGroupId = filterValue.startsWith("g:") ? filterValue.slice(2) : null;
+
   const evaluated = ideas
     .filter((i) => (i.ideaStatus ?? "active") === "active" && i.analysis)
     .sort((a, b) => {
@@ -360,6 +364,14 @@ export default function HomePage() {
         const aScore = a.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? 0;
         const bScore = b.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? 0;
         return bScore - aScore;
+      }
+      if (selectedGroupId) {
+        const groupObjIds = new Set(objectives.filter((o) => o.meta?.groupId === selectedGroupId).map((o) => o.id));
+        const avg = (idea: typeof a) => {
+          const scores = idea.analysis!.objectiveScores.filter((os) => groupObjIds.has(os.objectiveId));
+          return scores.length ? scores.reduce((s, os) => s + os.overallScore, 0) / scores.length : 0;
+        };
+        return avg(b) - avg(a);
       }
       return (b.analysis!.finalScore ?? 0) - (a.analysis!.finalScore ?? 0);
     });
@@ -639,35 +651,59 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Objective filter pills — only when there are evaluated ideas */}
+      {/* Objective / group filter dropdown — only when there are evaluated ideas */}
       {activeTab === "tasks" && evaluated.length > 0 && objectives.length > 0 && (
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
-          <button
-            onClick={() => setSelectedObjId(null)}
-            className={`shrink-0 text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
-              selectedObjId === null
-                ? "bg-gray-800 text-white border-gray-800"
-                : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
-            }`}
+        <div className="relative">
+          <select
+            value={filterValue}
+            onChange={(e) => setFilterValue(e.target.value)}
+            className="w-full appearance-none bg-white border border-gray-200 rounded-xl px-3 py-2 pr-8 text-sm text-gray-700 focus:outline-none focus:border-gray-400"
           >
-            全部
-          </button>
-          {objectives
-            .filter((o) => !o.status || o.status === "active")
-            .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
-            .map((o) => (
-              <button
-                key={o.id}
-                onClick={() => setSelectedObjId(o.id === selectedObjId ? null : o.id)}
-                className={`shrink-0 text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
-                  selectedObjId === o.id
-                    ? "bg-gray-800 text-white border-gray-800"
-                    : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
-                }`}
-              >
-                {o.title}
-              </button>
-            ))}
+            <option value="">全部目標</option>
+            {groups.length > 0 && (() => {
+              const activeObjs = objectives.filter((o) => !o.status || o.status === "active");
+              const ungrouped = activeObjs.filter((o) => !o.meta?.groupId);
+              return (
+                <>
+                  {groups
+                    .slice()
+                    .sort((a, b) => a.priority - b.priority)
+                    .map((g) => {
+                      const gObjs = activeObjs
+                        .filter((o) => o.meta?.groupId === g.id)
+                        .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2));
+                      if (gObjs.length === 0) return null;
+                      return (
+                        <optgroup key={g.id} label={`▸ ${g.name}（全組）`}>
+                          <option value={`g:${g.id}`}>— {g.name}（全組）</option>
+                          {gObjs.map((o) => (
+                            <option key={o.id} value={o.id}>　{o.title}</option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
+                  {ungrouped.length > 0 && (
+                    <optgroup label="▸ 未分組">
+                      {ungrouped
+                        .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
+                        .map((o) => (
+                          <option key={o.id} value={o.id}>　{o.title}</option>
+                        ))}
+                    </optgroup>
+                  )}
+                </>
+              );
+            })()}
+            {groups.length === 0 && objectives
+              .filter((o) => !o.status || o.status === "active")
+              .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
+              .map((o) => (
+                <option key={o.id} value={o.id}>{o.title}</option>
+              ))}
+          </select>
+          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
         </div>
       )}
 
@@ -1008,61 +1044,6 @@ export default function HomePage() {
                     </span>
                   </button>
                 ))}
-              </div>
-            </div>
-
-            {/* Group management */}
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500">目標群組</p>
-              <div className="space-y-1.5">
-                {groups.map((g) => (
-                  <div key={g.id} className="flex items-center gap-2">
-                    <input
-                      value={g.name}
-                      onChange={(e) => {
-                        const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
-                        setGroups(updated);
-                        saveObjGroups(updated);
-                      }}
-                      className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      onClick={() => {
-                        const updated = groups.filter((x) => x.id !== g.id);
-                        setGroups(updated);
-                        saveObjGroups(updated);
-                      }}
-                      className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none px-1"
-                    >×</button>
-                  </div>
-                ))}
-                <div className="flex gap-2">
-                  <input
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.nativeEvent.isComposing && newGroupName.trim()) {
-                        const updated = [...groups, { id: uuid(), name: newGroupName.trim() }];
-                        setGroups(updated);
-                        saveObjGroups(updated);
-                        setNewGroupName("");
-                      }
-                    }}
-                    placeholder="新增群組名稱"
-                    className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button
-                    onClick={() => {
-                      if (!newGroupName.trim()) return;
-                      const updated = [...groups, { id: uuid(), name: newGroupName.trim() }];
-                      setGroups(updated);
-                      saveObjGroups(updated);
-                      setNewGroupName("");
-                    }}
-                    disabled={!newGroupName.trim()}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors"
-                  >新增</button>
-                </div>
               </div>
             </div>
 

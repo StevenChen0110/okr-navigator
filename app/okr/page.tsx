@@ -8,7 +8,7 @@ import { Objective, KeyResult, ObjGroup } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective, markAllIdeasForReanalysis } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getObjGroups } from "@/lib/storage";
+import { getObjGroups, saveObjGroups } from "@/lib/storage";
 
 const PRIORITY_CONFIG = {
   1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
@@ -226,6 +226,8 @@ export default function GoalsPage() {
   const [saving, setSaving] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
   const [reanalysisTriggered, setReanalysisTriggered] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) { requireAuth(); router.replace("/"); return; }
@@ -435,6 +437,84 @@ export default function GoalsPage() {
           })}
         </div>
       )}
+
+      {/* Group management */}
+      <div className="space-y-3 pt-2 border-t border-gray-100">
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">目標群組</h2>
+        <div className="space-y-2">
+          {groups.map((g) => (
+            <div key={g.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
+              {editingGroupId === g.id ? (
+                <input
+                  autoFocus
+                  value={g.name}
+                  onChange={(e) => {
+                    const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
+                    setGroups(updated);
+                    saveObjGroups(updated);
+                  }}
+                  onBlur={() => setEditingGroupId(null)}
+                  onKeyDown={(e) => { if (e.key === "Enter") setEditingGroupId(null); }}
+                  className="flex-1 text-sm border-b border-gray-300 focus:outline-none focus:border-indigo-500 bg-transparent"
+                />
+              ) : (
+                <span className="flex-1 text-sm text-gray-700">{g.name}</span>
+              )}
+              <div className="flex items-center gap-1 shrink-0">
+                {([1, 2, 3] as const).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => {
+                      const updated = groups.map((x) => x.id === g.id ? { ...x, priority: p } : x);
+                      setGroups(updated);
+                      saveObjGroups(updated);
+                    }}
+                    className={`text-xs w-6 h-6 rounded border font-medium transition-colors ${
+                      g.priority === p ? PRIORITY_CONFIG[p].style : "border-gray-200 text-gray-300 hover:border-gray-300"
+                    }`}
+                  >{p}</button>
+                ))}
+              </div>
+              <button onClick={() => setEditingGroupId(g.id)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">編輯</button>
+              <button
+                onClick={() => {
+                  const updated = groups.filter((x) => x.id !== g.id);
+                  setGroups(updated);
+                  saveObjGroups(updated);
+                }}
+                className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+              >×</button>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <input
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && newGroupName.trim()) {
+                  const updated = [...groups, { id: uuid(), name: newGroupName.trim(), priority: 2 as const }];
+                  setGroups(updated);
+                  saveObjGroups(updated);
+                  setNewGroupName("");
+                }
+              }}
+              placeholder="新增群組名稱"
+              className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+            />
+            <button
+              onClick={() => {
+                if (!newGroupName.trim()) return;
+                const updated = [...groups, { id: uuid(), name: newGroupName.trim(), priority: 2 as const }];
+                setGroups(updated);
+                saveObjGroups(updated);
+                setNewGroupName("");
+              }}
+              disabled={!newGroupName.trim()}
+              className="text-sm px-4 py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors"
+            >新增</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

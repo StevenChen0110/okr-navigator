@@ -36,6 +36,7 @@ export interface IdeaKRLink {
 export interface ObjGroup {
   id: string;
   name: string;
+  priority: 1 | 2 | 3;
 }
 
 export interface OKRMeta {

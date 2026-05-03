@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
           payload.ideaNotes as string,
           payload.objectives as Parameters<typeof analyzeIdea>[5],
           payload.evaluationContext as string | undefined,
+          payload.groups as Parameters<typeof analyzeIdea>[7],
         );
         return NextResponse.json(result);
       }

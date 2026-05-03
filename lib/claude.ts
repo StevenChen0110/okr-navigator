@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { Objective, IdeaAnalysis, KRConfidence } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence } from "./types";
 
 function getClient(apiKey: string) {
   return new Anthropic({ apiKey });
@@ -363,7 +363,7 @@ Output ONLY valid JSON matching this exact schema:
       "reasoning": "string (≤15 Chinese characters — the single most critical point explaining this objective's score)"
     }
   ],
-  "finalScore": number (0-10, weighted average across all objectives — Priority 1 objectives count 3×, Priority 2 count 2×, Priority 3 count 1×),
+  "finalScore": number (0-10, weighted average — each objective's weight = objective_priority_weight × group_priority_weight, where priority P1/P2/P3 → weight 3/2/1),
   "risks": ["string", ...] (list of risks or negative side effects, empty array if none),
   "executionSuggestions": ["string", ...] (2-3 concrete action steps to execute this idea)
 }
@@ -375,7 +375,7 @@ Scoring guide:
 - 7-8: Strong contribution
 - 9-10: This idea is central to achieving the objective
 
-finalScore must be a weighted average where each objective's weight is determined by its Priority field (1=highest importance=weight 3, 2=medium=weight 2, 3=lowest=weight 1). Output ONLY the JSON object, no markdown fences.`;
+finalScore must be a weighted average: weight = objective_priority_weight × group_priority_weight (both use P1=3, P2=2, P3=1; no group = group weight 1). Output ONLY the JSON object, no markdown fences.`;
 
 export async function analyzeIdea(
   apiKey: string,
@@ -385,16 +385,23 @@ export async function analyzeIdea(
   ideaNotes: string,
   objectives: Objective[],
   evaluationContext?: string,
+  groups?: ObjGroup[],
 ): Promise<IdeaAnalysis> {
   const client = getClient(apiKey);
+  const groupMap = new Map((groups ?? []).map((g) => [g.id, g]));
 
   const okrContext = objectives
-    .map(
-      (o) =>
-        `Objective ID: ${o.id}\nObjective: ${o.title}${o.description ? `\nDescription: ${o.description}` : ""}${o.meta?.timeframe ? `\nTimeframe: ${o.meta.timeframe}` : ""}\nPriority: ${o.meta?.priority ?? 2} (1=highest importance, 3=lowest)\nKey Results:\n${o.keyResults
-          .map((kr) => `  - KR ID: ${kr.id}\n    KR: ${kr.title}`)
-          .join("\n")}`
-    )
+    .map((o) => {
+      const group = o.meta?.groupId ? groupMap.get(o.meta.groupId) : undefined;
+      return (
+        `Objective ID: ${o.id}\nObjective: ${o.title}` +
+        (o.description ? `\nDescription: ${o.description}` : "") +
+        (o.meta?.deadline ? `\nDeadline: ${o.meta.deadline}` : "") +
+        `\nPriority: ${o.meta?.priority ?? 2} (1=highest, 3=lowest)` +
+        (group ? `\nGroup: ${group.name} (Group Priority: ${group.priority}, 1=highest)` : "") +
+        `\nKey Results:\n${o.keyResults.map((kr) => `  - KR ID: ${kr.id}\n    KR: ${kr.title}`).join("\n")}`
+      );
+    })
     .join("\n\n");
 
   const parts = [`Title: ${ideaTitle}`];
