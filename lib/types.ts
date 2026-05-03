@@ -110,9 +110,14 @@ export interface Idea {
   todos?: TodoItem[];
 }
 
+export type AIProvider = "anthropic" | "openai" | "gemini" | "grok";
+
 export interface AppSettings {
-  claudeModel: string;
   language: "zh-TW" | "en";
+  provider: AIProvider;
+  model: string;
+  apiKeys: Partial<Record<AIProvider, string>>;
+  claudeModel?: string; // legacy
 }
 
 // ── Evaluation Profile ────────────────────────────────────────────────────────
