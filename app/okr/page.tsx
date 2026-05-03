@@ -227,6 +227,7 @@ export default function GoalsPage() {
   const [reanalysisTriggered, setReanalysisTriggered] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [showGroupModal, setShowGroupModal] = useState(false);
 
   useEffect(() => {
     if (!user) { requireAuth(); router.replace("/"); return; }
@@ -479,78 +480,100 @@ export default function GoalsPage() {
         );
       })()}
 
-      {/* Group management */}
-      <div className="space-y-3 pt-2 border-t border-gray-100">
-        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">目標群組</h2>
-        <div className="space-y-2">
-          {groups.map((g) => (
-            <div key={g.id} className="bg-white rounded-xl border border-gray-200 px-3 py-2.5 flex items-center gap-2">
-              <input
-                value={g.name}
-                onChange={(e) => {
-                  const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
-                  setGroups(updated);
-                  saveObjGroups(updated);
-                }}
-                className="flex-1 text-sm bg-transparent focus:outline-none text-gray-700 placeholder:text-gray-300"
-                placeholder="群組名稱"
-              />
-              <div className="flex items-center gap-1 shrink-0">
-                {([1, 2, 3] as const).map((p) => (
-                  <button
-                    key={p}
-                    onMouseDown={(e) => { e.preventDefault(); }}
-                    onClick={() => {
-                      const updated = groups.map((x) => x.id === g.id ? { ...x, priority: p } : x);
+      {/* Group management button */}
+      <div className="pt-1 border-t border-gray-100">
+        <button
+          onClick={() => setShowGroupModal(true)}
+          className="text-xs text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1.5"
+        >
+          <span className="text-base leading-none">⊕</span> 管理群組
+          {groups.length > 0 && <span className="text-gray-300">({groups.length})</span>}
+        </button>
+      </div>
+
+      {/* Group modal */}
+      {showGroupModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowGroupModal(false)} />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-800">目標群組</h2>
+              <button onClick={() => setShowGroupModal(false)} className="text-gray-300 hover:text-gray-500 text-xl leading-none">×</button>
+            </div>
+
+            <div className="space-y-2">
+              {groups.map((g) => (
+                <div key={g.id} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5">
+                  <input
+                    value={g.name}
+                    onChange={(e) => {
+                      const updated = groups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x);
                       setGroups(updated);
                       saveObjGroups(updated);
                     }}
-                    className={`text-xs w-6 h-6 rounded border font-medium transition-colors ${
-                      g.priority === p ? PRIORITY_CONFIG[p].style : "border-gray-200 text-gray-300 hover:border-gray-300"
-                    }`}
-                  >{p}</button>
-                ))}
+                    className="flex-1 text-sm bg-transparent focus:outline-none text-gray-700 placeholder:text-gray-300"
+                    placeholder="群組名稱"
+                  />
+                  <div className="flex items-center gap-1 shrink-0">
+                    {([1, 2, 3] as const).map((p) => (
+                      <button
+                        key={p}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          const updated = groups.map((x) => x.id === g.id ? { ...x, priority: p } : x);
+                          setGroups(updated);
+                          saveObjGroups(updated);
+                        }}
+                        className={`text-xs w-6 h-6 rounded border font-medium transition-colors ${
+                          g.priority === p ? PRIORITY_CONFIG[p].style : "border-gray-200 text-gray-300 hover:border-gray-300"
+                        }`}
+                      >{p}</button>
+                    ))}
+                  </div>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const updated = groups.filter((x) => x.id !== g.id);
+                      setGroups(updated);
+                      saveObjGroups(updated);
+                    }}
+                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none shrink-0"
+                  >×</button>
+                </div>
+              ))}
+
+              <div className="flex gap-2 pt-1">
+                <input
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing && newGroupName.trim()) {
+                      const updated = [...groups, { id: uuid(), name: newGroupName.trim(), priority: 2 as const }];
+                      setGroups(updated);
+                      saveObjGroups(updated);
+                      setNewGroupName("");
+                    }
+                  }}
+                  placeholder="新增群組名稱"
+                  className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+                />
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (!newGroupName.trim()) return;
+                    const updated = [...groups, { id: uuid(), name: newGroupName.trim(), priority: 2 as const }];
+                    setGroups(updated);
+                    saveObjGroups(updated);
+                    setNewGroupName("");
+                  }}
+                  disabled={!newGroupName.trim()}
+                  className="text-sm px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+                >新增</button>
               </div>
-              <button
-                onMouseDown={(e) => { e.preventDefault(); }}
-                onClick={() => {
-                  const updated = groups.filter((x) => x.id !== g.id);
-                  setGroups(updated);
-                  saveObjGroups(updated);
-                }}
-                className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none shrink-0"
-              >×</button>
             </div>
-          ))}
-          <div className="flex gap-2">
-            <input
-              value={newGroupName}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing && newGroupName.trim()) {
-                  const updated = [...groups, { id: uuid(), name: newGroupName.trim(), priority: 2 as const }];
-                  setGroups(updated);
-                  saveObjGroups(updated);
-                  setNewGroupName("");
-                }
-              }}
-              placeholder="新增群組名稱"
-              className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
-            />
-            <button
-              onClick={() => {
-                if (!newGroupName.trim()) return;
-                const updated = [...groups, { id: uuid(), name: newGroupName.trim(), priority: 2 as const }];
-                setGroups(updated);
-                saveObjGroups(updated);
-                setNewGroupName("");
-              }}
-              disabled={!newGroupName.trim()}
-              className="text-sm px-4 py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors"
-            >新增</button>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
