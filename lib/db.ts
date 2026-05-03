@@ -18,18 +18,29 @@ export async function fetchObjectives(): Promise<Objective[]> {
     .select("*")
     .order("created_at", { ascending: true });
   if (error) throw error;
-  return (data ?? []).map((r) => ({
-    id: r.id,
-    title: r.title,
-    description: r.description ?? "",
-    keyResults: r.key_results,
-    createdAt: r.created_at,
-    meta: r.meta ?? undefined,
-  }));
+  return (data ?? []).map((r) => {
+    // status is stored inside meta._status to avoid a schema migration
+    const rawMeta = { ...(r.meta ?? {}) };
+    const status = (rawMeta._status as Objective["status"]) ?? "active";
+    delete rawMeta._status;
+    return {
+      id: r.id,
+      title: r.title,
+      description: r.description ?? "",
+      keyResults: r.key_results,
+      createdAt: r.created_at,
+      status,
+      meta: Object.keys(rawMeta).length ? rawMeta : undefined,
+    };
+  });
 }
 
 export async function saveObjective(objective: Objective): Promise<void> {
   const userId = await uid();
+  const meta = {
+    ...(objective.meta ?? {}),
+    ...(objective.status && objective.status !== "active" ? { _status: objective.status } : {}),
+  };
   const { error } = await supabase.from("objectives").upsert({
     id: objective.id,
     user_id: userId,
@@ -37,7 +48,7 @@ export async function saveObjective(objective: Objective): Promise<void> {
     description: objective.description ?? "",
     key_results: objective.keyResults,
     created_at: objective.createdAt,
-    meta: objective.meta ?? null,
+    meta: Object.keys(meta).length ? meta : null,
   });
   if (error) throw error;
 }

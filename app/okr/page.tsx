@@ -153,7 +153,7 @@ function GoalForm({
         </button>
 
         {form.title.trim() && validKrCount === 0 && (
-          <p className="text-[11px] text-amber-500">請至少填入一個 KR，AI 才能準確評估你的想法</p>
+          <p className="text-[11px] text-amber-500">請至少填入一個 KR，AI 才能評估任務</p>
         )}
 
         {suggestions.length > 0 && (
@@ -313,10 +313,28 @@ export default function GoalsPage() {
   }
 
   async function handleDelete(id: string) {
-    await removeObjective(id).catch(console.error);
-    setObjectives((prev) => prev.filter((o) => o.id !== id));
+    const obj = objectives.find((o) => o.id === id);
+    if (!obj) return;
+    const deleted = { ...obj, status: "deleted" as const };
+    setObjectives((prev) => prev.map((o) => o.id === id ? deleted : o));
+    await saveObjective(deleted).catch(console.error);
     markAllIdeasForReanalysis().catch(console.error);
     setReanalysisTriggered(true);
+  }
+
+  async function handleRestore(id: string) {
+    const obj = objectives.find((o) => o.id === id);
+    if (!obj) return;
+    const restored = { ...obj, status: "active" as const };
+    setObjectives((prev) => prev.map((o) => o.id === id ? restored : o));
+    await saveObjective(restored).catch(console.error);
+    markAllIdeasForReanalysis().catch(console.error);
+    setReanalysisTriggered(true);
+  }
+
+  async function handlePermanentDelete(id: string) {
+    setObjectives((prev) => prev.filter((o) => o.id !== id));
+    await removeObjective(id).catch(console.error);
   }
 
   function startEdit(o: Objective) {
@@ -342,6 +360,8 @@ export default function GoalsPage() {
       return sortAsc ? pa - pb : pb - pa;
     });
 
+  const deletedObjs = objectives.filter((o) => o.status === "deleted");
+
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 pb-32 space-y-5">
       <div className="flex items-center justify-between">
@@ -349,7 +369,7 @@ export default function GoalsPage() {
           <Link href="/" className="text-gray-400 hover:text-gray-600 text-lg leading-none">‹</Link>
           <div>
             <h1 className="text-xl font-semibold">判斷標準</h1>
-            <p className="text-xs text-gray-400 mt-0.5">AI 根據這些目標評估你的每個想法</p>
+            <p className="text-xs text-gray-400 mt-0.5">AI 根據這些目標評估你的每個任務</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -372,7 +392,7 @@ export default function GoalsPage() {
 
       {reanalysisTriggered && (
         <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 text-xs text-indigo-600">
-          目標已更新，回到主頁後所有想法會自動重新分析
+          目標已更新，回到主頁後所有任務會自動重新分析
         </div>
       )}
 
@@ -386,7 +406,7 @@ export default function GoalsPage() {
         <div className="text-center py-16">
           <div className="text-4xl mb-3 text-gray-200">◎</div>
           <p className="text-sm text-gray-400">還沒有目標</p>
-          <p className="text-xs text-gray-300 mt-1">設定目標後，AI 才能評估你的想法</p>
+          <p className="text-xs text-gray-300 mt-1">設定目標後，AI 才能評估你的任務</p>
         </div>
       ) : (() => {
         const renderObj = (o: typeof active[0]) => (
@@ -483,6 +503,32 @@ export default function GoalsPage() {
           </div>
         );
       })()}
+
+      {/* Deleted objectives */}
+      {deletedObjs.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-gray-100">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400">{deletedObjs.length} 個已刪除的目標</p>
+            <button
+              onClick={async () => {
+                const toDelete = [...deletedObjs];
+                setObjectives((prev) => prev.filter((o) => o.status !== "deleted"));
+                await Promise.all(toDelete.map((o) => removeObjective(o.id).catch(console.error)));
+              }}
+              className="text-xs text-red-400 hover:text-red-600 transition-colors"
+            >
+              清空全部
+            </button>
+          </div>
+          {deletedObjs.map((o) => (
+            <div key={o.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
+              <p className="text-sm text-gray-400 flex-1 truncate line-through">{o.title}</p>
+              <button onClick={() => handleRestore(o.id)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">恢復</button>
+              <button onClick={() => handlePermanentDelete(o.id)} className="text-xs text-red-300 hover:text-red-500 shrink-0 transition-colors">永久刪除</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Group modal */}
       {showGroupModal && (

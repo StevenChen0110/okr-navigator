@@ -20,6 +20,7 @@ import {
   saveIdea,
   updateIdeaTaskStatus,
   updateIdeaStatus,
+  removeIdea,
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
@@ -390,7 +391,7 @@ export default function HomePage() {
             <div className="p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-700">
-                  {pendingInboxId ? "AI 評估想法" : "新增想法"}
+                  {pendingInboxId ? "AI 評估任務" : "新增任務"}
                 </h2>
                 {(modalStatus === "idle" || modalStatus === "confirm") && (
                   <button
@@ -448,7 +449,7 @@ export default function HomePage() {
                     value={modalTitle}
                     onChange={(e) => setModalTitle(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleAnalyze()}
-                    placeholder="用一句話描述這個想法"
+                    placeholder="用一句話描述這個任務"
                     autoFocus
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
@@ -647,7 +648,7 @@ export default function HomePage() {
       {reanalyzingIds.size > 0 && activeTab === "tasks" && (
         <div className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
           <span className="animate-pulse">◎</span>
-          AI 正在重新分析 {reanalyzingIds.size} 個想法…
+          AI 正在重新分析 {reanalyzingIds.size} 個任務…
         </div>
       )}
 
@@ -715,14 +716,14 @@ export default function HomePage() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  待評估
+                  未評估
                 </h2>
                 <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">
                   {pendingItems.length}
                 </span>
               </div>
               <p className="text-xs text-gray-400">
-                點「AI 評估」讓 AI 根據你的目標判斷這件事值不值得做
+                點「AI 評估」讓 AI 根據你的目標打分
               </p>
               {pendingItems.map((item) => (
                 <div
@@ -742,7 +743,7 @@ export default function HomePage() {
                         onClick={() => promoteToTask(item)}
                         className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                       >
-                        直接轉任務
+                        加入待辦
                       </button>
                     )}
                     <button
@@ -893,8 +894,8 @@ export default function HomePage() {
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wider text-center">開始使用</p>
                 {[
                   { step: "1", title: "設定判斷標準", desc: "告訴 AI 你現在最重要的目標是什麼", href: "/okr", cta: "去設定 →", active: true },
-                  { step: "2", title: "輸入想法", desc: "把腦中任何想做的事情丟進來", href: null, cta: null, active: false },
-                  { step: "3", title: "AI 評估優先級", desc: "AI 根據你的目標判斷哪個最值得做", href: null, cta: null, active: false },
+                  { step: "2", title: "新增任務", desc: "把想做的事情丟進來", href: null, cta: null, active: false },
+                  { step: "3", title: "AI 評估", desc: "AI 幫你決定哪個最值得先做", href: null, cta: null, active: false },
                 ].map(({ step, title, desc, href, cta, active }) => (
                   <div key={step} className={`flex gap-4 items-start rounded-xl border px-4 py-3 ${active ? "bg-indigo-50 border-indigo-100" : "bg-white border-gray-100 opacity-50"}`}>
                     <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${active ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-400"}`}>
@@ -960,20 +961,39 @@ export default function HomePage() {
         <div className="space-y-2">
           {deleted.length === 0 ? (
             <div className="text-center py-20">
-              <p className="text-sm text-gray-400">沒有刪除的想法</p>
+              <p className="text-sm text-gray-400">垃圾桶是空的</p>
             </div>
           ) : (
-            deleted.map((item) => (
-              <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
-                <p className="text-sm text-gray-400 flex-1 truncate line-through">{item.title}</p>
+            <>
+              <div className="flex items-center justify-between pb-1">
+                <p className="text-xs text-gray-400">{deleted.length} 個已刪除的任務</p>
                 <button
-                  onClick={() => restoreIdea(item)}
-                  className="text-xs text-gray-400 hover:text-indigo-600 shrink-0"
+                  onClick={async () => {
+                    const toDelete = [...deleted];
+                    setIdeas((prev) => prev.filter((i) => i.ideaStatus !== "deleted"));
+                    await Promise.all(toDelete.map((i) => removeIdea(i.id).catch(console.error)));
+                  }}
+                  className="text-xs text-red-400 hover:text-red-600 transition-colors"
                 >
-                  恢復
+                  清空全部
                 </button>
               </div>
-            ))
+              {deleted.map((item) => (
+                <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
+                  <p className="text-sm text-gray-400 flex-1 truncate line-through">{item.title}</p>
+                  <button onClick={() => restoreIdea(item)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">恢復</button>
+                  <button
+                    onClick={async () => {
+                      setIdeas((prev) => prev.filter((i) => i.id !== item.id));
+                      await removeIdea(item.id).catch(console.error);
+                    }}
+                    className="text-xs text-red-300 hover:text-red-500 shrink-0 transition-colors"
+                  >
+                    永久刪除
+                  </button>
+                </div>
+              ))}
+            </>
           )}
         </div>
       )}
