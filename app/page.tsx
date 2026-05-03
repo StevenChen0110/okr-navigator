@@ -1065,42 +1065,25 @@ export default function HomePage() {
                   )}
                 </div>
 
-                {/* Deadline toggle + urgency days */}
-                <div className={`rounded-xl border transition-all ${evalProfile.considerDeadline ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white"}`}>
-                  <button
-                    onClick={() => {
-                      const updated = { ...evalProfile, considerDeadline: !evalProfile.considerDeadline };
-                      setEvalProfile(updated);
-                      saveEvaluationProfile(updated);
-                    }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
-                  >
-                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${evalProfile.considerDeadline ? "bg-indigo-500 border-indigo-500" : "border-gray-300"}`}>
-                      {evalProfile.considerDeadline && <span className="text-white text-[10px] font-bold">✓</span>}
-                    </span>
-                    <span>
-                      <span className={`text-xs font-medium block ${evalProfile.considerDeadline ? "text-indigo-700" : "text-gray-700"}`}>截止時間</span>
-                      <span className="text-[10px] text-gray-400">到期目標優先度提升</span>
-                    </span>
-                  </button>
-                  {evalProfile.considerDeadline && (
-                    <div className="px-3 pb-3 flex items-center gap-2">
-                      <span className="text-[11px] text-gray-500">距截止</span>
-                      <input
-                        type="number" min="1" max="365"
-                        value={evalProfile.deadlineUrgencyDays}
-                        onChange={(e) => {
-                          const val = Math.max(1, Math.min(365, parseInt(e.target.value) || 30));
-                          const updated = { ...evalProfile, deadlineUrgencyDays: val };
-                          setEvalProfile(updated);
-                          saveEvaluationProfile(updated);
-                        }}
-                        className="w-14 text-center text-xs rounded-lg border border-indigo-200 bg-white px-1 py-1 focus:outline-none focus:border-indigo-400"
-                      />
-                      <span className="text-[11px] text-gray-500">天內視為緊急</span>
-                    </div>
-                  )}
-                </div>
+                {/* Deadline toggle */}
+                <button
+                  onClick={() => {
+                    const updated = { ...evalProfile, considerDeadline: !evalProfile.considerDeadline };
+                    setEvalProfile(updated);
+                    saveEvaluationProfile(updated);
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
+                    evalProfile.considerDeadline ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${evalProfile.considerDeadline ? "bg-indigo-500 border-indigo-500" : "border-gray-300"}`}>
+                    {evalProfile.considerDeadline && <span className="text-white text-[10px] font-bold">✓</span>}
+                  </span>
+                  <span>
+                    <span className={`text-xs font-medium block ${evalProfile.considerDeadline ? "text-indigo-700" : "text-gray-700"}`}>截止時間</span>
+                    <span className="text-[10px] text-gray-400">30 天內到期的目標優先度提升</span>
+                  </span>
+                </button>
 
               </div>
             </div>
