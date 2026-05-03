@@ -78,7 +78,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 overflow-y-auto"
           onClick={(e) => { if (e.target === e.currentTarget) setShowLogin(false); }}
         >
-          <div className="w-full max-w-sm py-6">
+          <div className="w-full max-w-sm">
             <LoginContent onClose={() => setShowLogin(false)} />
           </div>
         </div>
@@ -155,9 +155,9 @@ function LoginContent({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="w-full">
-      <div className="text-center mb-6">
-        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600 text-white text-xl mb-4">◎</div>
+    <div className="w-full bg-white rounded-2xl shadow-xl p-6 space-y-4">
+      <div className="text-center">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600 text-white text-xl mb-3">◎</div>
         <h1 className="text-2xl font-semibold tracking-tight">OKR Navigator</h1>
         <p className="text-sm text-gray-400 mt-1">決策導航系統</p>
       </div>
@@ -167,7 +167,7 @@ function LoginContent({ onClose }: { onClose: () => void }) {
           確認信已寄出，請檢查信箱並點擊連結完成註冊。
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+        <div className="space-y-4">
           <div className="space-y-2">
             <OAuthButton label="使用 Google 繼續" busy={googleBusy} onClick={signInWithGoogle}
               icon={
@@ -214,7 +214,7 @@ function LoginContent({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <button onClick={onClose} className="mt-4 w-full text-xs text-gray-400 hover:text-gray-600 text-center py-2">
+      <button onClick={onClose} className="w-full text-xs text-gray-400 hover:text-gray-600 text-center py-1 border-t border-gray-100 pt-3">
         先預覽，稍後再登入
       </button>
     </div>
