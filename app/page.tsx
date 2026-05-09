@@ -58,7 +58,7 @@ const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
 export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const { user, signOut, openLogin, requireAuth } = useAuth();
+  const { user, openLogin, requireAuth } = useAuth();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
   const [filterValue, setFilterValue] = useState("");
@@ -580,32 +580,14 @@ export default function HomePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">任務</h1>
-          <p className="text-xs text-gray-400 mt-0.5">AI 幫你判斷哪個最值得做</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            AI 幫你判斷哪個最值得做
+            <span className="ml-1.5 text-gray-300">·</span>
+            <span className="ml-1.5 text-indigo-400">{MODE_LABELS[evalProfile.mode]}</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/okr" className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
-            判斷標準
-          </Link>
-          <button
-            onClick={() => setShowEvalSettings(true)}
-            className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
-          >
-            評估設定
-          </button>
-          <button
-            onClick={openNewModal}
-            className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-          >
-            + 新增
-          </button>
-          {user ? (
-            <button
-              onClick={signOut}
-              className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
-            >
-              登出
-            </button>
-          ) : (
+          {!user && (
             <button
               onClick={openLogin}
               className="text-xs font-medium px-3 py-2 rounded-xl border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -613,6 +595,22 @@ export default function HomePage() {
               登入
             </button>
           )}
+          <button
+            onClick={() => setShowEvalSettings(true)}
+            className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            title="判斷標準 / 評估設定"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.93 2.93l1.41 1.41M11.66 11.66l1.41 1.41M2.93 13.07l1.41-1.41M11.66 4.34l1.41-1.41" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <button
+            onClick={openNewModal}
+            className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          >
+            + 新增
+          </button>
         </div>
       </div>
 
@@ -767,9 +765,14 @@ export default function HomePage() {
           {/* Evaluated ranked list */}
           {evaluated.length > 0 && (
             <div className="space-y-2">
-              <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                AI 評分排行
-              </h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">AI 評分排行</h2>
+                <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                  <span className="text-indigo-500 font-medium">7+</span><span>高度相關</span>
+                  <span className="text-amber-500 font-medium">4–7</span><span>有關聯</span>
+                  <span className="text-gray-400 font-medium">&lt;4</span><span>弱</span>
+                </div>
+              </div>
               <div className="space-y-1.5">
                 {evaluated.map((idea) => {
                   const isExpanded = expandedIds.has(idea.id);
@@ -815,21 +818,16 @@ export default function HomePage() {
                         >
                           {displayScore.toFixed(1)}
                         </span>
-                        <div className="flex gap-1 shrink-0">
-                          {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                            <button
-                              key={s}
-                              onClick={() => setTaskStatus(idea.id, s)}
-                              className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${
-                                idea.taskStatus === s
-                                  ? TASK_STATUS_STYLE[s] + " font-medium"
-                                  : "text-gray-300 hover:text-gray-500"
-                              }`}
-                            >
-                              {TASK_STATUS_LABEL[s]}
-                            </button>
-                          ))}
-                        </div>
+                        <button
+                          onClick={() => {
+                            const cycle: TaskStatus[] = ["todo", "in-progress", "done"];
+                            const next = cycle[(cycle.indexOf(idea.taskStatus ?? "todo") + 1) % cycle.length];
+                            setTaskStatus(idea.id, next);
+                          }}
+                          className={`text-xs px-2 py-0.5 rounded-lg font-medium shrink-0 transition-colors ${TASK_STATUS_STYLE[idea.taskStatus ?? "todo"]}`}
+                        >
+                          {TASK_STATUS_LABEL[idea.taskStatus ?? "todo"]}
+                        </button>
                         <button
                           onClick={() => toggleExpand(idea.id)}
                           className="text-gray-300 text-xs shrink-0 ml-1"
