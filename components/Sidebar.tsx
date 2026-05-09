@@ -9,8 +9,7 @@ export default function Sidebar() {
   return (
     <aside className="hidden md:flex w-56 flex-col border-r border-gray-200 bg-white shrink-0">
       <div className="px-5 py-5 border-b border-gray-100">
-        <span className="font-semibold text-base tracking-tight">LOCO</span>
-        <p className="text-xs text-gray-400 mt-0.5">Log-on to your Core</p>
+        <span className="font-semibold text-base tracking-tight">記錄指針</span>
       </div>
       <div className="flex-1" />
       <div className="border-t border-gray-100 px-4 py-4">

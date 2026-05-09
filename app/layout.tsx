@@ -9,8 +9,8 @@ import AuthProvider from "@/components/AuthProvider";
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "LOCO",
-  description: "Log-on to your Core",
+  title: "記錄指針",
+  description: "記錄指針",
 };
 
 export default function RootLayout({
