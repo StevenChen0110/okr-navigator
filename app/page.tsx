@@ -595,15 +595,14 @@ export default function HomePage() {
               登入
             </button>
           )}
+          <Link href="/okr" className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
+            目標設定
+          </Link>
           <button
             onClick={() => setShowEvalSettings(true)}
-            className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            title="判斷標準 / 評估設定"
+            className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.5"/>
-              <path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.93 2.93l1.41 1.41M11.66 11.66l1.41 1.41M2.93 13.07l1.41-1.41M11.66 4.34l1.41-1.41" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
+            評估設定
           </button>
           <button
             onClick={openNewModal}
@@ -818,16 +817,16 @@ export default function HomePage() {
                         >
                           {displayScore.toFixed(1)}
                         </span>
-                        <button
-                          onClick={() => {
-                            const cycle: TaskStatus[] = ["todo", "in-progress", "done"];
-                            const next = cycle[(cycle.indexOf(idea.taskStatus ?? "todo") + 1) % cycle.length];
-                            setTaskStatus(idea.id, next);
-                          }}
-                          className={`text-xs px-2 py-0.5 rounded-lg font-medium shrink-0 transition-colors ${TASK_STATUS_STYLE[idea.taskStatus ?? "todo"]}`}
+                        <select
+                          value={idea.taskStatus ?? "todo"}
+                          onChange={(e) => setTaskStatus(idea.id, e.target.value as TaskStatus)}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`text-xs px-2 py-0.5 rounded-lg font-medium shrink-0 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-300 ${TASK_STATUS_STYLE[idea.taskStatus ?? "todo"]}`}
                         >
-                          {TASK_STATUS_LABEL[idea.taskStatus ?? "todo"]}
-                        </button>
+                          {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
+                            <option key={s} value={s}>{TASK_STATUS_LABEL[s]}</option>
+                          ))}
+                        </select>
                         <button
                           onClick={() => toggleExpand(idea.id)}
                           className="text-gray-300 text-xs shrink-0 ml-1"
