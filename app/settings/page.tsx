@@ -11,7 +11,7 @@ import { useAuth } from "@/components/AuthProvider";
 const PROVIDERS: AIProvider[] = ["anthropic", "openai", "gemini", "grok"];
 
 export default function SettingsPage() {
-  const { user, requireAuth } = useAuth();
+  const { user, requireAuth, signOut } = useAuth();
   const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>({
     language: "zh-TW",
@@ -176,6 +176,16 @@ export default function SettingsPage() {
         className="w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors">
         {saved ? "已儲存 ✓" : "儲存設定"}
       </button>
+
+      <div className="border-t border-gray-100 pt-4 flex items-center justify-between">
+        <p className="text-xs text-gray-400 truncate">{user?.email}</p>
+        <button
+          onClick={signOut}
+          className="text-xs text-gray-400 hover:text-red-500 transition-colors shrink-0 ml-4"
+        >
+          登出
+        </button>
+      </div>
     </div>
   );
 }
