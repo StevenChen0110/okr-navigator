@@ -363,7 +363,7 @@ export default function GoalsPage() {
   const deletedObjs = objectives.filter((o) => o.status === "deleted");
 
   return (
-    <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 pb-32 space-y-5">
+    <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link href="/" className="text-gray-400 hover:text-gray-600 text-lg leading-none">‹</Link>
@@ -374,11 +374,11 @@ export default function GoalsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowGroupModal(true)}
-            className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
+            className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
             群組{groups.length > 0 ? ` (${groups.length})` : ""}
           </button>
           <button onClick={() => setSortAsc((v) => !v)}
-            className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
+            className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
             {sortAsc ? "1→3" : "3→1"}
           </button>
           {!adding && (

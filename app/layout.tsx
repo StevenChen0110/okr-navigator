@@ -23,7 +23,7 @@ export default function RootLayout({
       <body className="flex h-screen bg-gray-50 text-gray-900 antialiased">
         <AuthProvider>
           {/* <Sidebar /> */}
-          <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+          <main className="flex-1 overflow-y-auto pb-36 md:pb-10">
             {children}
           </main>
           <BottomNav />

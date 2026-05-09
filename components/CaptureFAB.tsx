@@ -82,7 +82,7 @@ export default function CaptureFAB() {
       {/* FAB button */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-20 right-4 md:bottom-8 md:right-8 w-13 h-13 w-[52px] h-[52px] rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700 active:scale-95 transition-all z-30 flex items-center justify-center text-xl font-light"
+        className="fixed bottom-24 right-4 md:bottom-8 md:right-8 w-[52px] h-[52px] rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700 active:scale-95 transition-all z-30 flex items-center justify-center text-xl font-light"
         title="腦倒（快速捕捉）"
       >
         ＋

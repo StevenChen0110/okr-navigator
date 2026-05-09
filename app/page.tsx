@@ -378,7 +378,7 @@ export default function HomePage() {
     });
 
   return (
-    <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 pb-32 space-y-6">
+    <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
       {/* Analyze Modal */}
       {modalOpen && (
         <div
@@ -595,12 +595,12 @@ export default function HomePage() {
               登入
             </button>
           )}
-          <Link href="/okr" className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
+          <Link href="/okr" className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
             目標設定
           </Link>
           <button
             onClick={() => setShowEvalSettings(true)}
-            className="text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
+            className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
           >
             評估設定
           </button>
