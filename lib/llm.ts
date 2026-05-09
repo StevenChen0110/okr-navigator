@@ -1,8 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AIProvider } from "./types";
 
-export type { AIProvider };
-
 const OPENAI_COMPAT_BASE: Partial<Record<AIProvider, string>> = {
   openai: "https://api.openai.com/v1",
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -45,6 +43,18 @@ export const DEFAULT_MODEL: Record<AIProvider, string> = {
   grok: "grok-3-mini",
 };
 
+const anthropicClients = new Map<string, Anthropic>();
+function getAnthropicClient(apiKey: string): Anthropic {
+  let client = anthropicClients.get(apiKey);
+  if (!client) {
+    client = new Anthropic({ apiKey });
+    anthropicClients.set(apiKey, client);
+  }
+  return client;
+}
+
+export const VALID_PROVIDERS = new Set<AIProvider>(["anthropic", "openai", "gemini", "grok"]);
+
 export async function complete(
   provider: AIProvider,
   apiKey: string,
@@ -54,7 +64,7 @@ export async function complete(
   maxTokens = 2048,
 ): Promise<string> {
   if (provider === "anthropic") {
-    const client = new Anthropic({ apiKey });
+    const client = getAnthropicClient(apiKey);
     const message = await client.messages.create({
       model,
       max_tokens: maxTokens,

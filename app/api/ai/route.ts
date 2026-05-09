@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AIProvider } from "@/lib/types";
+import { VALID_PROVIDERS } from "@/lib/llm";
 import {
   analyzeIdea,
   clarifyIdea,
@@ -12,12 +13,15 @@ import {
   refineKRTitle,
 } from "@/lib/claude";
 
-const ENV_KEYS: Record<string, string | undefined> = {
-  anthropic: process.env.CLAUDE_API_KEY,
-  openai: process.env.OPENAI_API_KEY,
-  gemini: process.env.GEMINI_API_KEY,
-  grok: process.env.GROK_API_KEY,
-};
+function getEnvKey(provider: AIProvider): string | undefined {
+  const keys: Record<AIProvider, string> = {
+    anthropic: "CLAUDE_API_KEY",
+    openai: "OPENAI_API_KEY",
+    gemini: "GEMINI_API_KEY",
+    grok: "GROK_API_KEY",
+  };
+  return process.env[keys[provider]];
+}
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -36,8 +40,10 @@ export async function POST(req: NextRequest) {
     [key: string]: unknown;
   };
 
-  const provider = (providerRaw ?? "anthropic") as AIProvider;
-  const apiKey = (apiKeyFromBody as string | undefined) || ENV_KEYS[provider];
+  const provider: AIProvider = VALID_PROVIDERS.has(providerRaw as AIProvider)
+    ? (providerRaw as AIProvider)
+    : "anthropic";
+  const apiKey = (apiKeyFromBody as string | undefined) || getEnvKey(provider);
   if (!apiKey) {
     return NextResponse.json({ error: `API key not configured for provider: ${provider}` }, { status: 500 });
   }
