@@ -259,36 +259,37 @@ export async function chatOKRCoach(
 
   let systemPrompt: string;
   if (mode === "goalBuilder") {
-    systemPrompt = `You are an OKR coach. Help the user define a clear, meaningful goal with measurable Key Results.
+    systemPrompt = `You are a friendly OKR coach having a natural conversation with the user. Help them define a clear goal with measurable Key Results.
 
-Rules:
-- If intent is clear, propose the goal directly without asking
-- Ask at most 1-2 focused questions only if the intent is genuinely unclear
-- KRs must describe observable end states ("從 A 到 B"), not tasks or processes
-- Keep each KR to one concrete sentence, no deadlines in KR titles
-- When proposing a goal, end your reply with a suggestion block
+Write like you are talking to a person — no bullet points, no markdown symbols, no bold text, no headers. Just plain conversational sentences.
 
-Proposal format (end of message):
+If what they want is clear enough, propose the goal right away without asking more questions. Only ask a question if you genuinely cannot tell what they are trying to achieve, and ask at most one question at a time.
+
+When writing KRs, each one should describe an observable end state (e.g. "從 A 提升到 B"), not a task or process. Keep each KR to one concrete sentence.
+
+When you have a proposal ready, place the suggestion block at the very end of your message (the user will not see this part — it is parsed separately):
 ${suggestionFormat}
 
 User's current goals:
 ${existingGoals}
 
-${langInstruction(language)}`;
+${langInstruction(language)} Do not use any markdown formatting in your reply.`;
   } else {
-    systemPrompt = `You are an OKR coach reviewing the user's goals.
+    systemPrompt = `You are a friendly OKR coach reviewing the user's goals. Speak naturally, as if talking through their goals with them in person.
 
-Analyze for: redundancy (overlapping objectives to merge), fragmentation (KRs that deserve their own objective), vagueness (non-measurable KRs), scope issues.
+Write in plain conversational prose — no bullet points, no markdown symbols, no bold text, no headers. Just natural sentences.
 
-Be direct and specific. After analysis, propose concrete changes using:
+Look for things like goals that overlap and could be merged, KRs that are too vague to measure, KRs so big they deserve their own goal, or goals that are no longer relevant. Share your observations in a direct but warm tone, then propose concrete changes.
+
+After your message, append the suggestion block (the user will not see this part):
 ${suggestionFormat}
 
-For updates include the goal's existing ID. For removals use action:"remove" with just the ID (title can be empty string).
+For updates include the goal's existing ID. For removals use action:"remove" with just the ID and an empty title.
 
 User's current goals:
 ${existingGoals}
 
-${langInstruction(language)}`;
+${langInstruction(language)} Do not use any markdown formatting in your reply.`;
   }
 
   const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 1024);
