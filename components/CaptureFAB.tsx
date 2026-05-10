@@ -4,12 +4,14 @@ import { useState, useRef, useEffect } from "react";
 import { v4 as uuid } from "uuid";
 import { saveIdea } from "@/lib/db";
 import { Idea } from "@/lib/types";
+import { useLanguage } from "./LanguageProvider";
 
 export default function CaptureFAB() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { t } = useLanguage();
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 50);
@@ -48,7 +50,6 @@ export default function CaptureFAB() {
 
   return (
     <>
-      {/* Modal overlay */}
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center p-4 md:items-center"
@@ -56,34 +57,33 @@ export default function CaptureFAB() {
         >
           <div className="bg-black/40 absolute inset-0" onClick={() => setOpen(false)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 z-10">
-            <p className="text-xs text-gray-400 mb-3 font-medium">腦倒 → 收件匣</p>
+            <p className="text-xs text-gray-400 mb-3 font-medium">{t("fab.header")}</p>
             <input
               ref={inputRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") capture(); }}
-              placeholder="現在腦袋裡有什麼？"
+              placeholder={t("fab.placeholder")}
               className="w-full text-base border-0 outline-none placeholder-gray-300 text-gray-900 bg-transparent"
             />
             <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-              <span className="text-xs text-gray-300">Enter 儲存 · Esc 取消</span>
+              <span className="text-xs text-gray-300">{t("fab.hint")}</span>
               <button
                 onClick={capture}
                 disabled={!text.trim() || saving}
                 className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
               >
-                {saving ? "…" : "儲存"}
+                {saving ? "…" : t("fab.save")}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* FAB button */}
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-24 right-4 md:bottom-8 md:right-8 w-[52px] h-[52px] rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700 active:scale-95 transition-all z-30 flex items-center justify-center text-xl font-light"
-        title="腦倒（快速捕捉）"
+        title={t("fab.header")}
       >
         ＋
       </button>

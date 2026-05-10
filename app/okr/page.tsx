@@ -8,6 +8,7 @@ import { fetchObjectives, saveObjective, removeObjective, markAllIdeasForReanaly
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
 import { getObjGroups, saveObjGroups } from "@/lib/storage";
+import { useLanguage } from "@/components/LanguageProvider";
 
 const PRIORITY_CONFIG = {
   1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
@@ -21,12 +22,11 @@ interface FormState {
   title: string;
   priority: Priority;
   krs: string[];
-  // advanced
   description: string;
   motivation: string;
   expectedOutcome: string;
-  deadline: string;   // YYYY-MM-DD or ""
-  groupId: string;    // "" means no group
+  deadline: string;
+  groupId: string;
 }
 
 function emptyForm(): FormState {
@@ -46,6 +46,7 @@ function GoalForm({
   saving: boolean;
   groups: ObjGroup[];
 }) {
+  const { t } = useLanguage();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -84,18 +85,17 @@ function GoalForm({
 
   return (
     <div className="space-y-3">
-      {/* ── Basic ── */}
       <input
         value={form.title}
         onChange={(e) => setForm({ ...form, title: e.target.value })}
         onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && canSave && onSave()}
-        placeholder="目標名稱"
+        placeholder={t("form.goalName")}
         autoFocus
         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
 
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-gray-500 mr-1">重要度</span>
+        <span className="text-xs text-gray-500 mr-1">{t("form.priority")}</span>
         {([1, 2, 3] as Priority[]).map((p) => (
           <button key={p} onClick={() => setForm({ ...form, priority: p })}
             className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${
@@ -107,11 +107,11 @@ function GoalForm({
         {groups.length > 0 && (
           <>
             <span className="text-xs text-gray-300">|</span>
-            <span className="text-xs text-gray-500">群組</span>
+            <span className="text-xs text-gray-500">{t("form.group")}</span>
             <button onClick={() => setForm({ ...form, groupId: "" })}
               className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
                 form.groupId === "" ? "bg-gray-800 text-white border-gray-800" : "border-gray-200 text-gray-400 hover:border-gray-300"
-              }`}>無</button>
+              }`}>{t("form.noGroup")}</button>
             {groups.map((g) => (
               <button key={g.id} onClick={() => setForm({ ...form, groupId: g.id })}
                 className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
@@ -122,16 +122,15 @@ function GoalForm({
         )}
       </div>
 
-      {/* KR section */}
       <div className="space-y-2 pt-1 border-t border-gray-100">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-gray-600">
-            關鍵結果 (KR)
+            {t("form.keyResults")}
             {validKrCount > 0 && <span className="ml-1 text-gray-400 font-normal">({validKrCount})</span>}
           </span>
           <button type="button" onClick={handleSuggest} disabled={!form.title.trim() || suggesting}
             className="text-xs text-indigo-500 hover:text-indigo-700 disabled:opacity-40 transition-colors">
-            {suggesting ? "AI 建議中…" : "✦ AI 建議"}
+            {suggesting ? t("form.aiSuggesting") : t("form.aiSuggest")}
           </button>
         </div>
 
@@ -148,16 +147,16 @@ function GoalForm({
         ))}
 
         <button type="button" onClick={addKr} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
-          + 新增 KR
+          {t("form.addKR")}
         </button>
 
         {form.title.trim() && validKrCount === 0 && (
-          <p className="text-[11px] text-amber-500">請至少填入一個 KR，AI 才能評估任務</p>
+          <p className="text-[11px] text-amber-500">{t("form.krRequired")}</p>
         )}
 
         {suggestions.length > 0 && (
           <div className="bg-indigo-50 rounded-xl p-3 space-y-1.5">
-            <p className="text-[11px] text-indigo-400 font-medium">AI 建議（點選加入，可再編輯）</p>
+            <p className="text-[11px] text-indigo-400 font-medium">{t("form.aiSuggestions")}</p>
             {suggestions.map((s, i) => (
               <button key={i} type="button" onClick={() => addSuggestion(s)}
                 className="block w-full text-left text-xs text-indigo-700 hover:text-indigo-900 px-2 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors">
@@ -168,32 +167,31 @@ function GoalForm({
         )}
       </div>
 
-      {/* ── Advanced toggle ── */}
       <div className="border-t border-gray-100 pt-2">
         <button type="button" onClick={() => setShowAdvanced((v) => !v)}
           className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600">
           <span className={`transition-transform ${showAdvanced ? "rotate-90" : ""}`}>›</span>
-          進階設定
+          {t("form.advanced")}
           {hasAdvanced && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />}
         </button>
 
         {showAdvanced && (
           <div className="mt-3 space-y-2 pl-3 border-l-2 border-gray-100">
             <div>
-              <label className="text-[11px] text-gray-400 block mb-1">截止時間</label>
+              <label className="text-[11px] text-gray-400 block mb-1">{t("form.deadline")}</label>
               <input type="date" value={form.deadline}
                 onChange={(e) => setForm({ ...form, deadline: e.target.value })}
                 className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
               />
             </div>
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="說明（幫助 AI 更準確判斷）" rows={2}
+              placeholder={t("form.descPlaceholder")} rows={2}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none" />
             <textarea value={form.motivation} onChange={(e) => setForm({ ...form, motivation: e.target.value })}
-              placeholder="動機（為什麼這個目標對你重要）" rows={2}
+              placeholder={t("form.motivationPlaceholder")} rows={2}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none" />
             <textarea value={form.expectedOutcome} onChange={(e) => setForm({ ...form, expectedOutcome: e.target.value })}
-              placeholder="預期成果（完成後的狀態）" rows={2}
+              placeholder={t("form.outcomePlaceholder")} rows={2}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none" />
           </div>
         )}
@@ -202,11 +200,11 @@ function GoalForm({
       <div className="flex gap-2 pt-1">
         <button onClick={onCancel}
           className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50">
-          取消
+          {t("action.cancel")}
         </button>
         <button onClick={onSave} disabled={!canSave}
           className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
-          {saving ? "儲存中…" : "儲存"}
+          {saving ? t("action.saving") : t("action.save")}
         </button>
       </div>
     </div>
@@ -215,6 +213,7 @@ function GoalForm({
 
 export default function GoalsPage() {
   const { user, requireAuth } = useAuth();
+  const { t } = useLanguage();
   const router = useRouter();
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [groups, setGroups] = useState<ObjGroup[]>([]);
@@ -240,7 +239,6 @@ export default function GoalsPage() {
 
   function metaFromForm(form: FormState, existing?: Objective["meta"]) {
     const base = { ...(existing ?? {}) };
-    // Always overwrite these so clearing them actually clears
     const meta = {
       ...base,
       priority: form.priority,
@@ -249,7 +247,6 @@ export default function GoalsPage() {
       motivation: form.motivation.trim() || undefined,
       expectedOutcome: form.expectedOutcome.trim() || undefined,
     };
-    // Remove undefined keys
     return Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined)) as Objective["meta"];
   }
 
@@ -365,13 +362,13 @@ export default function GoalsPage() {
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">目標</h1>
-          <p className="text-xs text-gray-400 mt-0.5">AI 根據這些目標評估你的每個任務</p>
+          <h1 className="text-xl font-semibold">{t("goals.title")}</h1>
+          <p className="text-xs text-gray-400 mt-0.5">{t("goals.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowGroupModal(true)}
             className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
-            群組{groups.length > 0 ? ` (${groups.length})` : ""}
+            {t("goals.groupBtn")}{groups.length > 0 ? ` (${groups.length})` : ""}
           </button>
           <button onClick={() => setSortAsc((v) => !v)}
             className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
@@ -380,7 +377,7 @@ export default function GoalsPage() {
           {!adding && (
             <button onClick={() => { setAdding(true); setEditingId(null); setForm(emptyForm()); }}
               className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
-              + 新增
+              + {t("action.add")}
             </button>
           )}
         </div>
@@ -388,7 +385,7 @@ export default function GoalsPage() {
 
       {reanalysisTriggered && (
         <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 text-xs text-indigo-600">
-          目標已更新，回到主頁後所有任務會自動重新分析
+          {t("goals.reanalysisNotice")}
         </div>
       )}
 
@@ -401,8 +398,8 @@ export default function GoalsPage() {
       {active.length === 0 && !adding ? (
         <div className="text-center py-16">
           <div className="text-4xl mb-3 text-gray-200">◎</div>
-          <p className="text-sm text-gray-400">還沒有目標</p>
-          <p className="text-xs text-gray-300 mt-1">設定目標後，AI 才能評估你的任務</p>
+          <p className="text-sm text-gray-400">{t("goals.noGoals")}</p>
+          <p className="text-xs text-gray-300 mt-1">{t("goals.noGoalsHint")}</p>
         </div>
       ) : (() => {
         const renderObj = (o: typeof active[0]) => (
@@ -431,8 +428,8 @@ export default function GoalsPage() {
                     )}
                   </div>
                   <div className="flex gap-3 shrink-0">
-                    <button onClick={() => startEdit(o)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">編輯</button>
-                    <button onClick={() => handleDelete(o.id)} className="text-xs text-gray-300 hover:text-red-400 transition-colors">刪除</button>
+                    <button onClick={() => startEdit(o)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">{t("action.edit")}</button>
+                    <button onClick={() => handleDelete(o.id)} className="text-xs text-gray-300 hover:text-red-400 transition-colors">{t("action.delete")}</button>
                   </div>
                 </div>
                 {o.keyResults.length > 0 && (
@@ -476,7 +473,7 @@ export default function GoalsPage() {
                         <span className={`text-gray-400 text-xs transition-transform leading-none ${collapsed ? "" : "rotate-90"}`}>›</span>
                         <span className="text-sm font-semibold text-gray-700">{g.name}</span>
                         <span className={`text-xs font-medium px-1.5 py-0.5 rounded border ${PRIORITY_CONFIG[g.priority].style}`}>{g.priority}</span>
-                        <span className="text-xs text-gray-400">{objs.length} 個目標</span>
+                        <span className="text-xs text-gray-400">{t("goals.objCount", { n: objs.length })}</span>
                       </button>
                       {!collapsed && (
                         <div className="space-y-2 pl-3 border-l-2 border-gray-100">
@@ -488,7 +485,7 @@ export default function GoalsPage() {
                 })}
                 {ungrouped.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs text-gray-400 font-medium pl-0.5">未分組</p>
+                    <p className="text-xs text-gray-400 font-medium pl-0.5">{t("goals.ungrouped")}</p>
                     {ungrouped.map(renderObj)}
                   </div>
                 )}
@@ -500,11 +497,10 @@ export default function GoalsPage() {
         );
       })()}
 
-      {/* Deleted objectives */}
       {deletedObjs.length > 0 && (
         <div className="space-y-2 pt-2 border-t border-gray-100">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">{deletedObjs.length} 個已刪除的目標</p>
+            <p className="text-xs text-gray-400">{t("goals.deletedCount", { n: deletedObjs.length })}</p>
             <button
               onClick={async () => {
                 const toDelete = [...deletedObjs];
@@ -513,26 +509,25 @@ export default function GoalsPage() {
               }}
               className="text-xs text-red-400 hover:text-red-600 transition-colors"
             >
-              清空全部
+              {t("action.clearAll")}
             </button>
           </div>
           {deletedObjs.map((o) => (
             <div key={o.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
               <p className="text-sm text-gray-400 flex-1 truncate line-through">{o.title}</p>
-              <button onClick={() => handleRestore(o.id)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">恢復</button>
-              <button onClick={() => handlePermanentDelete(o.id)} className="text-xs text-red-300 hover:text-red-500 shrink-0 transition-colors">永久刪除</button>
+              <button onClick={() => handleRestore(o.id)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">{t("action.restore")}</button>
+              <button onClick={() => handlePermanentDelete(o.id)} className="text-xs text-red-300 hover:text-red-500 shrink-0 transition-colors">{t("action.permanentDelete")}</button>
             </div>
           ))}
         </div>
       )}
 
-      {/* Group modal */}
       {showGroupModal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/30" onClick={() => setShowGroupModal(false)} />
           <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-800">目標群組</h2>
+              <h2 className="text-sm font-semibold text-gray-800">{t("groupModal.title")}</h2>
               <button onClick={() => setShowGroupModal(false)} className="text-gray-300 hover:text-gray-500 text-xl leading-none">×</button>
             </div>
 
@@ -547,7 +542,7 @@ export default function GoalsPage() {
                       saveObjGroups(updated);
                     }}
                     className="flex-1 text-sm bg-transparent focus:outline-none text-gray-700 placeholder:text-gray-300"
-                    placeholder="群組名稱"
+                    placeholder={t("groupModal.namePlaceholder")}
                   />
                   <div className="flex items-center gap-1 shrink-0">
                     {([1, 2, 3] as const).map((p) => (
@@ -589,7 +584,7 @@ export default function GoalsPage() {
                       setNewGroupName("");
                     }
                   }}
-                  placeholder="新增群組名稱"
+                  placeholder={t("groupModal.newGroupPlaceholder")}
                   className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
                 />
                 <button
@@ -603,7 +598,7 @@ export default function GoalsPage() {
                   }}
                   disabled={!newGroupName.trim()}
                   className="text-sm px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-                >新增</button>
+                >{t("action.add")}</button>
               </div>
             </div>
           </div>

@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import BottomNav from "@/components/BottomNav";
 import CaptureFAB from "@/components/CaptureFAB";
 import AuthProvider from "@/components/AuthProvider";
+import { LanguageProvider } from "@/components/LanguageProvider";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 
@@ -22,12 +23,14 @@ export default function RootLayout({
     <html lang="zh-TW" className={geist.variable}>
       <body className="flex h-screen bg-gray-50 text-gray-900 antialiased">
         <AuthProvider>
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto pb-36 md:pb-10">
-            {children}
-          </main>
-          <BottomNav />
-          <CaptureFAB />
+          <LanguageProvider>
+            <Sidebar />
+            <main className="flex-1 overflow-y-auto pb-36 md:pb-10">
+              {children}
+            </main>
+            <BottomNav />
+            <CaptureFAB />
+          </LanguageProvider>
         </AuthProvider>
       </body>
     </html>

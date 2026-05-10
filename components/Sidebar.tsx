@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useLanguage } from "./LanguageProvider";
 
-const navItems = [
+const NAV_ITEMS = [
   {
     href: "/",
-    label: "任務",
+    labelKey: "nav.tasks",
     exact: true,
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -18,7 +19,7 @@ const navItems = [
   },
   {
     href: "/okr",
-    label: "目標",
+    labelKey: "nav.goals",
     exact: false,
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -30,7 +31,7 @@ const navItems = [
   },
   {
     href: "/settings",
-    label: "設定",
+    labelKey: "nav.settings",
     exact: false,
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -43,15 +44,16 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { t } = useLanguage();
 
   return (
     <aside className="hidden md:flex w-52 flex-col border-r border-gray-200 bg-white shrink-0">
       <div className="px-5 py-5 border-b border-gray-100">
-        <span className="font-semibold text-base tracking-tight">記錄指針</span>
+        <span className="font-semibold text-base tracking-tight">{t("brand")}</span>
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {navItems.map((item) => {
+        {NAV_ITEMS.map((item) => {
           const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           return (
             <Link
@@ -64,7 +66,7 @@ export default function Sidebar() {
               }`}
             >
               <span className={active ? "text-indigo-500" : "text-gray-400"}>{item.icon}</span>
-              {item.label}
+              {t(item.labelKey)}
             </Link>
           );
         })}

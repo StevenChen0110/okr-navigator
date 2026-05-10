@@ -11,7 +11,6 @@ import {
   TaskStatus,
   IdeaStatus,
   EvaluationProfile,
-  EvalMode,
   ObjGroup,
 } from "@/lib/types";
 import {
@@ -24,14 +23,12 @@ import {
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, saveEvaluationProfile, getObjGroups } from "@/lib/storage";
+import { getEvaluationProfile, getObjGroups } from "@/lib/storage";
 import {
   buildEvaluationPrompt,
   DEFAULT_EVALUATION_PROFILE,
-  MODE_LABELS,
-  MODE_DESCRIPTIONS,
 } from "@/lib/evaluation-prompt";
-
+import { useLanguage } from "@/components/LanguageProvider";
 
 type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
 
@@ -43,22 +40,11 @@ interface SuggestedLink {
   score: number;
 }
 
-
-const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
-  todo: "待辦",
-  "in-progress": "進行中",
-  done: "完成",
-};
-const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
-  todo: "bg-gray-100 text-gray-500",
-  "in-progress": "bg-amber-50 text-amber-600",
-  done: "bg-green-50 text-green-600",
-};
-
 export default function HomePage() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const { user, openLogin, requireAuth } = useAuth();
+  const { t } = useLanguage();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
   const [filterValue, setFilterValue] = useState("");
@@ -67,7 +53,6 @@ export default function HomePage() {
 
   const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(DEFAULT_EVALUATION_PROFILE);
   const [groups, setGroups] = useState<ObjGroup[]>([]);
-  const [showEvalSettings, setShowEvalSettings] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
@@ -217,7 +202,7 @@ export default function HomePage() {
       );
       setModalStatus("confirm");
     } catch (e) {
-      setModalErrorMsg(e instanceof Error ? e.message : "分析失敗");
+      setModalErrorMsg(e instanceof Error ? e.message : t("modal.analyzing"));
       setModalStatus("idle");
     }
   }
@@ -225,7 +210,7 @@ export default function HomePage() {
   async function handleAnalyze() {
     if (!modalTitle.trim()) return;
     if (objectives.length === 0) {
-      setModalErrorMsg("請先建立至少一個目標");
+      setModalErrorMsg(t("error.noObjectives"));
       return;
     }
     setModalErrorMsg("");
@@ -271,7 +256,7 @@ export default function HomePage() {
           setIdeas((prev) => prev.map((i) => (i.id === pendingInboxId ? updated : i)));
           closeModal();
         } catch (e) {
-          setModalErrorMsg(e instanceof Error ? e.message : "儲存失敗");
+          setModalErrorMsg(e instanceof Error ? e.message : t("modal.saving"));
           setModalStatus("confirm");
         }
       }
@@ -295,7 +280,7 @@ export default function HomePage() {
         setIdeas((prev) => [newIdea, ...prev]);
         closeModal();
       } catch (e) {
-        setModalErrorMsg(e instanceof Error ? e.message : "儲存失敗");
+        setModalErrorMsg(e instanceof Error ? e.message : t("modal.saving"));
         setModalStatus("confirm");
       }
     }
@@ -377,6 +362,17 @@ export default function HomePage() {
       return (b.analysis!.finalScore ?? 0) - (a.analysis!.finalScore ?? 0);
     });
 
+  const taskStatusLabel: Record<TaskStatus, string> = {
+    todo: t("status.todo"),
+    "in-progress": t("status.inProgress"),
+    done: t("status.done"),
+  };
+  const taskStatusStyle: Record<TaskStatus, string> = {
+    todo: "bg-gray-100 text-gray-500",
+    "in-progress": "bg-amber-50 text-amber-600",
+    done: "bg-green-50 text-green-600",
+  };
+
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
       {/* Analyze Modal */}
@@ -391,7 +387,7 @@ export default function HomePage() {
             <div className="p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-700">
-                  {pendingInboxId ? "AI 評估任務" : "新增任務"}
+                  {pendingInboxId ? t("modal.evaluateTask") : t("modal.newTask")}
                 </h2>
                 {(modalStatus === "idle" || modalStatus === "confirm") && (
                   <button
@@ -409,7 +405,7 @@ export default function HomePage() {
                 <div className="text-center py-10">
                   <div className="text-3xl mb-3 animate-pulse">◎</div>
                   <p className="text-xs text-gray-400">
-                    {modalStatus === "saving" ? "儲存中…" : "AI 分析中…"}
+                    {modalStatus === "saving" ? t("modal.saving") : t("modal.analyzing")}
                   </p>
                 </div>
               )}
@@ -420,7 +416,7 @@ export default function HomePage() {
                   <textarea
                     value={clarifyAnswer}
                     onChange={(e) => setClarifyAnswer(e.target.value)}
-                    placeholder="簡單說明即可…"
+                    placeholder={t("modal.notesPlaceholder")}
                     rows={3}
                     autoFocus
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
@@ -430,14 +426,14 @@ export default function HomePage() {
                       onClick={() => runAnalysis()}
                       className="text-xs px-3 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50"
                     >
-                      跳過
+                      {t("modal.skip")}
                     </button>
                     <button
                       onClick={() => runAnalysis(clarifyAnswer.trim() || undefined)}
                       disabled={!clarifyAnswer.trim()}
                       className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      繼續分析
+                      {t("modal.continue")}
                     </button>
                   </div>
                 </div>
@@ -449,7 +445,7 @@ export default function HomePage() {
                     value={modalTitle}
                     onChange={(e) => setModalTitle(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleAnalyze()}
-                    placeholder="用一句話描述這個任務"
+                    placeholder={t("modal.taskPlaceholder")}
                     autoFocus
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
@@ -461,7 +457,7 @@ export default function HomePage() {
                     <span className={`transition-transform ${modalDetailsOpen ? "rotate-90" : ""}`}>
                       ›
                     </span>
-                    補充說明（選填）
+                    {t("modal.addNotes")}
                     {modalNotes.trim() && (
                       <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />
                     )}
@@ -471,7 +467,7 @@ export default function HomePage() {
                       <textarea
                         value={modalNotes}
                         onChange={(e) => setModalNotes(e.target.value)}
-                        placeholder="備註，幫助 AI 更準確判斷"
+                        placeholder={t("modal.notesPlaceholder")}
                         rows={3}
                         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none"
                       />
@@ -487,32 +483,29 @@ export default function HomePage() {
                     disabled={!modalTitle.trim()}
                     className="w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isQuickMode ? "AI 評估" : "完整分析"}
+                    {isQuickMode ? t("modal.aiEval") : t("modal.fullAnalysis")}
                   </button>
                 </div>
               )}
 
               {modalStatus === "confirm" && modalAnalysis && (
                 <div className="space-y-3">
-                  {/* Score + title */}
                   <div className="flex items-center gap-3">
                     <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
                       <span className="text-2xl font-bold font-mono text-indigo-600">
                         {modalAnalysis.finalScore.toFixed(1)}
                       </span>
-                      <span className="text-[10px] text-gray-400">綜合</span>
+                      <span className="text-[10px] text-gray-400">{t("modal.overall")}</span>
                     </div>
                     <p className="text-sm font-medium text-gray-800 leading-snug">{modalTitle}</p>
                   </div>
 
-                  {/* Summary */}
                   {modalAnalysis.summary && (
                     <div className="bg-indigo-50 rounded-xl px-3 py-2.5 text-xs text-indigo-700 leading-relaxed">
                       {modalAnalysis.summary}
                     </div>
                   )}
 
-                  {/* Per-objective breakdown */}
                   <div className="space-y-2">
                     {modalAnalysis.objectiveScores.map((os) => {
                       const obj = objectives.find((o) => o.id === os.objectiveId);
@@ -540,7 +533,7 @@ export default function HomePage() {
 
                   {modalAnalysis.risks.length > 0 && (
                     <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                      <span className="font-medium">風險：</span>
+                      <span className="font-medium">{t("modal.risks")}</span>
                       {modalAnalysis.risks.join("；")}
                     </div>
                   )}
@@ -554,19 +547,19 @@ export default function HomePage() {
                       onClick={() => handleSave("deleted", "todo")}
                       className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50"
                     >
-                      放棄
+                      {t("modal.discard")}
                     </button>
                     <button
                       onClick={() => handleSave("shelved", "todo")}
                       className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-200"
                     >
-                      暫存
+                      {t("modal.shelve")}
                     </button>
                     <button
                       onClick={() => handleSave(undefined, "todo")}
                       className="flex-1 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
                     >
-                      加入清單
+                      {t("modal.addToList")}
                     </button>
                   </div>
                 </div>
@@ -579,11 +572,11 @@ export default function HomePage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">任務</h1>
+          <h1 className="text-xl font-semibold">{t("tasks.title")}</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            AI 幫你判斷哪個最值得做
+            {t("tasks.subtitle")}
             <span className="ml-1.5 text-gray-300">·</span>
-            <span className="ml-1.5 text-indigo-400">{MODE_LABELS[evalProfile.mode]}</span>
+            <span className="ml-1.5 text-indigo-400">{t(`mode.${evalProfile.mode}`)}</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -592,23 +585,14 @@ export default function HomePage() {
               onClick={openLogin}
               className="text-xs font-medium px-3 py-2 rounded-xl border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors"
             >
-              登入
+              {t("tasks.signIn")}
             </button>
           )}
-          <Link href="/okr" className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors">
-            目標設定
-          </Link>
-          <button
-            onClick={() => setShowEvalSettings(true)}
-            className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl hover:bg-gray-100 transition-colors"
-          >
-            評估設定
-          </button>
           <button
             onClick={openNewModal}
             className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
           >
-            + 新增
+            {t("tasks.add")}
           </button>
         </div>
       </div>
@@ -616,10 +600,10 @@ export default function HomePage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
         {([
-          { key: "tasks", label: "任務", count: pendingItems.length + evaluated.length },
-          { key: "shelved", label: "暫存", count: shelved.length },
-          { key: "deleted", label: "刪除", count: deleted.length },
-        ] as const).map(({ key, label, count }) => (
+          { key: "tasks", labelKey: "tab.tasks", count: pendingItems.length + evaluated.length },
+          { key: "shelved", labelKey: "tab.shelved", count: shelved.length },
+          { key: "deleted", labelKey: "tab.deleted", count: deleted.length },
+        ] as const).map(({ key, labelKey, count }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -629,7 +613,7 @@ export default function HomePage() {
                 : "text-gray-400 hover:text-gray-600"
             }`}
           >
-            {label}
+            {t(labelKey)}
             {count > 0 && (
               <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
                 activeTab === key ? "bg-gray-100 text-gray-500" : "bg-gray-200 text-gray-400"
@@ -645,11 +629,11 @@ export default function HomePage() {
       {reanalyzingIds.size > 0 && activeTab === "tasks" && (
         <div className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
           <span className="animate-pulse">◎</span>
-          AI 正在重新分析 {reanalyzingIds.size} 個任務…
+          {t("reanalyzing", { n: reanalyzingIds.size })}
         </div>
       )}
 
-      {/* Objective / group filter dropdown — only when there are evaluated ideas */}
+      {/* Objective / group filter dropdown */}
       {activeTab === "tasks" && evaluated.length > 0 && objectives.length > 0 && (
         <div className="relative">
           <select
@@ -657,7 +641,7 @@ export default function HomePage() {
             onChange={(e) => setFilterValue(e.target.value)}
             className="w-full appearance-none bg-white border border-gray-200 rounded-xl px-3 py-2 pr-8 text-sm text-gray-700 focus:outline-none focus:border-gray-400"
           >
-            <option value="">全部目標</option>
+            <option value="">{t("filter.all")}</option>
             {groups.length > 0 && (() => {
               const activeObjs = objectives.filter((o) => !o.status || o.status === "active");
               const ungrouped = activeObjs.filter((o) => !o.meta?.groupId);
@@ -672,8 +656,8 @@ export default function HomePage() {
                         .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2));
                       if (gObjs.length === 0) return null;
                       return (
-                        <optgroup key={g.id} label={`▸ ${g.name}（全組）`}>
-                          <option value={`g:${g.id}`}>— {g.name}（全組）</option>
+                        <optgroup key={g.id} label={`▸ ${g.name}`}>
+                          <option value={`g:${g.id}`}>{t("filter.groupAll", { name: g.name })}</option>
                           {gObjs.map((o) => (
                             <option key={o.id} value={o.id}>　{o.title}</option>
                           ))}
@@ -681,7 +665,7 @@ export default function HomePage() {
                       );
                     })}
                   {ungrouped.length > 0 && (
-                    <optgroup label="▸ 未分組">
+                    <optgroup label={`▸ ${t("goals.ungrouped")}`}>
                       {ungrouped
                         .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
                         .map((o) => (
@@ -708,20 +692,17 @@ export default function HomePage() {
       {/* Tasks tab */}
       {activeTab === "tasks" && (
         <>
-          {/* Pending evaluation */}
           {pendingItems.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  未評估
+                  {t("pending.title")}
                 </h2>
                 <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">
                   {pendingItems.length}
                 </span>
               </div>
-              <p className="text-xs text-gray-400">
-                點「AI 評估」讓 AI 根據你的目標打分
-              </p>
+              <p className="text-xs text-gray-400">{t("pending.hint")}</p>
               {pendingItems.map((item) => (
                 <div
                   key={item.id}
@@ -733,27 +714,27 @@ export default function HomePage() {
                       onClick={() => openAnalyzeInbox(item)}
                       className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
                     >
-                      AI 評估
+                      {t("pending.aiEval")}
                     </button>
                     {item.ideaStatus === "inbox" && (
                       <button
                         onClick={() => promoteToTask(item)}
                         className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                       >
-                        加入待辦
+                        {t("pending.addToTodo")}
                       </button>
                     )}
                     <button
                       onClick={() => archiveIdea(item)}
                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors"
                     >
-                      暫存
+                      {t("pending.shelve")}
                     </button>
                     <button
                       onClick={() => deleteIdea(item)}
                       className="text-xs text-gray-300 hover:text-red-400 ml-auto transition-colors"
                     >
-                      刪除
+                      {t("pending.delete")}
                     </button>
                   </div>
                 </div>
@@ -761,15 +742,14 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Evaluated ranked list */}
           {evaluated.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">AI 評分排行</h2>
+                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{t("evaluated.title")}</h2>
                 <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                  <span className="text-indigo-500 font-medium">7+</span><span>高度相關</span>
-                  <span className="text-amber-500 font-medium">4–7</span><span>有關聯</span>
-                  <span className="text-gray-400 font-medium">&lt;4</span><span>弱</span>
+                  <span className="text-indigo-500 font-medium">7+</span><span>{t("evaluated.high")}</span>
+                  <span className="text-amber-500 font-medium">4–7</span><span>{t("evaluated.mid")}</span>
+                  <span className="text-gray-400 font-medium">&lt;4</span><span>{t("evaluated.low")}</span>
                 </div>
               </div>
               <div className="space-y-1.5">
@@ -803,7 +783,7 @@ export default function HomePage() {
                             {idea.title}
                           </p>
                           {reanalyzingIds.has(idea.id) && (
-                            <span className="text-[10px] text-indigo-400 animate-pulse">重新分析中…</span>
+                            <span className="text-[10px] text-indigo-400 animate-pulse">{t("reanalyzingItem")}</span>
                           )}
                         </button>
                         <span
@@ -821,10 +801,10 @@ export default function HomePage() {
                           value={idea.taskStatus ?? "todo"}
                           onChange={(e) => setTaskStatus(idea.id, e.target.value as TaskStatus)}
                           onClick={(e) => e.stopPropagation()}
-                          className={`text-xs px-2 py-0.5 rounded-lg font-medium shrink-0 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-300 ${TASK_STATUS_STYLE[idea.taskStatus ?? "todo"]}`}
+                          className={`text-xs px-2 py-0.5 rounded-lg font-medium shrink-0 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-300 ${taskStatusStyle[idea.taskStatus ?? "todo"]}`}
                         >
                           {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                            <option key={s} value={s}>{TASK_STATUS_LABEL[s]}</option>
+                            <option key={s} value={s}>{taskStatusLabel[s]}</option>
                           ))}
                         </select>
                         <button
@@ -837,13 +817,11 @@ export default function HomePage() {
 
                       {isExpanded && (
                         <div className="px-4 pb-4 pt-2 border-t border-gray-50 space-y-2">
-                          {/* Summary */}
                           {idea.analysis!.summary && (
                             <p className="text-xs text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5 leading-relaxed">
                               {idea.analysis!.summary}
                             </p>
                           )}
-                          {/* Per-objective */}
                           {idea.analysis!.objectiveScores.map((os) => {
                             const obj = objectives.find((o) => o.id === os.objectiveId);
                             const desc = obj?.description || os.objectiveDescription;
@@ -867,13 +845,13 @@ export default function HomePage() {
                               onClick={() => archiveIdea(idea)}
                               className="text-xs text-gray-400 hover:text-gray-600"
                             >
-                              暫存
+                              {t("action.shelve")}
                             </button>
                             <button
                               onClick={() => deleteIdea(idea)}
                               className="text-xs text-gray-300 hover:text-red-400"
                             >
-                              刪除
+                              {t("action.delete")}
                             </button>
                           </div>
                         </div>
@@ -888,23 +866,23 @@ export default function HomePage() {
           {evaluated.length === 0 && pendingItems.length === 0 && (
             objectives.length === 0 ? (
               <div className="py-10 space-y-4">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider text-center">開始使用</p>
+                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider text-center">{t("onboarding.title")}</p>
                 {[
-                  { step: "1", title: "設定判斷標準", desc: "告訴 AI 你現在最重要的目標是什麼", href: "/okr", cta: "去設定 →", active: true },
-                  { step: "2", title: "新增任務", desc: "把想做的事情丟進來", href: null, cta: null, active: false },
-                  { step: "3", title: "AI 評估", desc: "AI 幫你決定哪個最值得先做", href: null, cta: null, active: false },
-                ].map(({ step, title, desc, href, cta, active }) => (
+                  { step: "1", titleKey: "onboarding.step1.title", descKey: "onboarding.step1.desc", href: "/okr", ctaKey: "onboarding.step1.cta", active: true },
+                  { step: "2", titleKey: "onboarding.step2.title", descKey: "onboarding.step2.desc", href: null, ctaKey: null, active: false },
+                  { step: "3", titleKey: "onboarding.step3.title", descKey: "onboarding.step3.desc", href: null, ctaKey: null, active: false },
+                ].map(({ step, titleKey, descKey, href, ctaKey, active }) => (
                   <div key={step} className={`flex gap-4 items-start rounded-xl border px-4 py-3 ${active ? "bg-indigo-50 border-indigo-100" : "bg-white border-gray-100 opacity-50"}`}>
                     <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${active ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-400"}`}>
                       {step}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${active ? "text-indigo-800" : "text-gray-500"}`}>{title}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+                      <p className={`text-sm font-medium ${active ? "text-indigo-800" : "text-gray-500"}`}>{t(titleKey)}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{t(descKey)}</p>
                     </div>
-                    {href && cta && (
+                    {href && ctaKey && (
                       <Link href={href} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800 mt-0.5">
-                        {cta}
+                        {t(ctaKey)}
                       </Link>
                     )}
                   </div>
@@ -913,10 +891,10 @@ export default function HomePage() {
             ) : (
               <div className="text-center py-20">
                 <div className="text-4xl mb-3 text-gray-200">◎</div>
-                <p className="text-sm text-gray-500">還沒有任務</p>
-                <p className="text-xs text-gray-400 mt-1 mb-5">輸入一個任務，AI 會幫你判斷值不值得做</p>
+                <p className="text-sm text-gray-500">{t("noTasks.title")}</p>
+                <p className="text-xs text-gray-400 mt-1 mb-5">{t("noTasks.hint")}</p>
                 <button onClick={openNewModal} className="text-sm text-indigo-500 hover:text-indigo-700">
-                  新增第一個任務 →
+                  {t("noTasks.addFirst")}
                 </button>
               </div>
             )
@@ -929,7 +907,7 @@ export default function HomePage() {
         <div className="space-y-2">
           {shelved.length === 0 ? (
             <div className="text-center py-20">
-              <p className="text-sm text-gray-400">沒有暫存的任務</p>
+              <p className="text-sm text-gray-400">{t("shelved.empty")}</p>
             </div>
           ) : (
             shelved.map((item) => (
@@ -939,13 +917,13 @@ export default function HomePage() {
                   onClick={() => restoreIdea(item)}
                   className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
                 >
-                  恢復
+                  {t("action.restore")}
                 </button>
                 <button
                   onClick={() => deleteIdea(item)}
                   className="text-xs text-gray-300 hover:text-red-400 shrink-0"
                 >
-                  刪除
+                  {t("action.delete")}
                 </button>
               </div>
             ))
@@ -958,12 +936,12 @@ export default function HomePage() {
         <div className="space-y-2">
           {deleted.length === 0 ? (
             <div className="text-center py-20">
-              <p className="text-sm text-gray-400">垃圾桶是空的</p>
+              <p className="text-sm text-gray-400">{t("deleted.empty")}</p>
             </div>
           ) : (
             <>
               <div className="flex items-center justify-between pb-1">
-                <p className="text-xs text-gray-400">{deleted.length} 個已刪除的任務</p>
+                <p className="text-xs text-gray-400">{t("deleted.count", { n: deleted.length })}</p>
                 <button
                   onClick={async () => {
                     const toDelete = [...deleted];
@@ -972,13 +950,13 @@ export default function HomePage() {
                   }}
                   className="text-xs text-red-400 hover:text-red-600 transition-colors"
                 >
-                  清空全部
+                  {t("action.clearAll")}
                 </button>
               </div>
               {deleted.map((item) => (
                 <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
                   <p className="text-sm text-gray-400 flex-1 truncate line-through">{item.title}</p>
-                  <button onClick={() => restoreIdea(item)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">恢復</button>
+                  <button onClick={() => restoreIdea(item)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">{t("action.restore")}</button>
                   <button
                     onClick={async () => {
                       setIdeas((prev) => prev.filter((i) => i.id !== item.id));
@@ -986,177 +964,12 @@ export default function HomePage() {
                     }}
                     className="text-xs text-red-300 hover:text-red-500 shrink-0 transition-colors"
                   >
-                    永久刪除
+                    {t("action.permanentDelete")}
                   </button>
                 </div>
               ))}
             </>
           )}
-        </div>
-      )}
-
-
-      {/* Eval settings modal */}
-      {showEvalSettings && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowEvalSettings(false); }}
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-5">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-gray-800">評估設定</p>
-              <button onClick={() => setShowEvalSettings(false)} className="text-gray-300 hover:text-gray-500 text-xl leading-none">×</button>
-            </div>
-
-            {/* Mode */}
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500">模式</p>
-              <div className="grid grid-cols-3 gap-2">
-                {(["explore", "execute", "sustain"] as EvalMode[]).map((m) => (
-                  <button key={m}
-                    onClick={() => {
-                      const updated = { ...evalProfile, mode: m };
-                      setEvalProfile(updated);
-                      saveEvaluationProfile(updated);
-                    }}
-                    className={`rounded-xl border px-2 py-2.5 text-left transition-all ${
-                      evalProfile.mode === m ? "border-indigo-300 bg-indigo-50" : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    <p className={`text-xs font-semibold ${evalProfile.mode === m ? "text-indigo-700" : "text-gray-700"}`}>
-                      {MODE_LABELS[m]}
-                    </p>
-                    <p className="text-[10px] text-gray-400 mt-0.5 leading-snug">{MODE_DESCRIPTIONS[m]}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Consideration toggles */}
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500">評分參考</p>
-              <div className="space-y-2">
-
-                {/* Priority toggle + weight inputs */}
-                <div className={`rounded-xl border transition-all ${evalProfile.considerPriority ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white"}`}>
-                  <button
-                    onClick={() => {
-                      const updated = { ...evalProfile, considerPriority: !evalProfile.considerPriority };
-                      setEvalProfile(updated);
-                      saveEvaluationProfile(updated);
-                    }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
-                  >
-                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${evalProfile.considerPriority ? "bg-indigo-500 border-indigo-500" : "border-gray-300"}`}>
-                      {evalProfile.considerPriority && <span className="text-white text-[10px] font-bold">✓</span>}
-                    </span>
-                    <span>
-                      <span className={`text-xs font-medium block ${evalProfile.considerPriority ? "text-indigo-700" : "text-gray-700"}`}>重要度</span>
-                      <span className="text-[10px] text-gray-400">依目標重要度加權計分</span>
-                    </span>
-                  </button>
-                  {evalProfile.considerPriority && (
-                    <div className="px-3 pb-3 flex items-center gap-3">
-                      {([1, 2, 3] as const).map((p) => (
-                        <div key={p} className="flex items-center gap-1.5">
-                          <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border shrink-0 ${
-                            p === 1 ? "bg-red-100 text-red-600 border-red-200" :
-                            p === 2 ? "bg-amber-100 text-amber-600 border-amber-200" :
-                            "bg-gray-100 text-gray-500 border-gray-200"
-                          }`}>P{p}</span>
-                          <input
-                            type="number" min="0" max="10" step="0.5"
-                            value={evalProfile.priorityWeights[p]}
-                            onChange={(e) => {
-                              const val = Math.max(0, Math.min(10, parseFloat(e.target.value) || 0));
-                              const updated = { ...evalProfile, priorityWeights: { ...evalProfile.priorityWeights, [p]: val } };
-                              setEvalProfile(updated);
-                              saveEvaluationProfile(updated);
-                            }}
-                            className="w-12 text-center text-xs rounded-lg border border-indigo-200 bg-white px-1 py-1 focus:outline-none focus:border-indigo-400"
-                          />
-                          <span className="text-[11px] text-gray-400">×</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Group priority toggle + weight inputs */}
-                <div className={`rounded-xl border transition-all ${evalProfile.considerGroupPriority ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white"}`}>
-                  <button
-                    onClick={() => {
-                      const updated = { ...evalProfile, considerGroupPriority: !evalProfile.considerGroupPriority };
-                      setEvalProfile(updated);
-                      saveEvaluationProfile(updated);
-                    }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
-                  >
-                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${evalProfile.considerGroupPriority ? "bg-indigo-500 border-indigo-500" : "border-gray-300"}`}>
-                      {evalProfile.considerGroupPriority && <span className="text-white text-[10px] font-bold">✓</span>}
-                    </span>
-                    <span>
-                      <span className={`text-xs font-medium block ${evalProfile.considerGroupPriority ? "text-indigo-700" : "text-gray-700"}`}>群組重要度</span>
-                      <span className="text-[10px] text-gray-400">依群組優先級加權計分</span>
-                    </span>
-                  </button>
-                  {evalProfile.considerGroupPriority && (
-                    <div className="px-3 pb-3 flex items-center gap-3">
-                      {([1, 2, 3] as const).map((p) => (
-                        <div key={p} className="flex items-center gap-1.5">
-                          <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border shrink-0 ${
-                            p === 1 ? "bg-red-100 text-red-600 border-red-200" :
-                            p === 2 ? "bg-amber-100 text-amber-600 border-amber-200" :
-                            "bg-gray-100 text-gray-500 border-gray-200"
-                          }`}>P{p}</span>
-                          <input
-                            type="number" min="0" max="10" step="0.5"
-                            value={evalProfile.groupPriorityWeights[p]}
-                            onChange={(e) => {
-                              const val = Math.max(0, Math.min(10, parseFloat(e.target.value) || 0));
-                              const updated = { ...evalProfile, groupPriorityWeights: { ...evalProfile.groupPriorityWeights, [p]: val } };
-                              setEvalProfile(updated);
-                              saveEvaluationProfile(updated);
-                            }}
-                            className="w-12 text-center text-xs rounded-lg border border-indigo-200 bg-white px-1 py-1 focus:outline-none focus:border-indigo-400"
-                          />
-                          <span className="text-[11px] text-gray-400">×</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Deadline toggle */}
-                <button
-                  onClick={() => {
-                    const updated = { ...evalProfile, considerDeadline: !evalProfile.considerDeadline };
-                    setEvalProfile(updated);
-                    saveEvaluationProfile(updated);
-                  }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
-                    evalProfile.considerDeadline ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${evalProfile.considerDeadline ? "bg-indigo-500 border-indigo-500" : "border-gray-300"}`}>
-                    {evalProfile.considerDeadline && <span className="text-white text-[10px] font-bold">✓</span>}
-                  </span>
-                  <span>
-                    <span className={`text-xs font-medium block ${evalProfile.considerDeadline ? "text-indigo-700" : "text-gray-700"}`}>截止時間</span>
-                    <span className="text-[10px] text-gray-400">30 天內到期的目標優先度提升</span>
-                  </span>
-                </button>
-
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowEvalSettings(false)}
-              className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
-            >
-              完成
-            </button>
-          </div>
         </div>
       )}
     </div>

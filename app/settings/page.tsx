@@ -4,14 +4,16 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getSettings, saveSettings, getEvaluationProfile, saveEvaluationProfile } from "@/lib/storage";
 import { AppSettings, EvaluationProfile, EvalMode, AIProvider } from "@/lib/types";
-import { MODE_LABELS, MODE_DESCRIPTIONS, DEFAULT_EVALUATION_PROFILE } from "@/lib/evaluation-prompt";
+import { DEFAULT_EVALUATION_PROFILE } from "@/lib/evaluation-prompt";
 import { PROVIDER_LABEL, PROVIDER_MODELS, DEFAULT_MODEL } from "@/lib/llm";
 import { useAuth } from "@/components/AuthProvider";
+import { useLanguage } from "@/components/LanguageProvider";
 
 const PROVIDERS: AIProvider[] = ["anthropic", "openai", "gemini", "grok"];
 
 export default function SettingsPage() {
   const { user, requireAuth, signOut } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
   const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>({
     language: "zh-TW",
@@ -31,7 +33,7 @@ export default function SettingsPage() {
   }, [user]);
 
   function handleSave() {
-    saveSettings(settings);
+    saveSettings({ ...settings, language });
     saveEvaluationProfile(profile);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -43,8 +45,26 @@ export default function SettingsPage() {
   return (
     <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
       <div>
-        <h1 className="text-xl font-semibold mb-0.5">設定</h1>
-        <p className="text-sm text-gray-500">AI 模型與評估方式</p>
+        <h1 className="text-xl font-semibold mb-0.5">{t("settings.title")}</h1>
+        <p className="text-sm text-gray-500">{t("settings.subtitle")}</p>
+      </div>
+
+      {/* Language toggle */}
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-4">
+        <p className="text-sm font-medium text-gray-700 mb-3">{t("settings.language")}</p>
+        <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
+          {(["zh-TW", "en"] as const).map((lang) => (
+            <button
+              key={lang}
+              onClick={() => setLanguage(lang)}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                language === lang ? "bg-white shadow-sm text-gray-900" : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              {lang === "zh-TW" ? "繁體中文" : "English"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* AI Provider + Model */}
@@ -53,7 +73,7 @@ export default function SettingsPage() {
           onClick={() => setShowAIModel((v) => !v)}
           className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors"
         >
-          <p className="text-sm font-medium text-gray-700">AI 模型</p>
+          <p className="text-sm font-medium text-gray-700">{t("settings.aiModel.title")}</p>
           <span className={`text-gray-400 transition-transform ${showAIModel ? "rotate-180" : ""}`}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 5l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </span>
@@ -80,27 +100,9 @@ export default function SettingsPage() {
               ))}
             </div>
 
-            {/* API Key */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-gray-600">
-                {PROVIDER_LABEL[activeProvider]} API Key
-              </label>
-              <input
-                type="password"
-                placeholder="sk-..."
-                value={settings.apiKeys?.[activeProvider] ?? ""}
-                onChange={(e) => setSettings((s) => ({
-                  ...s,
-                  apiKeys: { ...s.apiKeys, [activeProvider]: e.target.value },
-                }))}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <p className="text-[10px] text-gray-400">API Key 僅儲存在本機，不會上傳伺服器</p>
-            </div>
-
             {/* Model dropdown */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-gray-600">模型</label>
+              <label className="block text-xs font-medium text-gray-600">{t("settings.model.label")}</label>
               <select
                 value={settings.model ?? DEFAULT_MODEL[activeProvider]}
                 onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}
@@ -110,20 +112,6 @@ export default function SettingsPage() {
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
-            </div>
-
-            {/* Language */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-gray-600">AI 回應語言</label>
-              <div className="flex gap-2 bg-gray-100 rounded-xl p-1">
-                {(["zh-TW", "en"] as const).map((lang) => (
-                  <button key={lang}
-                    onClick={() => setSettings((s) => ({ ...s, language: lang }))}
-                    className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${settings.language === lang ? "bg-white shadow-sm text-gray-900" : "text-gray-400"}`}>
-                    {lang === "zh-TW" ? "繁體中文" : "English"}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
         )}
@@ -136,9 +124,9 @@ export default function SettingsPage() {
           className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors"
         >
           <div>
-            <p className="text-sm font-medium text-gray-700">AI 評估標準</p>
+            <p className="text-sm font-medium text-gray-700">{t("settings.evalCriteria.title")}</p>
             {!showEvalProfile && (
-              <p className="text-xs text-gray-400 mt-0.5">{MODE_LABELS[profile.mode]}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{t(`mode.${profile.mode}`)}</p>
             )}
           </div>
           <span className={`text-gray-400 transition-transform ${showEvalProfile ? "rotate-180" : ""}`}>
@@ -150,7 +138,7 @@ export default function SettingsPage() {
           <div className="px-5 pb-5 space-y-5 border-t border-gray-100">
             {/* Mode */}
             <div className="space-y-2 pt-4">
-              <label className="text-xs text-gray-500 font-medium block">模式</label>
+              <label className="text-xs text-gray-500 font-medium block">{t("settings.mode.label")}</label>
               <div className="grid grid-cols-3 gap-2">
                 {(["explore", "execute", "sustain"] as EvalMode[]).map((m) => (
                   <button key={m}
@@ -161,9 +149,9 @@ export default function SettingsPage() {
                         : "border-gray-200 hover:border-gray-300"
                     }`}>
                     <p className={`text-xs font-semibold ${profile.mode === m ? "text-indigo-700" : "text-gray-700"}`}>
-                      {MODE_LABELS[m]}
+                      {t(`mode.${m}`)}
                     </p>
-                    <p className="text-[10px] text-gray-400 mt-0.5 leading-snug">{MODE_DESCRIPTIONS[m]}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5 leading-snug">{t(`mode.${m}.desc`)}</p>
                   </button>
                 ))}
               </div>
@@ -171,12 +159,12 @@ export default function SettingsPage() {
 
             {/* Consideration toggles */}
             <div className="space-y-2">
-              <label className="text-xs text-gray-500 font-medium block">評分參考</label>
+              <label className="text-xs text-gray-500 font-medium block">{t("settings.considerations.label")}</label>
               <div className="space-y-2">
                 {([
-                  { key: "considerPriority" as const, label: "重要度", desc: "P1 目標權重 3×，P2 為 2×，P3 為 1×" },
-                  { key: "considerDeadline" as const, label: "截止時間", desc: "30 天內到期的目標優先度提升" },
-                ] as const).map(({ key, label, desc }) => (
+                  { key: "considerPriority" as const, labelKey: "settings.priority.label", descKey: "settings.priority.desc" },
+                  { key: "considerDeadline" as const, labelKey: "settings.deadline.label", descKey: "settings.deadline.desc" },
+                ] as const).map(({ key, labelKey, descKey }) => (
                   <button key={key}
                     onClick={() => setProfile((p) => ({ ...p, [key]: !p[key] }))}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
@@ -189,8 +177,8 @@ export default function SettingsPage() {
                       {profile[key] && <span className="text-white text-[10px] font-bold">✓</span>}
                     </span>
                     <span>
-                      <span className={`text-xs font-medium block ${profile[key] ? "text-indigo-700" : "text-gray-700"}`}>{label}</span>
-                      <span className="text-[10px] text-gray-400">{desc}</span>
+                      <span className={`text-xs font-medium block ${profile[key] ? "text-indigo-700" : "text-gray-700"}`}>{t(labelKey)}</span>
+                      <span className="text-[10px] text-gray-400">{t(descKey)}</span>
                     </span>
                   </button>
                 ))}
@@ -202,7 +190,7 @@ export default function SettingsPage() {
 
       <button onClick={handleSave}
         className="w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors">
-        {saved ? "已儲存 ✓" : "儲存設定"}
+        {saved ? t("settings.saved") : t("settings.save")}
       </button>
 
       <div className="border-t border-gray-100 pt-4 flex items-center justify-between">
@@ -211,7 +199,7 @@ export default function SettingsPage() {
           onClick={signOut}
           className="text-xs text-gray-400 hover:text-red-500 transition-colors shrink-0 ml-4"
         >
-          登出
+          {t("settings.signOut")}
         </button>
       </div>
     </div>

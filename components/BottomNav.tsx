@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
+import { useLanguage } from "./LanguageProvider";
 
-const navItems = [
+const NAV_ITEMS = [
   {
     href: "/",
-    label: "任務",
+    labelKey: "nav.tasks",
     exact: true,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -19,7 +20,7 @@ const navItems = [
   },
   {
     href: "/okr",
-    label: "目標",
+    labelKey: "nav.goals",
     exact: false,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -31,7 +32,7 @@ const navItems = [
   },
   {
     href: "/settings",
-    label: "設定",
+    labelKey: "nav.settings",
     exact: false,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -45,13 +46,14 @@ const navItems = [
 export default function BottomNav() {
   const pathname = usePathname();
   const { user, openLogin } = useAuth();
+  const { t } = useLanguage();
 
   return (
     <nav
       className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40 flex"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      {navItems.map((item) => {
+      {NAV_ITEMS.map((item) => {
         const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
         return (
           <Link
@@ -67,7 +69,7 @@ export default function BottomNav() {
             }`}
           >
             {item.icon}
-            {item.label}
+            {t(item.labelKey)}
           </Link>
         );
       })}
