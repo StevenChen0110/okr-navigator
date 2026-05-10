@@ -427,35 +427,39 @@ export default function GoalsPage() {
       {/* Goals list — left column */}
       <div className="flex-1 min-w-0">
       <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
+      {/* Title row */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">{t("goals.title")}</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{t("goals.subtitle")}</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{t("goals.subtitle")}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setShowGroupModal(true)}
-            className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
-            {t("goals.groupBtn")}{groups.length > 0 ? ` (${groups.length})` : ""}
+        {!adding && (
+          <button onClick={() => { setAdding(true); setEditingId(null); setForm(emptyForm()); }}
+            className="shrink-0 text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
+            + {t("action.add")}
           </button>
-          <button onClick={() => setSortAsc((v) => !v)}
-            className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
-            {sortAsc ? "1→3" : "3→1"}
-          </button>
-          <button onClick={() => openChat("optimize")}
-            className="hidden md:inline-flex text-xs text-gray-400 hover:text-indigo-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors">
-            {t("chat.optimize")}
-          </button>
-          <button onClick={() => openChat("goalBuilder")}
-            className="hidden md:inline-flex text-xs text-indigo-500 hover:text-indigo-700 px-2.5 py-1.5 rounded-lg border border-indigo-200 hover:border-indigo-300 transition-colors">
-            {t("chat.goalBuilder")}
-          </button>
-          {!adding && (
-            <button onClick={() => { setAdding(true); setEditingId(null); setForm(emptyForm()); }}
-              className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
-              + {t("action.add")}
-            </button>
-          )}
-        </div>
+        )}
+      </div>
+
+      {/* Secondary actions row — desktop only */}
+      <div className="hidden md:flex items-center gap-1.5">
+        <button onClick={() => setShowGroupModal(true)}
+          className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors whitespace-nowrap">
+          {t("goals.groupBtn")}{groups.length > 0 ? ` (${groups.length})` : ""}
+        </button>
+        <button onClick={() => setSortAsc((v) => !v)}
+          className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors whitespace-nowrap">
+          {sortAsc ? "1→3" : "3→1"}
+        </button>
+        <div className="flex-1" />
+        <button onClick={() => openChat("optimize")}
+          className="text-xs text-gray-400 hover:text-indigo-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors whitespace-nowrap">
+          {t("chat.optimize")}
+        </button>
+        <button onClick={() => openChat("goalBuilder")}
+          className="text-xs text-indigo-500 hover:text-indigo-700 px-2.5 py-1.5 rounded-lg border border-indigo-200 hover:border-indigo-300 transition-colors whitespace-nowrap">
+          {t("chat.goalBuilder")}
+        </button>
       </div>
 
       {/* Mobile-only AI buttons */}
