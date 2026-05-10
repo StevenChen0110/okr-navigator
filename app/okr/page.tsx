@@ -9,6 +9,8 @@ import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
 import { getObjGroups, saveObjGroups } from "@/lib/storage";
 import { useLanguage } from "@/components/LanguageProvider";
+import RichTextArea from "@/components/RichTextArea";
+import RichTextDisplay from "@/components/RichTextDisplay";
 
 const PRIORITY_CONFIG = {
   1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
@@ -128,10 +130,13 @@ function GoalForm({
             {t("form.keyResults")}
             {validKrCount > 0 && <span className="ml-1 text-gray-400 font-normal">({validKrCount})</span>}
           </span>
-          <button type="button" onClick={handleSuggest} disabled={!form.title.trim() || suggesting}
-            className="text-xs text-indigo-500 hover:text-indigo-700 disabled:opacity-40 transition-colors">
-            {suggesting ? t("form.aiSuggesting") : t("form.aiSuggest")}
-          </button>
+          <div className="flex flex-col items-end gap-0.5">
+            <button type="button" onClick={handleSuggest} disabled={!form.title.trim() || suggesting}
+              className="text-xs text-indigo-500 hover:text-indigo-700 disabled:opacity-40 transition-colors">
+              {suggesting ? t("form.aiSuggesting") : t("form.aiSuggest")}
+            </button>
+            <span className="text-[10px] text-gray-400">{t("form.aiSuggestHint")}</span>
+          </div>
         </div>
 
         {form.krs.map((kr, i) => (
@@ -184,15 +189,12 @@ function GoalForm({
                 className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
               />
             </div>
-            <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder={t("form.descPlaceholder")} rows={2}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none" />
-            <textarea value={form.motivation} onChange={(e) => setForm({ ...form, motivation: e.target.value })}
-              placeholder={t("form.motivationPlaceholder")} rows={2}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none" />
-            <textarea value={form.expectedOutcome} onChange={(e) => setForm({ ...form, expectedOutcome: e.target.value })}
-              placeholder={t("form.outcomePlaceholder")} rows={2}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none" />
+            <RichTextArea value={form.description} onChange={(v) => setForm({ ...form, description: v })}
+              placeholder={t("form.descPlaceholder")} rows={2} />
+            <RichTextArea value={form.motivation} onChange={(v) => setForm({ ...form, motivation: v })}
+              placeholder={t("form.motivationPlaceholder")} rows={2} />
+            <RichTextArea value={form.expectedOutcome} onChange={(v) => setForm({ ...form, expectedOutcome: v })}
+              placeholder={t("form.outcomePlaceholder")} rows={2} />
           </div>
         )}
       </div>
@@ -424,7 +426,7 @@ export default function GoalsPage() {
                       <p className="text-sm font-medium text-gray-800 truncate">{o.title}</p>
                     </div>
                     {o.description && (
-                      <p className="text-xs text-gray-400 mt-1 leading-snug">{o.description}</p>
+                      <RichTextDisplay text={o.description} className="text-xs text-gray-400 mt-1" />
                     )}
                   </div>
                   <div className="flex gap-3 shrink-0">
@@ -433,12 +435,12 @@ export default function GoalsPage() {
                   </div>
                 </div>
                 {o.keyResults.length > 0 && (
-                  <div className="mt-2 space-y-1 pl-1">
+                  <div className="mt-2 space-y-1.5 pl-1">
                     {o.keyResults.map((kr) => (
-                      <p key={kr.id} className="text-xs text-gray-400 flex items-start gap-1.5">
-                        <span className="text-gray-300 shrink-0 mt-0.5">—</span>
-                        {kr.title}
-                      </p>
+                      <div key={kr.id} className="flex items-start gap-2">
+                        <span className="text-gray-300 shrink-0 mt-0.5 leading-none">—</span>
+                        <span className="text-xs text-gray-400 leading-relaxed min-w-0">{kr.title}</span>
+                      </div>
                     ))}
                   </div>
                 )}

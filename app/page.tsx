@@ -29,6 +29,7 @@ import {
   DEFAULT_EVALUATION_PROFILE,
 } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
+import RichTextArea from "@/components/RichTextArea";
 
 type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
 
@@ -464,12 +465,11 @@ export default function HomePage() {
                   </button>
                   {modalDetailsOpen && (
                     <div className="pl-3 border-l-2 border-gray-100">
-                      <textarea
+                      <RichTextArea
                         value={modalNotes}
-                        onChange={(e) => setModalNotes(e.target.value)}
+                        onChange={setModalNotes}
                         placeholder={t("modal.notesPlaceholder")}
                         rows={3}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none resize-none"
                       />
                     </div>
                   )}
