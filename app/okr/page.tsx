@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, ObjGroup, GoalSuggestion } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective, markAllIdeasForReanalysis } from "@/lib/db";
@@ -216,7 +217,7 @@ function GoalForm({
 
 export default function GoalsPage() {
   const { user, requireAuth } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const router = useRouter();
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [groups, setGroups] = useState<ObjGroup[]>([]);
@@ -519,6 +520,9 @@ export default function GoalsPage() {
                     )}
                   </div>
                   <div className="flex gap-3 shrink-0">
+                    <Link href={`/okr/${o.id}`} className="text-xs text-indigo-400 hover:text-indigo-600 transition-colors">
+                      {language === "zh-TW" ? "路徑圖" : "Roadmap"}
+                    </Link>
                     <button onClick={() => startEdit(o)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">{t("action.edit")}</button>
                     <button onClick={() => handleDelete(o.id)} className="text-xs text-gray-300 hover:text-red-400 transition-colors">{t("action.delete")}</button>
                   </div>
@@ -553,19 +557,28 @@ export default function GoalsPage() {
                   const collapsed = collapsedGroups.has(g.id);
                   return (
                     <div key={g.id} className="space-y-2">
-                      <button
-                        onClick={() => setCollapsedGroups((prev) => {
-                          const next = new Set(prev);
-                          next.has(g.id) ? next.delete(g.id) : next.add(g.id);
-                          return next;
-                        })}
-                        className="flex items-center gap-2 w-full text-left py-0.5"
-                      >
-                        <span className={`text-gray-400 text-xs transition-transform leading-none ${collapsed ? "" : "rotate-90"}`}>›</span>
-                        <span className="text-sm font-semibold text-gray-700">{g.name}</span>
-                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded border ${PRIORITY_CONFIG[g.priority].style}`}>{g.priority}</span>
-                        <span className="text-xs text-gray-400">{t("goals.objCount", { n: objs.length })}</span>
-                      </button>
+                      <div className="flex items-center gap-2 w-full">
+                        <button
+                          onClick={() => setCollapsedGroups((prev) => {
+                            const next = new Set(prev);
+                            next.has(g.id) ? next.delete(g.id) : next.add(g.id);
+                            return next;
+                          })}
+                          className="flex items-center gap-2 flex-1 text-left py-0.5 min-w-0"
+                        >
+                          <span className={`text-gray-400 text-xs transition-transform leading-none shrink-0 ${collapsed ? "" : "rotate-90"}`}>›</span>
+                          <span className="text-sm font-semibold text-gray-700 truncate">{g.name}</span>
+                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded border shrink-0 ${PRIORITY_CONFIG[g.priority].style}`}>{g.priority}</span>
+                          <span className="text-xs text-gray-400 shrink-0">{t("goals.objCount", { n: objs.length })}</span>
+                        </button>
+                        <Link
+                          href={`/okr/group/${g.id}`}
+                          className="text-xs text-indigo-400 hover:text-indigo-600 transition-colors shrink-0 py-0.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {language === "zh-TW" ? "路徑圖" : "Roadmap"}
+                        </Link>
+                      </div>
                       {!collapsed && (
                         <div className="space-y-2 pl-3 border-l-2 border-gray-100">
                           {objs.map(renderObj)}

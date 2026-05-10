@@ -1,4 +1,4 @@
-import { Objective, Idea, AppSettings, EvaluationProfile, ObjGroup } from "./types";
+import { Objective, Idea, AppSettings, EvaluationProfile, ObjGroup, Milestone, GroupSequencePhase, StoredMessage } from "./types";
 import { DEFAULT_EVALUATION_PROFILE } from "./evaluation-prompt";
 
 const KEYS = {
@@ -95,4 +95,32 @@ export function getObjGroups(): ObjGroup[] {
 
 export function saveObjGroups(groups: ObjGroup[]): void {
   save(KEYS.OBJ_GROUPS, groups);
+}
+
+// Chat history (key = "goalBuilder" | "optimize" | "roadmap_<id>" | "groupRoadmap_<id>")
+export function getChatHistory(key: string): StoredMessage[] {
+  return load<StoredMessage[]>(`chat_${key}`, []);
+}
+export function saveChatHistory(key: string, messages: StoredMessage[]): void {
+  save(`chat_${key}`, messages);
+}
+export function clearChatHistory(key: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(`chat_${key}`);
+}
+
+// Objective roadmaps (milestones)
+export function getObjectiveRoadmap(objectiveId: string): Milestone[] {
+  return load<Milestone[]>(`roadmap_${objectiveId}`, []);
+}
+export function saveObjectiveRoadmap(objectiveId: string, milestones: Milestone[]): void {
+  save(`roadmap_${objectiveId}`, milestones);
+}
+
+// Group roadmaps (phase sequencing)
+export function getGroupRoadmap(groupId: string): GroupSequencePhase[] {
+  return load<GroupSequencePhase[]>(`groupRoadmap_${groupId}`, []);
+}
+export function saveGroupRoadmap(groupId: string, phases: GroupSequencePhase[]): void {
+  save(`groupRoadmap_${groupId}`, phases);
 }

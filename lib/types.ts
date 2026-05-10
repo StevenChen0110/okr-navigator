@@ -175,3 +175,38 @@ export interface OKRChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+export interface Milestone {
+  id: string;
+  title: string;
+  timeframe?: string;
+  order: number;
+}
+
+export interface MilestoneSuggestionItem {
+  action: "add" | "update" | "remove";
+  id?: string;
+  title: string;
+  timeframe?: string;
+  order?: number;
+}
+
+export interface MilestoneSuggestion {
+  milestones: MilestoneSuggestionItem[];
+}
+
+export interface GroupSequencePhase {
+  phase: number;
+  objectiveIds: string[];
+  canParallel: boolean;
+  note?: string;
+}
+
+export interface GroupSequenceSuggestion {
+  phases: GroupSequencePhase[];
+}
+
+export interface StoredMessage {
+  role: "user" | "assistant";
+  content: string;
+}

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Objective, ObjGroup, GoalSuggestion } from "@/lib/types";
 import { callAI } from "@/lib/ai-client";
 import { useLanguage } from "./LanguageProvider";
+import { getChatHistory, saveChatHistory, clearChatHistory } from "@/lib/storage";
 
 interface UIMessage {
   role: "user" | "assistant";
@@ -21,6 +22,17 @@ interface Props {
   onClose?: () => void;
 }
 
+function sanitizeContent(text: string): string {
+  return text
+    .replace(/#{1,6}\s+/g, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`{1,3}([\s\S]*?)`{1,3}/g, "$1")
+    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, "")
+    .replace(/^\s*[-+]\s+/gm, "")
+    .trim();
+}
+
 export default function OKRChat({ objectives, groups, onApplySuggestion, mode, className = "", onClose }: Props) {
   const { t, language } = useLanguage();
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -28,29 +40,35 @@ export default function OKRChat({ objectives, groups, onApplySuggestion, mode, c
   const [loading, setLoading] = useState(false);
   const [appliedIndices, setAppliedIndices] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const prevModeRef = useRef(mode);
   const didAutoTrigger = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // When mode changes to optimize, clear and auto-trigger
+  // Load stored messages on mount; auto-trigger optimize only if no history
   useEffect(() => {
-    if (mode !== prevModeRef.current) {
-      prevModeRef.current = mode;
-      setMessages([]);
-      setAppliedIndices(new Set());
-      didAutoTrigger.current = false;
-    }
-    if (mode === "optimize" && !didAutoTrigger.current && messages.length === 0) {
+    const stored = getChatHistory(mode);
+    if (stored.length > 0) {
+      setMessages(stored.map((m) => ({ role: m.role, content: m.content })));
+    } else if (mode === "optimize" && !didAutoTrigger.current) {
       didAutoTrigger.current = true;
       const prompt = language === "zh-TW"
         ? "請分析我的現有目標，給我具體的優化建議。"
         : "Please analyze my existing goals and give me specific improvement suggestions.";
       sendMsg(prompt);
     }
-  }, [mode, language]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // only on mount — chatKey remount handles mode switches
+
+  // Save messages to localStorage whenever they change (skip loading bubbles)
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const toStore = messages
+      .filter((m) => !m.isLoading)
+      .map((m) => ({ role: m.role, content: m.content }));
+    saveChatHistory(mode, toStore);
+  }, [messages, mode]);
 
   async function sendMsg(text: string) {
     if (loading) return;
@@ -67,7 +85,11 @@ export default function OKRChat({ objectives, groups, onApplySuggestion, mode, c
         groups,
         mode,
       });
-      setMessages([...newHistory, { role: "assistant", content: result.content, suggestion: result.suggestion }]);
+      setMessages([...newHistory, {
+        role: "assistant",
+        content: sanitizeContent(result.content),
+        suggestion: result.suggestion,
+      }]);
     } catch {
       setMessages([...newHistory, { role: "assistant", content: t("chat.error") }]);
     } finally {
@@ -80,6 +102,13 @@ export default function OKRChat({ objectives, groups, onApplySuggestion, mode, c
     if (!text || loading) return;
     setInput("");
     sendMsg(text);
+  }
+
+  function handleClear() {
+    clearChatHistory(mode);
+    setMessages([]);
+    setAppliedIndices(new Set());
+    didAutoTrigger.current = false;
   }
 
   function handleApply(suggestion: GoalSuggestion, idx: number) {
@@ -96,6 +125,9 @@ export default function OKRChat({ objectives, groups, onApplySuggestion, mode, c
           <span className="text-[10px] text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full">
             {mode === "goalBuilder" ? t("chat.goalBuilder") : t("chat.optimize")}
           </span>
+          <button onClick={handleClear} className="text-[10px] text-gray-300 hover:text-gray-500 transition-colors">
+            {t("chat.clear")}
+          </button>
           {onClose && (
             <button onClick={onClose} className="text-gray-300 hover:text-gray-500 text-xl leading-none transition-colors">×</button>
           )}

@@ -1,6 +1,6 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion } from "./types";
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -294,6 +294,149 @@ ${langInstruction(language)} Do not use any markdown formatting in your reply.`;
 
   const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 1024);
   return parseChatSuggestion(text);
+}
+
+// ── Roadmap ────────────────────────────────────────────────────────────────────
+
+function parseMilestoneSuggestion(text: string): { content: string; suggestion?: MilestoneSuggestion } {
+  const match = text.match(/<milestone_suggestion>([\s\S]*?)<\/milestone_suggestion>/);
+  if (!match) return { content: text };
+  const content = text.replace(/<milestone_suggestion>[\s\S]*?<\/milestone_suggestion>/, "").trim();
+  try {
+    return { content, suggestion: JSON.parse(match[1].trim()) as MilestoneSuggestion };
+  } catch {
+    return { content };
+  }
+}
+
+function parseGroupSuggestion(text: string): { content: string; suggestion?: GroupSequenceSuggestion } {
+  const match = text.match(/<group_suggestion>([\s\S]*?)<\/group_suggestion>/);
+  if (!match) return { content: text };
+  const content = text.replace(/<group_suggestion>[\s\S]*?<\/group_suggestion>/, "").trim();
+  try {
+    return { content, suggestion: JSON.parse(match[1].trim()) as GroupSequenceSuggestion };
+  } catch {
+    return { content };
+  }
+}
+
+export async function generateMilestones(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  objective: Objective,
+  provider: AIProvider = "anthropic",
+): Promise<Milestone[]> {
+  const krs = objective.keyResults.map((kr) => `- ${kr.title}`).join("\n");
+  const systemPrompt = language === "zh-TW"
+    ? `你是 OKR 規劃教練。根據目標和關鍵結果，規劃 4 到 7 個里程碑，形成達成目標的邏輯進程。每個里程碑是具體、可驗證的中間成果。只輸出合法的 JSON 陣列，不要輸出其他文字或 markdown 格式：[{"title":"...","timeframe":"...","order":1},...]`
+    : `You are an OKR planning coach. Given the objective and key results, plan 4 to 7 milestones forming a logical progression toward the goal. Each milestone is a concrete, verifiable intermediate outcome. Output ONLY a valid JSON array, no other text: [{"title":"...","timeframe":"...","order":1},...]`;
+  const userPrompt = language === "zh-TW"
+    ? `目標：${objective.title}\n${objective.description ? `說明：${objective.description}\n` : ""}關鍵結果：\n${krs}`
+    : `Objective: ${objective.title}\n${objective.description ? `Description: ${objective.description}\n` : ""}Key Results:\n${krs}`;
+  const text = await complete(provider, apiKey, model, systemPrompt, userPrompt);
+  try {
+    const parsed = JSON.parse(stripFences(extractJSON(text)));
+    return (Array.isArray(parsed) ? parsed : []).map((m: { title: string; timeframe?: string; order?: number }, i: number) => ({
+      id: crypto.randomUUID(),
+      title: String(m.title ?? ""),
+      timeframe: m.timeframe,
+      order: Number(m.order ?? i + 1),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function chatRoadmapCoach(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  objective: Objective,
+  milestones: Milestone[],
+  provider: AIProvider = "anthropic",
+): Promise<{ content: string; suggestion?: MilestoneSuggestion }> {
+  const krs = objective.keyResults.map((kr) => `- ${kr.title}`).join("\n");
+  const msList = milestones.length > 0
+    ? milestones.map((m) => `- [ID:${m.id}] ${m.title}${m.timeframe ? ` (${m.timeframe})` : ""}`).join("\n")
+    : "(尚無里程碑)";
+  const suggestionFormat = `<milestone_suggestion>
+{"milestones":[{"action":"add|update|remove","id":"only for update/remove","title":"...","timeframe":"...","order":1}]}
+</milestone_suggestion>`;
+  const systemPrompt = language === "zh-TW"
+    ? `你是一位路徑圖教練，幫助用戶規劃達成目標的里程碑。用自然對話的方式回應，不使用 markdown 符號、條列符號、粗體或標題。
+
+目標：${objective.title}
+關鍵結果：
+${krs}
+
+現有里程碑：
+${msList}
+
+要建議修改時，在訊息最後附上（用戶看不到）：
+${suggestionFormat}
+
+請用繁體中文回應，不使用任何 markdown 格式。`
+    : `You are a roadmap coach helping the user plan milestones toward their goal. Reply in natural conversational prose — no markdown, no bullets, no bold, no headers.
+
+Objective: ${objective.title}
+Key Results:
+${krs}
+
+Current milestones:
+${msList}
+
+When suggesting changes, append at the very end (user won't see it):
+${suggestionFormat}
+
+Do not use any markdown formatting.`;
+  const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 1024);
+  return parseMilestoneSuggestion(text);
+}
+
+export async function chatGroupRoadmapCoach(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  group: ObjGroup,
+  objectives: Objective[],
+  currentPhases: GroupSequencePhase[],
+  provider: AIProvider = "anthropic",
+): Promise<{ content: string; suggestion?: GroupSequenceSuggestion }> {
+  const objList = objectives.map((o) =>
+    `- [ID:${o.id}] ${o.title} (priority:${o.meta?.priority ?? 2})\n  KRs: ${o.keyResults.map((kr) => kr.title).join("; ")}`
+  ).join("\n");
+  const currentArrangement = currentPhases.length > 0
+    ? currentPhases.map((p) => `Phase ${p.phase} (${p.canParallel ? "parallel" : "sequential"}): ${p.objectiveIds.join(", ")}${p.note ? ` — ${p.note}` : ""}`).join("\n")
+    : "(not arranged yet)";
+  const suggestionFormat = `<group_suggestion>
+{"phases":[{"phase":1,"objectiveIds":["id1","id2"],"canParallel":false,"note":"optional"},...]}
+</group_suggestion>`;
+  const systemPrompt = language === "zh-TW"
+    ? `你是一位 OKR 教練，幫用戶規劃群組內目標的執行順序。分析哪些目標有依賴關係（必須先完成 A 才能做 B），哪些可以同時推進。建議合理的分階段方案。用自然對話方式回應，不使用 markdown。
+
+群組：${group.name}
+群組目標：
+${objList}
+
+現有排序：
+${currentArrangement}
+
+要建議排序時，在訊息最後附上（用戶看不到）：
+${suggestionFormat}
+
+請用繁體中文回應，不使用任何 markdown 格式。`
+    : `You are an OKR coach helping the user sequence goals within a group. Analyze dependencies (must do A before B) and which goals can run in parallel. Suggest a phased plan. Reply in natural conversational prose — no markdown.
+
+Group: ${group.name}
+Goals in group:
+${objList}
+
+Current arrangement:
+${currentArrangement}
+
+When suggesting a sequence, append at the very end (user won't see it):
+${suggestionFormat}
+
+Do not use any markdown formatting.`;
+  const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 1024);
+  return parseGroupSuggestion(text);
 }
 
 // ── Idea Analysis ─────────────────────────────────────────────────────────────

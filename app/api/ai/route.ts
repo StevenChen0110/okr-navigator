@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { AIProvider, Objective, ObjGroup } from "@/lib/types";
+import type { AIProvider, Objective, ObjGroup, Milestone, GroupSequencePhase } from "@/lib/types";
 import { VALID_PROVIDERS } from "@/lib/llm";
 import {
   analyzeIdea,
@@ -12,6 +12,9 @@ import {
   convertAllToSMART,
   refineKRTitle,
   chatOKRCoach,
+  generateMilestones,
+  chatRoadmapCoach,
+  chatGroupRoadmapCoach,
 } from "@/lib/claude";
 
 function getEnvKey(provider: AIProvider): string | undefined {
@@ -142,6 +145,35 @@ export async function POST(req: NextRequest) {
           payload.objectives as Objective[],
           payload.groups as ObjGroup[],
           payload.mode as "goalBuilder" | "optimize",
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "generateRoadmap": {
+        const result = await generateMilestones(
+          apiKey, model, language,
+          payload.objective as Objective,
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "chatRoadmap": {
+        const result = await chatRoadmapCoach(
+          apiKey, model, language,
+          payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
+          payload.objective as Objective,
+          payload.milestones as Milestone[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "chatGroupRoadmap": {
+        const result = await chatGroupRoadmapCoach(
+          apiKey, model, language,
+          payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
+          payload.group as ObjGroup,
+          payload.objectives as Objective[],
+          payload.currentPhases as GroupSequencePhase[],
           provider,
         );
         return NextResponse.json(result);
