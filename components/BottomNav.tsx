@@ -7,9 +7,9 @@ import { useLanguage } from "./LanguageProvider";
 
 const NAV_ITEMS = [
   {
-    href: "/",
+    href: "/tasks",
     labelKey: "nav.tasks",
-    exact: true,
+    exact: false,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <rect x="3" y="4" width="14" height="2" rx="1" fill="currentColor" />

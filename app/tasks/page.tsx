@@ -5,11 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import {
   Idea, Objective, KeyResult, TaskStatus, IdeaStatus,
-  IdeaKRLink, IdeaAnalysis, TodoItem, TaskTimeframe,
+  IdeaKRLink, IdeaAnalysis, TodoItem, TaskTimeframe, Habit, HabitLog,
 } from "@/lib/types";
 import {
   fetchIdeas, fetchObjectives, removeIdea, saveIdea,
   saveObjective, updateIdeaTaskStatus, updateIdeaStatus,
+  fetchHabits, fetchTodayHabitLogs, logHabitDone, undoHabitLog,
 } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import ScoreBar from "@/components/ScoreBar";
@@ -127,10 +128,28 @@ function TasksPageInner() {
 
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
+  const [mitIds, setMitIds] = useState<string[]>([]);
+  const [identity, setIdentity] = useState("");
+  const [editingIdentity, setEditingIdentity] = useState(false);
+  const [identityDraft, setIdentityDraft] = useState("");
+  const [showMITPicker, setShowMITPicker] = useState(false);
+  const [showRitual, setShowRitual] = useState(false);
+  const [ritualNote, setRitualNote] = useState("");
+  const [ritualDone, setRitualDone] = useState(false);
 
   useEffect(() => {
     fetchIdeas().then(setIdeas).catch(console.error);
     fetchObjectives().then(setObjectives).catch(console.error);
+    fetchHabits().then(setHabits).catch(console.error);
+    fetchTodayHabitLogs().then(setHabitLogs).catch(console.error);
+    const todayKey = `mit_${new Date().toISOString().split("T")[0]}`;
+    const stored = localStorage.getItem(todayKey);
+    if (stored) setMitIds(JSON.parse(stored));
+    const id = localStorage.getItem("loco_identity") ?? "";
+    setIdentity(id);
+    setIdentityDraft(id);
   }, []);
 
   // ── Timeframe filter ──────────────────────────────────────────────────────────
@@ -315,6 +334,47 @@ function TasksPageInner() {
     if (!text || workspaceChatLoading) return;
     setWorkspaceChatInput("");
     sendWorkspaceChat(text);
+  }
+
+  // ── Today / MIT / Habit helpers ───────────────────────────────────────────────
+
+  function todayStr() { return new Date().toISOString().split("T")[0]; }
+  function mitKey() { return `mit_${todayStr()}`; }
+
+  function saveMitIds(ids: string[]) {
+    setMitIds(ids);
+    localStorage.setItem(mitKey(), JSON.stringify(ids));
+  }
+
+  function saveIdentity() {
+    const v = identityDraft.trim();
+    setIdentity(v);
+    localStorage.setItem("loco_identity", v);
+    setEditingIdentity(false);
+  }
+
+  function addMIT(id: string) {
+    if (mitIds.length >= 3) return;
+    saveMitIds([...mitIds, id]);
+    setShowMITPicker(false);
+  }
+
+  async function toggleHabit(habit: Habit) {
+    const doneIds = new Set(habitLogs.filter((l) => !l.skipped).map((l) => l.habitId));
+    if (doneIds.has(habit.id)) {
+      const updated = await undoHabitLog(habit.id, habit).catch(() => habit);
+      setHabits((prev) => prev.map((h) => h.id === habit.id ? updated : h));
+      setHabitLogs((prev) => prev.filter((l) => l.habitId !== habit.id || l.loggedAt !== todayStr()));
+    } else {
+      const updated = await logHabitDone(habit.id, habit).catch(() => habit);
+      setHabits((prev) => prev.map((h) => h.id === habit.id ? updated : h));
+      setHabitLogs((prev) => [...prev, { id: uuid(), habitId: habit.id, loggedAt: todayStr(), skipped: false }]);
+    }
+  }
+
+  function completeRitual() {
+    if (ritualNote.trim()) localStorage.setItem(`ritual_${todayStr()}`, ritualNote.trim());
+    setRitualDone(true);
   }
 
   // ── Task list operations ──────────────────────────────────────────────────────
@@ -539,6 +599,17 @@ function TasksPageInner() {
     ? draftTitle
     : focusedTask?.title ?? "";
 
+  // ── Today derived ──────────────────────────────────────────────────────────────
+
+  const doneHabitIds = new Set(habitLogs.filter((l) => !l.skipped).map((l) => l.habitId));
+  const activeHabits = habits.filter((h) => !h.archivedAt);
+  const mitTasks = mitIds.map((id) => ideas.find((i) => i.id === id)).filter(Boolean) as Idea[];
+  const allMitDone = mitTasks.length > 0 && mitTasks.every((t) => t.taskStatus === "done");
+  const availableForMIT = activeTasks.filter((i) => !mitIds.includes(i.id) && i.taskStatus !== "done");
+  const yesterdayNote = typeof window !== "undefined"
+    ? localStorage.getItem(`ritual_${new Date(Date.now() - 86400000).toISOString().split("T")[0]}`)
+    : null;
+
   // ── Render ─────────────────────────────────────────────────────────────────────
 
   const TIMEFRAME_TABS: { key: "all" | TaskTimeframe; zh: string; en: string }[] = [
@@ -649,6 +720,122 @@ function TasksPageInner() {
                 </div>
               ))}
             </div>
+        )}
+
+        {taskFilter === "active" && activeTimeframe === "daily" && (
+          <div className="border-b border-gray-100">
+            {/* Identity statement */}
+            <div className="px-4 pt-3 pb-2">
+              {editingIdentity ? (
+                <div className="flex items-center gap-2">
+                  <input value={identityDraft} onChange={(e) => setIdentityDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveIdentity(); if (e.key === "Escape") setEditingIdentity(false); }}
+                    placeholder={language === "zh-TW" ? "這一季你想成為什麼樣的人？" : "Who do you want to become this quarter?"}
+                    className="flex-1 text-xs text-gray-600 bg-transparent border-b border-indigo-300 pb-0.5 focus:outline-none" autoFocus />
+                  <button onClick={saveIdentity} className="text-xs text-indigo-500 font-medium shrink-0">{language === "zh-TW" ? "儲存" : "Save"}</button>
+                  <button onClick={() => setEditingIdentity(false)} className="text-xs text-gray-400 shrink-0">{language === "zh-TW" ? "取消" : "Cancel"}</button>
+                </div>
+              ) : identity ? (
+                <button onClick={() => { setIdentityDraft(identity); setEditingIdentity(true); }}
+                  className="text-xs text-gray-400 hover:text-gray-600 text-left flex items-center gap-1.5 group">
+                  <span className="text-indigo-300">◈</span>
+                  <span>{identity}</span>
+                  <span className="text-gray-200 group-hover:text-gray-400">✎</span>
+                </button>
+              ) : (
+                <button onClick={() => setEditingIdentity(true)}
+                  className="text-xs text-gray-300 hover:text-gray-500 flex items-center gap-1.5">
+                  <span>◈</span>
+                  <span>{language === "zh-TW" ? "這一季你想成為什麼樣的人？" : "Who do you want to become this quarter?"}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Yesterday's note */}
+            {yesterdayNote && (
+              <div className="mx-4 mb-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg">
+                <p className="text-[10px] text-amber-500 font-medium mb-0.5">{language === "zh-TW" ? "昨天你說" : "Yesterday you wrote"}</p>
+                <p className="text-xs text-amber-700">{yesterdayNote}</p>
+              </div>
+            )}
+
+            {/* MIT section */}
+            <div className="px-4 pb-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{language === "zh-TW" ? "今天最重要的事" : "Most important today"}</p>
+                {mitIds.length < 3 && (
+                  <button onClick={() => setShowMITPicker(true)} className="text-xs text-indigo-500 hover:text-indigo-700">
+                    {language === "zh-TW" ? "+ 選擇" : "+ Pick"}
+                  </button>
+                )}
+              </div>
+              {mitTasks.length === 0 ? (
+                <button onClick={() => setShowMITPicker(true)}
+                  className="w-full border border-dashed border-gray-200 rounded-xl py-3 text-center hover:border-indigo-200 transition-colors">
+                  <p className="text-xs text-gray-400">{language === "zh-TW" ? "點此選擇今天最重要的 1–3 件事" : "Pick 1–3 most important tasks for today"}</p>
+                </button>
+              ) : (
+                <div className="space-y-1.5">
+                  {mitTasks.map((task) => {
+                    const done = task.taskStatus === "done";
+                    return (
+                      <div key={task.id} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all ${done ? "border-gray-100 opacity-60 bg-white" : "border-gray-200 bg-white hover:border-indigo-100"}`}>
+                        <button onClick={() => handleSetTaskStatus(task.id, done ? "todo" : "done")}
+                          className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${done ? "bg-indigo-400 border-indigo-400 text-white" : "border-gray-300 hover:border-indigo-400"}`}>
+                          {done && <span className="text-[10px]">✓</span>}
+                        </button>
+                        <button onClick={() => handleFocusTask(task)} className="flex-1 text-left min-w-0">
+                          <p className={`text-sm truncate ${done ? "line-through text-gray-400" : "text-gray-800"}`}>{task.title}</p>
+                        </button>
+                        <button onClick={() => saveMitIds(mitIds.filter((m) => m !== task.id))} className="text-gray-200 hover:text-gray-400 text-base leading-none shrink-0">×</button>
+                      </div>
+                    );
+                  })}
+                  {mitIds.length < 3 && (
+                    <button onClick={() => setShowMITPicker(true)}
+                      className="w-full py-1.5 rounded-xl border border-dashed border-gray-200 text-xs text-gray-400 hover:border-indigo-200 hover:text-indigo-400 transition-colors">
+                      + {language === "zh-TW" ? "再加一件事" : "Add one more"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Habits */}
+            {activeHabits.length > 0 && (
+              <div className="px-4 pb-3">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">{language === "zh-TW" ? "今天的習慣" : "Habits"}</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {activeHabits.map((habit) => {
+                    const done = doneHabitIds.has(habit.id);
+                    return (
+                      <button key={habit.id} onClick={() => toggleHabit(habit)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${done ? "bg-indigo-50 border-indigo-200" : "bg-white border-gray-200 hover:border-indigo-100"}`}>
+                        <span className={`text-sm shrink-0 ${done ? "text-indigo-400" : "text-gray-300"}`}>{done ? "✓" : "○"}</span>
+                        <div className="min-w-0">
+                          <p className={`text-xs font-medium truncate ${done ? "text-indigo-700" : "text-gray-700"}`}>{habit.name}</p>
+                          {habit.streakCount > 1 && <p className="text-[10px] text-amber-500">🔥 {habit.streakCount}</p>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* End of day */}
+            <div className="px-4 pb-3 text-center">
+              {allMitDone && <p className="text-xs text-indigo-500 mb-1.5">{language === "zh-TW" ? "今天的重點都完成了 🎉" : "All focus tasks done 🎉"}</p>}
+              <button onClick={() => setShowRitual(true)} className="text-xs text-gray-400 hover:text-gray-600">
+                {language === "zh-TW" ? "今天結束了 →" : "End of day →"}
+              </button>
+            </div>
+
+            {/* Divider before full task list */}
+            <div className="px-4 pb-1">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{language === "zh-TW" ? "今日所有任務" : "All daily tasks"}</p>
+            </div>
+          </div>
         )}
 
         {taskFilter === "active" && (
@@ -929,8 +1116,91 @@ function TasksPageInner() {
     </div>
   );
 
+  // ── MIT picker modal ──────────────────────────────────────────────────────────
+  const mitPickerModal = showMITPicker && (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) setShowMITPicker(false); }}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <p className="text-sm font-medium text-gray-700">
+            {language === "zh-TW" ? `選擇今日重點（還能選 ${3 - mitIds.length} 個）` : `Pick today's focus (${3 - mitIds.length} left)`}
+          </p>
+          <button onClick={() => setShowMITPicker(false)} className="text-gray-400 text-lg leading-none">×</button>
+        </div>
+        <div className="max-h-72 overflow-y-auto divide-y divide-gray-50">
+          {availableForMIT.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-gray-400">
+              {language === "zh-TW" ? "沒有其他待辦任務了" : "No other pending tasks"}
+            </div>
+          ) : availableForMIT.map((task) => (
+            <button key={task.id} onClick={() => addMIT(task.id)}
+              className="w-full text-left px-5 py-3 hover:bg-indigo-50 transition-colors flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full bg-gray-200 shrink-0" />
+              <span className="text-sm text-gray-700 flex-1 truncate">{task.title}</span>
+              <span className="text-indigo-400 text-xs shrink-0">{language === "zh-TW" ? "選擇" : "Pick"}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── End-of-day ritual modals ──────────────────────────────────────────────────
+  const ritualModal = showRitual && !ritualDone && (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-5">
+        <div className="text-center">
+          <h2 className="text-base font-semibold text-gray-800">{language === "zh-TW" ? "今天結束了" : "Day's done"}</h2>
+          <p className="text-xs text-gray-400 mt-1">{language === "zh-TW" ? "花 30 秒回顧一下" : "30-second review"}</p>
+        </div>
+        {mitTasks.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500 font-medium">{language === "zh-TW" ? "今天的重點" : "Today's focus"}</p>
+            {mitTasks.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 text-sm">
+                <span className={t.taskStatus === "done" ? "text-indigo-400" : "text-gray-300"}>{t.taskStatus === "done" ? "✓" : "○"}</span>
+                <span className={t.taskStatus === "done" ? "text-gray-700" : "text-gray-400"}>{t.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div>
+          <p className="text-xs text-gray-500 font-medium mb-2">{language === "zh-TW" ? "今天有什麼讓自己驕傲的小事？" : "What made you proud today?"}</p>
+          <textarea value={ritualNote} onChange={(e) => setRitualNote(e.target.value)}
+            placeholder={language === "zh-TW" ? "寫下來，哪怕很小（可跳過）" : "Note it down, however small (optional)"}
+            rows={3} className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setShowRitual(false)} className="flex-1 py-2 rounded-xl border border-gray-200 text-xs text-gray-400 hover:bg-gray-50">
+            {language === "zh-TW" ? "稍後再說" : "Later"}
+          </button>
+          <button onClick={completeRitual} className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+            {language === "zh-TW" ? "收工 🎉" : "Done 🎉"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const ritualDoneModal = ritualDone && (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-8 text-center space-y-4">
+        <div className="text-5xl">🌟</div>
+        <h2 className="text-lg font-semibold">{language === "zh-TW" ? "做到了！" : "Done!"}</h2>
+        <p className="text-sm text-gray-500">{language === "zh-TW" ? "今天辛苦了。明天繼續。" : "Good work today. See you tomorrow."}</p>
+        <button onClick={() => { setShowRitual(false); setRitualDone(false); }}
+          className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+          {language === "zh-TW" ? "關閉" : "Close"}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex flex-col min-h-screen">
+      {mitPickerModal}
+      {ritualModal}
+      {ritualDoneModal}
       {/* Header */}
       <div className="shrink-0 border-b border-gray-100 px-4 py-4 md:px-6">
         <h1 className="text-lg font-semibold text-gray-800">{language === "zh-TW" ? "任務" : "Tasks"}</h1>
