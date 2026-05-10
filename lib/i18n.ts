@@ -141,6 +141,20 @@ const zh: Record<string, string> = {
   "mode.explore.desc": "2 週內見效，適合探索期",
   "mode.execute.desc": "高影響力，值得持續投入，衝刺期",
   "mode.sustain.desc": "建立習慣或系統，長期複利",
+
+  "chat.title": "AI 目標教練",
+  "chat.placeholder": "輸入訊息…",
+  "chat.send": "送出",
+  "chat.optimize": "優化目標",
+  "chat.goalBuilder": "AI 規劃",
+  "chat.apply": "套用",
+  "chat.applied": "已套用 ✓",
+  "chat.welcome.goalBuilder": "告訴我你想達成什麼，我幫你拆解成目標和 KR。",
+  "chat.welcome.optimize": "我來分析你現有的目標，找出可以改善的地方。",
+  "chat.thinking": "思考中…",
+  "chat.suggestion": "建議變更",
+  "chat.toggleChat": "AI 教練",
+  "chat.error": "發生錯誤，請再試一次。",
 };
 
 const en: Record<string, string> = {
@@ -283,6 +297,20 @@ const en: Record<string, string> = {
   "mode.explore.desc": "Results in 2 weeks, good for exploration",
   "mode.execute.desc": "High impact, worth sustained effort",
   "mode.sustain.desc": "Build habits or systems, long-term compounding",
+
+  "chat.title": "AI Goal Coach",
+  "chat.placeholder": "Type a message…",
+  "chat.send": "Send",
+  "chat.optimize": "Optimize Goals",
+  "chat.goalBuilder": "AI Plan",
+  "chat.apply": "Apply",
+  "chat.applied": "Applied ✓",
+  "chat.welcome.goalBuilder": "Tell me what you want to achieve and I'll break it down into goals and KRs.",
+  "chat.welcome.optimize": "Let me review your existing goals and suggest improvements.",
+  "chat.thinking": "Thinking…",
+  "chat.suggestion": "Suggested Changes",
+  "chat.toggleChat": "AI Coach",
+  "chat.error": "An error occurred. Please try again.",
 };
 
 const translations: Record<Lang, Record<string, string>> = { "zh-TW": zh, en };

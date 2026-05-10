@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
-import { Objective, KeyResult, ObjGroup } from "@/lib/types";
+import { Objective, KeyResult, ObjGroup, GoalSuggestion } from "@/lib/types";
 import { fetchObjectives, saveObjective, removeObjective, markAllIdeasForReanalysis } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
@@ -11,6 +11,7 @@ import { getObjGroups, saveObjGroups } from "@/lib/storage";
 import { useLanguage } from "@/components/LanguageProvider";
 import RichTextArea from "@/components/RichTextArea";
 import RichTextDisplay from "@/components/RichTextDisplay";
+import OKRChat from "@/components/OKRChat";
 
 const PRIORITY_CONFIG = {
   1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
@@ -228,6 +229,9 @@ export default function GoalsPage() {
   const [newGroupName, setNewGroupName] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showGroupModal, setShowGroupModal] = useState(false);
+  const [chatMode, setChatMode] = useState<"goalBuilder" | "optimize">("goalBuilder");
+  const [chatKey, setChatKey] = useState(0);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
 
   useEffect(() => {
     if (!user) { requireAuth(); router.replace("/"); return; }
@@ -335,6 +339,52 @@ export default function GoalsPage() {
     await removeObjective(id).catch(console.error);
   }
 
+  async function handleApplySuggestion(suggestion: GoalSuggestion) {
+    const ops = suggestion.goals;
+    for (const item of ops) {
+      if (item.action === "add") {
+        const newObj: Objective = {
+          id: uuid(),
+          title: item.title,
+          description: item.description?.trim() || undefined,
+          keyResults: item.krs.map((kr) => ({ id: uuid(), title: kr })),
+          createdAt: new Date().toISOString(),
+          status: "active",
+          meta: { priority: item.priority ?? 2, groupId: item.groupId || undefined },
+        };
+        await saveObjective(newObj).catch(console.error);
+        setObjectives((prev) => [newObj, ...prev]);
+      } else if (item.action === "update" && item.id) {
+        const existing = objectives.find((o) => o.id === item.id);
+        if (!existing) continue;
+        const existingMap = new Map(existing.keyResults.map((kr) => [kr.title, kr]));
+        const updated: Objective = {
+          ...existing,
+          title: item.title,
+          description: item.description?.trim() || undefined,
+          keyResults: item.krs.map((kr) => existingMap.get(kr) ?? { id: uuid(), title: kr }),
+          meta: { ...existing.meta, priority: item.priority ?? existing.meta?.priority ?? 2 },
+        };
+        await saveObjective(updated).catch(console.error);
+        setObjectives((prev) => prev.map((o) => o.id === item.id ? updated : o));
+      } else if (item.action === "remove" && item.id) {
+        const existing = objectives.find((o) => o.id === item.id);
+        if (!existing) continue;
+        const deleted = { ...existing, status: "deleted" as const };
+        await saveObjective(deleted).catch(console.error);
+        setObjectives((prev) => prev.map((o) => o.id === item.id ? deleted : o));
+      }
+    }
+    markAllIdeasForReanalysis().catch(console.error);
+    setReanalysisTriggered(true);
+  }
+
+  function openChat(mode: "goalBuilder" | "optimize") {
+    setChatMode(mode);
+    setChatKey((k) => k + 1);
+    setMobileExpanded(true);
+  }
+
   function startEdit(o: Objective) {
     setEditingId(o.id);
     setAdding(false);
@@ -360,8 +410,19 @@ export default function GoalsPage() {
 
   const deletedObjs = objectives.filter((o) => o.status === "deleted");
 
+  const sharedChatProps = {
+    objectives,
+    groups,
+    onApplySuggestion: handleApplySuggestion,
+    mode: chatMode,
+  };
+
   return (
-    <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-5">
+    <>
+    <div className="flex">
+      {/* Goals list — left column */}
+      <div className="flex-1 min-w-0">
+      <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">{t("goals.title")}</h1>
@@ -375,6 +436,14 @@ export default function GoalsPage() {
           <button onClick={() => setSortAsc((v) => !v)}
             className="hidden md:inline-flex text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
             {sortAsc ? "1→3" : "3→1"}
+          </button>
+          <button onClick={() => openChat("optimize")}
+            className="hidden md:inline-flex text-xs text-gray-400 hover:text-indigo-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors">
+            {t("chat.optimize")}
+          </button>
+          <button onClick={() => openChat("goalBuilder")}
+            className="hidden md:inline-flex text-xs text-indigo-500 hover:text-indigo-700 px-2.5 py-1.5 rounded-lg border border-indigo-200 hover:border-indigo-300 transition-colors">
+            {t("chat.goalBuilder")}
           </button>
           {!adding && (
             <button onClick={() => { setAdding(true); setEditingId(null); setForm(emptyForm()); }}
@@ -606,6 +675,29 @@ export default function GoalsPage() {
           </div>
         </div>
       )}
+      </div>
+      </div>
+
+      {/* Desktop chat panel */}
+      <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-l border-gray-100 sticky top-0 self-start h-screen">
+        <OKRChat key={chatKey} {...sharedChatProps} />
+      </div>
     </div>
+
+    {/* Mobile bottom sheet */}
+    <div className={`lg:hidden fixed left-0 right-0 z-40 bg-white rounded-t-2xl border-t border-gray-100 shadow-xl flex flex-col transition-transform duration-300 h-[65vh] bottom-14 ${mobileExpanded ? "translate-y-0" : "translate-y-[calc(100%-52px)]"}`}>
+      <button
+        onClick={() => setMobileExpanded((v) => !v)}
+        className="flex items-center justify-center gap-2 h-[52px] shrink-0 w-full"
+      >
+        <div className="w-8 h-1 rounded-full bg-gray-200" />
+        <span className="text-xs font-medium text-gray-500">{t("chat.toggleChat")}</span>
+        <span className={`text-xs text-gray-300 transition-transform ${mobileExpanded ? "rotate-180" : ""}`}>▲</span>
+      </button>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <OKRChat key={chatKey} {...sharedChatProps} />
+      </div>
+    </div>
+    </>
   );
 }

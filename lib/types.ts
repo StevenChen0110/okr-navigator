@@ -156,3 +156,22 @@ export interface HabitLog {
   loggedAt: string; // YYYY-MM-DD
   skipped: boolean;
 }
+
+export interface GoalSuggestionItem {
+  action: "add" | "update" | "remove";
+  id?: string;
+  title: string;
+  krs: string[];
+  description?: string;
+  priority?: 1 | 2 | 3;
+  groupId?: string;
+}
+
+export interface GoalSuggestion {
+  goals: GoalSuggestionItem[];
+}
+
+export interface OKRChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}

@@ -1,6 +1,6 @@
-import { complete } from "./llm";
+import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion } from "./types";
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -221,6 +221,78 @@ Output ONLY valid JSON: {"shouldClarify":true|false,"question":"one focused ques
 No markdown fences.`,
     `Idea: ${ideaTitle}\n\nUser's OKRs:\n${objList}`, 200);
   return JSON.parse(extractJSON(stripFences(text)));
+}
+
+// ── OKR Chat Coach ───────────────────────────────────────────────────────────
+
+function parseChatSuggestion(text: string): { content: string; suggestion?: GoalSuggestion } {
+  const match = text.match(/<suggestion>([\s\S]*?)<\/suggestion>/);
+  if (!match) return { content: text };
+  const content = text.replace(/<suggestion>[\s\S]*?<\/suggestion>/, "").trim();
+  try {
+    return { content, suggestion: JSON.parse(match[1].trim()) as GoalSuggestion };
+  } catch {
+    return { content };
+  }
+}
+
+export async function chatOKRCoach(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  objectives: Objective[],
+  groups: ObjGroup[],
+  mode: "goalBuilder" | "optimize",
+  provider: AIProvider = "anthropic",
+): Promise<{ content: string; suggestion?: GoalSuggestion }> {
+  const active = objectives.filter((o) => !o.status || o.status === "active");
+  const groupMap = new Map((groups ?? []).map((g) => [g.id, g]));
+  const existingGoals = active.length > 0
+    ? active.map((o) => {
+        const group = o.meta?.groupId ? groupMap.get(o.meta.groupId) : undefined;
+        return `- [ID:${o.id}] ${o.title}${group ? ` (Group: ${group.name})` : ""}\n  KRs: ${o.keyResults.map((kr) => kr.title).join("; ")}`;
+      }).join("\n")
+    : "(no existing goals)";
+
+  const suggestionFormat = `<suggestion>
+{"goals":[{"action":"add|update|remove","id":"only for update/remove","title":"...","krs":["KR 1","KR 2"],"priority":2}]}
+</suggestion>`;
+
+  let systemPrompt: string;
+  if (mode === "goalBuilder") {
+    systemPrompt = `You are an OKR coach. Help the user define a clear, meaningful goal with measurable Key Results.
+
+Rules:
+- If intent is clear, propose the goal directly without asking
+- Ask at most 1-2 focused questions only if the intent is genuinely unclear
+- KRs must describe observable end states ("從 A 到 B"), not tasks or processes
+- Keep each KR to one concrete sentence, no deadlines in KR titles
+- When proposing a goal, end your reply with a suggestion block
+
+Proposal format (end of message):
+${suggestionFormat}
+
+User's current goals:
+${existingGoals}
+
+${langInstruction(language)}`;
+  } else {
+    systemPrompt = `You are an OKR coach reviewing the user's goals.
+
+Analyze for: redundancy (overlapping objectives to merge), fragmentation (KRs that deserve their own objective), vagueness (non-measurable KRs), scope issues.
+
+Be direct and specific. After analysis, propose concrete changes using:
+${suggestionFormat}
+
+For updates include the goal's existing ID. For removals use action:"remove" with just the ID (title can be empty string).
+
+User's current goals:
+${existingGoals}
+
+${langInstruction(language)}`;
+  }
+
+  const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 1024);
+  return parseChatSuggestion(text);
 }
 
 // ── Idea Analysis ─────────────────────────────────────────────────────────────

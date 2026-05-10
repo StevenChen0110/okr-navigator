@@ -55,6 +55,50 @@ function getAnthropicClient(apiKey: string): Anthropic {
 
 export const VALID_PROVIDERS = new Set<AIProvider>(["anthropic", "openai", "gemini", "grok"]);
 
+export async function completeWithHistory(
+  provider: AIProvider,
+  apiKey: string,
+  model: string,
+  system: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  maxTokens = 2048,
+): Promise<string> {
+  if (provider === "anthropic") {
+    const client = getAnthropicClient(apiKey);
+    const message = await client.messages.create({
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages,
+    });
+    return (message.content[0] as { type: string; text: string }).text.trim();
+  }
+
+  const baseUrl = OPENAI_COMPAT_BASE[provider];
+  if (!baseUrl) throw new Error(`Unknown provider: ${provider}`);
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: "system", content: system }, ...messages],
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`${provider} API error: ${err}`);
+  }
+
+  const data = await res.json() as { choices: { message: { content: string } }[] };
+  return data.choices[0].message.content.trim();
+}
+
 export async function complete(
   provider: AIProvider,
   apiKey: string,
