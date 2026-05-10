@@ -18,9 +18,10 @@ interface Props {
   onApplySuggestion: (suggestion: GoalSuggestion) => void;
   mode: "goalBuilder" | "optimize";
   className?: string;
+  onClose?: () => void;
 }
 
-export default function OKRChat({ objectives, groups, onApplySuggestion, mode, className = "" }: Props) {
+export default function OKRChat({ objectives, groups, onApplySuggestion, mode, className = "", onClose }: Props) {
   const { t, language } = useLanguage();
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [input, setInput] = useState("");
@@ -91,9 +92,14 @@ export default function OKRChat({ objectives, groups, onApplySuggestion, mode, c
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
         <span className="text-sm font-semibold text-gray-800">{t("chat.title")}</span>
-        <span className="text-[10px] text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full">
-          {mode === "goalBuilder" ? t("chat.goalBuilder") : t("chat.optimize")}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full">
+            {mode === "goalBuilder" ? t("chat.goalBuilder") : t("chat.optimize")}
+          </span>
+          {onClose && (
+            <button onClick={onClose} className="text-gray-300 hover:text-gray-500 text-xl leading-none transition-colors">×</button>
+          )}
+        </div>
       </div>
 
       {/* Messages */}

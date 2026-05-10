@@ -231,6 +231,8 @@ export default function GoalsPage() {
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [chatMode, setChatMode] = useState<"goalBuilder" | "optimize">("goalBuilder");
   const [chatKey, setChatKey] = useState(0);
+  const [desktopChatOpen, setDesktopChatOpen] = useState(false);
+  const [mobileSheetVisible, setMobileSheetVisible] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
 
   useEffect(() => {
@@ -382,6 +384,8 @@ export default function GoalsPage() {
   function openChat(mode: "goalBuilder" | "optimize") {
     setChatMode(mode);
     setChatKey((k) => k + 1);
+    setDesktopChatOpen(true);
+    setMobileSheetVisible(true);
     setMobileExpanded(true);
   }
 
@@ -452,6 +456,18 @@ export default function GoalsPage() {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Mobile-only AI buttons */}
+      <div className="flex gap-2 md:hidden">
+        <button onClick={() => openChat("goalBuilder")}
+          className="flex-1 text-xs text-indigo-500 hover:text-indigo-700 px-3 py-2 rounded-xl border border-indigo-200 hover:border-indigo-300 transition-colors text-center">
+          {t("chat.goalBuilder")}
+        </button>
+        <button onClick={() => openChat("optimize")}
+          className="flex-1 text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors text-center">
+          {t("chat.optimize")}
+        </button>
       </div>
 
       {reanalysisTriggered && (
@@ -679,25 +695,29 @@ export default function GoalsPage() {
       </div>
 
       {/* Desktop chat panel */}
-      <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-l border-gray-100 sticky top-0 self-start h-screen">
-        <OKRChat key={chatKey} {...sharedChatProps} />
-      </div>
+      {desktopChatOpen && (
+        <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-l border-gray-100 sticky top-0 self-start h-screen">
+          <OKRChat key={chatKey} {...sharedChatProps} onClose={() => setDesktopChatOpen(false)} />
+        </div>
+      )}
     </div>
 
     {/* Mobile bottom sheet */}
-    <div className={`lg:hidden fixed left-0 right-0 z-40 bg-white rounded-t-2xl border-t border-gray-100 shadow-xl flex flex-col transition-transform duration-300 h-[65vh] bottom-14 ${mobileExpanded ? "translate-y-0" : "translate-y-[calc(100%-52px)]"}`}>
-      <button
-        onClick={() => setMobileExpanded((v) => !v)}
-        className="flex items-center justify-center gap-2 h-[52px] shrink-0 w-full"
-      >
-        <div className="w-8 h-1 rounded-full bg-gray-200" />
-        <span className="text-xs font-medium text-gray-500">{t("chat.toggleChat")}</span>
-        <span className={`text-xs text-gray-300 transition-transform ${mobileExpanded ? "rotate-180" : ""}`}>▲</span>
-      </button>
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <OKRChat key={chatKey} {...sharedChatProps} />
+    {mobileSheetVisible && (
+      <div className={`lg:hidden fixed left-0 right-0 z-40 bg-white rounded-t-2xl border-t border-gray-100 shadow-xl flex flex-col transition-transform duration-300 h-[65vh] bottom-14 ${mobileExpanded ? "translate-y-0" : "translate-y-[calc(100%-52px)]"}`}>
+        <button
+          onClick={() => setMobileExpanded((v) => !v)}
+          className="flex items-center justify-center gap-2 h-[52px] shrink-0 w-full"
+        >
+          <div className="w-8 h-1 rounded-full bg-gray-200" />
+          <span className="text-xs font-medium text-gray-500">{t("chat.toggleChat")}</span>
+          <span className={`text-xs text-gray-300 transition-transform ${mobileExpanded ? "rotate-180" : ""}`}>▲</span>
+        </button>
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <OKRChat key={chatKey} {...sharedChatProps} onClose={() => { setMobileSheetVisible(false); setMobileExpanded(false); }} />
+        </div>
       </div>
-    </div>
+    )}
     </>
   );
 }
