@@ -15,6 +15,7 @@ import {
   generateMilestones,
   chatRoadmapCoach,
   chatGroupRoadmapCoach,
+  chatTaskCoach,
 } from "@/lib/claude";
 
 function getEnvKey(provider: AIProvider): string | undefined {
@@ -174,6 +175,16 @@ export async function POST(req: NextRequest) {
           payload.group as ObjGroup,
           payload.objectives as Objective[],
           payload.currentPhases as GroupSequencePhase[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "chatTask": {
+        const result = await chatTaskCoach(
+          apiKey, model, language,
+          payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
+          payload.task as { title: string; timeframe?: string; analysis?: import("@/lib/types").IdeaAnalysis | null },
+          payload.objectives as Objective[],
           provider,
         );
         return NextResponse.json(result);

@@ -1,6 +1,6 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe } from "./types";
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -509,4 +509,42 @@ export async function analyzeIdea(
   );
   const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<IdeaAnalysis, "analyzedAt">;
   return { ...parsed, analyzedAt: new Date().toISOString() };
+}
+
+export async function chatTaskCoach(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  task: { title: string; timeframe?: string; analysis?: IdeaAnalysis | null },
+  objectives: Objective[],
+  provider: AIProvider = "anthropic",
+): Promise<{ content: string }> {
+  const objList = objectives.slice(0, 6).map((o) =>
+    `- ${o.title}\n  KRs: ${o.keyResults.map((kr) => kr.title).join("; ")}`
+  ).join("\n");
+  const analysisCtx = task.analysis
+    ? (language === "zh-TW"
+      ? `\n分析分數：${task.analysis.finalScore.toFixed(1)}/10\n摘要：${task.analysis.summary}${task.analysis.risks.length > 0 ? "\n風險：" + task.analysis.risks.join("；") : ""}`
+      : `\nScore: ${task.analysis.finalScore.toFixed(1)}/10\nSummary: ${task.analysis.summary}${task.analysis.risks.length > 0 ? "\nRisks: " + task.analysis.risks.join("; ") : ""}`)
+    : "";
+  const systemPrompt = language === "zh-TW"
+    ? `你是一位任務督導 AI，幫助用戶確保每件事情都在正確軌道上。你的核心職責：確認任務是否值得做、是否有助達成目標、有沒有更好的做法。直接說重點。
+
+當前任務：${task.title}
+時間範疇：${task.timeframe ?? "未指定"}${analysisCtx}
+
+用戶的目標：
+${objList}
+
+用自然對話方式回應，不使用 markdown 格式。請用繁體中文。`
+    : `You are a task supervisor AI ensuring every task is truly worthwhile and on track. Core role: confirm if this task is worth doing, if it advances the user's goals, and if there's a better approach. Be direct.
+
+Current task: ${task.title}
+Timeframe: ${task.timeframe ?? "not specified"}${analysisCtx}
+
+User's objectives:
+${objList}
+
+Reply in natural conversational prose, no markdown.`;
+  const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 512);
+  return { content: text };
 }

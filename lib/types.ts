@@ -86,6 +86,7 @@ export interface IdeaAnalysis {
 
 export type TaskStatus = "todo" | "in-progress" | "done";
 export type IdeaStatus = "active" | "shelved" | "deleted" | "inbox";
+export type TaskTimeframe = "daily" | "weekly" | "monthly" | "custom";
 
 export interface TodoItem {
   id: string;
@@ -108,6 +109,8 @@ export interface Idea {
   quickAnalysis?: boolean;
   needsReanalysis?: boolean;
   todos?: TodoItem[];
+  taskTimeframe?: TaskTimeframe;
+  taskTimeframeCustomLabel?: string;
 }
 
 export type AIProvider = "anthropic" | "openai" | "gemini" | "grok";
