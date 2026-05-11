@@ -18,6 +18,7 @@ interface Props {
   groups: ObjGroup[];
   onApplySuggestion: (suggestion: GoalSuggestion) => void;
   mode: "goalBuilder" | "optimize";
+  onModeChange?: (mode: "goalBuilder" | "optimize") => void;
   className?: string;
   onClose?: () => void;
 }
@@ -33,7 +34,7 @@ function sanitizeContent(text: string): string {
     .trim();
 }
 
-export default function OKRChat({ objectives, groups, onApplySuggestion, mode, className = "", onClose }: Props) {
+export default function OKRChat({ objectives, groups, onApplySuggestion, mode, onModeChange, className = "", onClose }: Props) {
   const { t, language } = useLanguage();
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [input, setInput] = useState("");
@@ -120,11 +121,18 @@ export default function OKRChat({ objectives, groups, onApplySuggestion, mode, c
     <div className={`flex flex-col h-full ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
-        <span className="text-sm font-semibold text-gray-800">{t("chat.title")}</span>
+        <div className="flex items-center gap-1">
+          {(["goalBuilder", "optimize"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => onModeChange?.(m)}
+              className={`text-[11px] px-2.5 py-1 rounded-lg transition-colors ${mode === m ? "bg-indigo-50 text-indigo-600 font-medium" : "text-gray-400 hover:text-gray-600"}`}
+            >
+              {m === "goalBuilder" ? t("chat.goalBuilder") : t("chat.optimize")}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full">
-            {mode === "goalBuilder" ? t("chat.goalBuilder") : t("chat.optimize")}
-          </span>
           <button onClick={handleClear} className="text-[10px] text-gray-300 hover:text-gray-500 transition-colors">
             {t("chat.clear")}
           </button>

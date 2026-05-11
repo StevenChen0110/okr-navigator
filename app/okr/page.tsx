@@ -382,12 +382,23 @@ export default function GoalsPage() {
     setReanalysisTriggered(true);
   }
 
-  function openChat(mode: "goalBuilder" | "optimize") {
+  function toggleWorkspace() {
+    const isOpen = desktopChatOpen || mobileSheetVisible;
+    if (isOpen) {
+      setDesktopChatOpen(false);
+      setMobileSheetVisible(false);
+      setMobileExpanded(false);
+    } else {
+      setChatKey((k) => k + 1);
+      setDesktopChatOpen(true);
+      setMobileSheetVisible(true);
+      setMobileExpanded(true);
+    }
+  }
+
+  function switchMode(mode: "goalBuilder" | "optimize") {
     setChatMode(mode);
     setChatKey((k) => k + 1);
-    setDesktopChatOpen(true);
-    setMobileSheetVisible(true);
-    setMobileExpanded(true);
   }
 
   function startEdit(o: Objective) {
@@ -435,10 +446,22 @@ export default function GoalsPage() {
           <p className="text-xs text-gray-400 mt-0.5 truncate">{t("goals.subtitle")}</p>
         </div>
         {!adding && (
-          <button onClick={() => { setAdding(true); setEditingId(null); setForm(emptyForm()); }}
-            className="shrink-0 text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
-            + {t("action.add")}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={toggleWorkspace}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${(desktopChatOpen || mobileSheetVisible) ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3"/>
+                <line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" strokeWidth="1.3"/>
+              </svg>
+              {language === "zh-TW" ? "AI 工作區" : "AI Workspace"}
+            </button>
+            <button onClick={() => { setAdding(true); setEditingId(null); setForm(emptyForm()); }}
+              className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
+              + {t("action.add")}
+            </button>
+          </div>
         )}
       </div>
 
@@ -451,27 +474,6 @@ export default function GoalsPage() {
         <button onClick={() => setSortAsc((v) => !v)}
           className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors whitespace-nowrap">
           {sortAsc ? "1→3" : "3→1"}
-        </button>
-        <div className="flex-1" />
-        <button onClick={() => openChat("optimize")}
-          className="text-xs text-gray-400 hover:text-indigo-600 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-indigo-200 transition-colors whitespace-nowrap">
-          {t("chat.optimize")}
-        </button>
-        <button onClick={() => openChat("goalBuilder")}
-          className="text-xs text-indigo-500 hover:text-indigo-700 px-2.5 py-1.5 rounded-lg border border-indigo-200 hover:border-indigo-300 transition-colors whitespace-nowrap">
-          {t("chat.goalBuilder")}
-        </button>
-      </div>
-
-      {/* Mobile-only AI buttons */}
-      <div className="flex gap-2 md:hidden">
-        <button onClick={() => openChat("goalBuilder")}
-          className="flex-1 text-xs text-indigo-500 hover:text-indigo-700 px-3 py-2 rounded-xl border border-indigo-200 hover:border-indigo-300 transition-colors text-center">
-          {t("chat.goalBuilder")}
-        </button>
-        <button onClick={() => openChat("optimize")}
-          className="flex-1 text-xs text-gray-400 hover:text-gray-600 px-3 py-2 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors text-center">
-          {t("chat.optimize")}
         </button>
       </div>
 
@@ -714,7 +716,7 @@ export default function GoalsPage() {
       {/* Desktop chat panel */}
       {desktopChatOpen && (
         <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-l border-gray-100 sticky top-0 self-start h-screen">
-          <OKRChat key={chatKey} {...sharedChatProps} onClose={() => setDesktopChatOpen(false)} />
+          <OKRChat key={chatKey} {...sharedChatProps} onModeChange={switchMode} onClose={() => setDesktopChatOpen(false)} />
         </div>
       )}
     </div>
@@ -731,7 +733,7 @@ export default function GoalsPage() {
           <span className={`text-xs text-gray-300 transition-transform ${mobileExpanded ? "rotate-180" : ""}`}>▲</span>
         </button>
         <div className="flex-1 min-h-0 overflow-hidden">
-          <OKRChat key={chatKey} {...sharedChatProps} onClose={() => { setMobileSheetVisible(false); setMobileExpanded(false); }} />
+          <OKRChat key={chatKey} {...sharedChatProps} onModeChange={switchMode} onClose={() => { setMobileSheetVisible(false); setMobileExpanded(false); }} />
         </div>
       </div>
     )}
