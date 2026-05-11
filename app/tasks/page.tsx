@@ -153,7 +153,7 @@ function TasksPageInner() {
   }, []);
 
   // ── Timeframe filter ──────────────────────────────────────────────────────────
-  const [activeTimeframe, setActiveTimeframe] = useState<"all" | TaskTimeframe>("all");
+  const [activeTimeframe, setActiveTimeframe] = useState<"all" | TaskTimeframe>("daily");
   const [taskFilter, setTaskFilter] = useState<"active" | "shelved" | "deleted">("active");
 
   // ── Workspace state ───────────────────────────────────────────────────────────
