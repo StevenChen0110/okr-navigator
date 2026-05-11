@@ -13,6 +13,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import RichTextArea from "@/components/RichTextArea";
 import RichTextDisplay from "@/components/RichTextDisplay";
 import OKRChat from "@/components/OKRChat";
+import EditableTagline from "@/components/EditableTagline";
 
 const PRIORITY_CONFIG = {
   1: { label: "1", style: "bg-red-100 text-red-600 border-red-200" },
@@ -232,7 +233,13 @@ export default function GoalsPage() {
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [chatMode, setChatMode] = useState<"goalBuilder" | "optimize">("goalBuilder");
   const [chatKey, setChatKey] = useState(0);
-  const [desktopChatOpen, setDesktopChatOpen] = useState(false);
+  const [desktopChatOpen, setDesktopChatOpen] = useState(() =>
+    typeof window !== "undefined" && localStorage.getItem("layout_okr_workspace") === "true"
+  );
+
+  useEffect(() => {
+    localStorage.setItem("layout_okr_workspace", desktopChatOpen ? "true" : "false");
+  }, [desktopChatOpen]);
   const [mobileSheetVisible, setMobileSheetVisible] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
 
@@ -442,8 +449,11 @@ export default function GoalsPage() {
       {/* Title row */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold">{t("goals.title")}</h1>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">{t("goals.subtitle")}</p>
+          <h1 className="text-xl font-semibold text-gray-900">{t("goals.title")}</h1>
+          <EditableTagline
+            storageKey="tagline_okr"
+            defaultText={language === "zh-TW" ? "設定目標，讓每個決定都有方向" : "Set goals, give every decision a direction"}
+          />
         </div>
         {!adding && (
           <div className="flex items-center gap-2 shrink-0">

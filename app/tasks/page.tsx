@@ -16,6 +16,7 @@ import ScoreBar from "@/components/ScoreBar";
 import { useLanguage } from "@/components/LanguageProvider";
 import { getChatHistory, saveChatHistory } from "@/lib/storage";
 import { useAuth } from "@/components/AuthProvider";
+import EditableTagline from "@/components/EditableTagline";
 
 interface UIMessage {
   role: "user" | "assistant";
@@ -181,7 +182,13 @@ function TasksPageInner() {
 
   // ── Mobile tabs ───────────────────────────────────────────────────────────────
   const [mobileTab, setMobileTab] = useState<"list" | "workspace">("list");
-  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(() =>
+    typeof window !== "undefined" && localStorage.getItem("layout_tasks_workspace") === "true"
+  );
+
+  useEffect(() => {
+    localStorage.setItem("layout_tasks_workspace", workspaceOpen ? "true" : "false");
+  }, [workspaceOpen]);
 
   // ── Task detail expansion ─────────────────────────────────────────────────────
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -569,6 +576,29 @@ function TasksPageInner() {
 
   const taskListPanel = (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Page header */}
+      <div className="shrink-0 px-4 pt-6 pb-4 md:px-6 border-b border-gray-100">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold text-gray-900">{language === "zh-TW" ? "任務" : "Tasks"}</h1>
+            <EditableTagline
+              storageKey="tagline_tasks"
+              defaultText={language === "zh-TW" ? "評估想法，找出真正值得做的事" : "Evaluate ideas, find what's truly worth doing"}
+            />
+          </div>
+          <button
+            onClick={() => setWorkspaceOpen((v) => !v)}
+            className={`hidden lg:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors shrink-0 ${workspaceOpen ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"}`}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3"/>
+              <line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" strokeWidth="1.3"/>
+            </svg>
+            {language === "zh-TW" ? "AI 工作區" : "AI Workspace"}
+          </button>
+        </div>
+      </div>
+
       {/* Add task input */}
       <div className="shrink-0 px-4 pt-3 pb-2 space-y-2">
         <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
@@ -963,25 +993,7 @@ function TasksPageInner() {
   );
 
   return (
-    <div className="flex flex-col min-h-screen">
-      {/* Header */}
-      <div className="shrink-0 border-b border-gray-100 px-4 py-3 md:px-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-base font-semibold text-gray-800">{language === "zh-TW" ? "任務" : "Tasks"}</h1>
-        </div>
-        {/* Desktop workspace toggle */}
-        <button
-          onClick={() => setWorkspaceOpen((v) => !v)}
-          className={`hidden lg:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${workspaceOpen ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"}`}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3"/>
-            <line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" strokeWidth="1.3"/>
-          </svg>
-          {language === "zh-TW" ? "AI 工作區" : "AI Workspace"}
-        </button>
-      </div>
-
+    <div className="flex flex-col h-screen">
       {/* Mobile tabs */}
       <div className="lg:hidden shrink-0 flex border-b border-gray-100">
         {(["list", "workspace"] as const).map((tab) => (
@@ -995,9 +1007,9 @@ function TasksPageInner() {
       </div>
 
       {/* Main split layout */}
-      <div className="flex flex-1 overflow-hidden" style={{ height: "calc(100vh - 57px)" }}>
+      <div className="flex flex-1 min-h-0">
         {/* Left: task list */}
-        <div className={`lg:shrink-0 lg:border-r lg:border-gray-100 flex flex-col min-h-0 transition-all duration-200 ${workspaceOpen ? "lg:w-[420px]" : "lg:w-full"} ${mobileTab !== "list" ? "hidden lg:flex" : "flex flex-1"}`}>
+        <div className={`lg:border-r lg:border-gray-100 flex flex-col min-h-0 transition-all duration-200 ${workspaceOpen ? "lg:w-[420px] lg:shrink-0" : "lg:w-full"} ${mobileTab !== "list" ? "hidden lg:flex" : "flex flex-1"}`}>
           {taskListPanel}
         </div>
 
