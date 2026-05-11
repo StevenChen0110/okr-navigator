@@ -3,7 +3,6 @@ import { Geist } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import BottomNav from "@/components/BottomNav";
-import CaptureFAB from "@/components/CaptureFAB";
 import AuthProvider from "@/components/AuthProvider";
 import { LanguageProvider } from "@/components/LanguageProvider";
 
@@ -29,7 +28,6 @@ export default function RootLayout({
               {children}
             </main>
             <BottomNav />
-            <CaptureFAB />
           </LanguageProvider>
         </AuthProvider>
       </body>

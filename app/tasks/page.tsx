@@ -32,6 +32,21 @@ interface SuggestedLink {
   score: number;
 }
 
+interface DraftItem {
+  id: string;
+  title: string;
+  timeframe: TaskTimeframe;
+}
+
+interface DraftResult {
+  itemId: string;
+  analysis: IdeaAnalysis;
+  suggestedLinks: SuggestedLink[];
+  selectedLinks: Set<string>;
+  saving: boolean;
+  saved: boolean;
+}
+
 type MeasurementInputs = Record<string, Record<string, string>>;
 
 function sanitize(text: string): string {
@@ -171,14 +186,14 @@ function TasksPageInner() {
   const workspaceEndRef = useRef<HTMLDivElement>(null);
 
   // ── Draft task state ──────────────────────────────────────────────────────────
-  const [draftTitle, setDraftTitle] = useState(() => searchParams.get("title") ?? "");
-  const [draftTimeframe, setDraftTimeframe] = useState<TaskTimeframe>("daily");
-  const [draftCustomLabel, setDraftCustomLabel] = useState("");
+  const [draftItems, setDraftItems] = useState<DraftItem[]>([
+    { id: "draft-daily", title: searchParams.get("title") ?? "", timeframe: "daily" },
+    { id: "draft-weekly", title: "", timeframe: "weekly" },
+    { id: "draft-monthly", title: "", timeframe: "monthly" },
+  ]);
   const [draftAnalyzing, setDraftAnalyzing] = useState(false);
-  const [draftAnalysis, setDraftAnalysis] = useState<IdeaAnalysis | null>(null);
-  const [draftSuggestedLinks, setDraftSuggestedLinks] = useState<SuggestedLink[]>([]);
-  const [draftSelectedLinks, setDraftSelectedLinks] = useState<Set<string>>(new Set());
-  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftResults, setDraftResults] = useState<DraftResult[]>([]);
+  const [focusedDraftId, setFocusedDraftId] = useState<string | null>(null);
 
   // ── Mobile tabs ───────────────────────────────────────────────────────────────
   const [mobileTab, setMobileTab] = useState<"list" | "workspace">("list");
@@ -241,81 +256,73 @@ function TasksPageInner() {
 
   // ── Draft task flow ───────────────────────────────────────────────────────────
 
-  async function handleStartDraft() {
-    if (!draftTitle.trim() || draftAnalyzing) return;
-    if (objectives.length === 0) return;
+  async function handleBatchAnalyze() {
+    const toAnalyze = draftItems.filter((i) => i.title.trim());
+    if (toAnalyze.length === 0 || draftAnalyzing || objectives.length === 0) return;
     setDraftAnalyzing(true);
-    setDraftAnalysis(null);
-    setDraftSuggestedLinks([]);
-    setDraftSelectedLinks(new Set());
+    setDraftResults([]);
     setWorkspaceMode("draft");
     setFocusedTaskId(null);
     setWorkspaceMessages([]);
     try {
-      const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
-        ideaTitle: draftTitle.trim(),
-        ideaNotes: "",
-        objectives,
-      });
-      setDraftAnalysis(analysis);
-      const links: SuggestedLink[] = [];
-      for (const os of analysis.objectiveScores) {
-        for (const krs of os.keyResultScores) {
-          if (krs.score >= 5) {
-            links.push({
-              objectiveId: os.objectiveId, objectiveTitle: os.objectiveTitle,
-              krId: krs.keyResultId, krTitle: krs.keyResultTitle, score: krs.score,
-            });
+      await Promise.all(toAnalyze.map(async (item) => {
+        try {
+          const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
+            ideaTitle: item.title.trim(),
+            ideaNotes: "",
+            objectives,
+          });
+          const links: SuggestedLink[] = [];
+          for (const os of analysis.objectiveScores) {
+            for (const krs of os.keyResultScores) {
+              if (krs.score >= 5) {
+                links.push({
+                  objectiveId: os.objectiveId, objectiveTitle: os.objectiveTitle,
+                  krId: krs.keyResultId, krTitle: krs.keyResultTitle, score: krs.score,
+                });
+              }
+            }
           }
-        }
-      }
-      links.sort((a, b) => b.score - a.score);
-      setDraftSuggestedLinks(links);
-      setDraftSelectedLinks(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
-    } catch {
-      setWorkspaceMessages([{ role: "assistant", content: language === "zh-TW" ? "分析失敗，請再試一次。" : "Analysis failed. Please try again." }]);
+          links.sort((a, b) => b.score - a.score);
+          const selectedLinks = new Set(links.filter((l) => l.score >= 7).map((l) => l.krId));
+          setDraftResults((prev) => [...prev, { itemId: item.id, analysis, suggestedLinks: links, selectedLinks, saving: false, saved: false }]);
+        } catch { /* skip failed items */ }
+      }));
     } finally {
       setDraftAnalyzing(false);
     }
   }
 
-  async function handleConfirmDraft() {
-    if (!draftAnalysis || draftSaving) return;
-    setDraftSaving(true);
-    const linkedKRs: IdeaKRLink[] = draftSuggestedLinks
-      .filter((l) => draftSelectedLinks.has(l.krId))
+  async function handleSaveDraftItem(itemId: string) {
+    const item = draftItems.find((i) => i.id === itemId);
+    const result = draftResults.find((r) => r.itemId === itemId);
+    if (!item || !result || result.saving || result.saved) return;
+    setDraftResults((prev) => prev.map((r) => r.itemId === itemId ? { ...r, saving: true } : r));
+    const linkedKRs: IdeaKRLink[] = result.suggestedLinks
+      .filter((l) => result.selectedLinks.has(l.krId))
       .map((l) => ({ objectiveId: l.objectiveId, krId: l.krId }));
     const newIdea: Idea = {
       id: uuid(),
-      title: draftTitle.trim(),
+      title: item.title.trim(),
       description: "",
-      analysis: draftAnalysis,
+      analysis: result.analysis,
       createdAt: new Date().toISOString(),
       completed: false,
       linkedKRs,
       taskStatus: "todo",
-      taskTimeframe: draftTimeframe,
-      taskTimeframeCustomLabel: draftTimeframe === "custom" ? draftCustomLabel : undefined,
+      taskTimeframe: item.timeframe,
     };
     try {
       await saveIdea(newIdea);
       setIdeas((prev) => [newIdea, ...prev]);
-      const toSave = workspaceMessages.filter((m) => !m.isLoading).map((m) => ({ role: m.role, content: m.content }));
-      saveChatHistory(`task_${newIdea.id}`, toSave);
-      setDraftTitle("");
-      setDraftAnalysis(null);
-      setDraftSuggestedLinks([]);
-      setDraftSelectedLinks(new Set());
-      setWorkspaceMode("task");
-      setFocusedTaskId(newIdea.id);
-      setWorkspaceMessages((prev) => [
-        ...prev.filter((m) => !m.isLoading),
-        { role: "assistant", content: language === "zh-TW" ? "任務已儲存！有什麼想繼續討論的都可以說。" : "Task saved! Feel free to continue the discussion." },
-      ]);
+      const chatHistory = workspaceMode === "draft" && focusedDraftId === itemId
+        ? workspaceMessages.filter((m) => !m.isLoading).map((m) => ({ role: m.role, content: m.content }))
+        : [];
+      if (chatHistory.length > 0) saveChatHistory(`task_${newIdea.id}`, chatHistory);
+      setDraftItems((prev) => prev.map((i) => i.id === itemId ? { ...i, title: "" } : i));
+      setDraftResults((prev) => prev.map((r) => r.itemId === itemId ? { ...r, saving: false, saved: true } : r));
     } catch {
-      // silent
-    } finally {
-      setDraftSaving(false);
+      setDraftResults((prev) => prev.map((r) => r.itemId === itemId ? { ...r, saving: false } : r));
     }
   }
 
@@ -323,8 +330,6 @@ function TasksPageInner() {
     if (focusedTaskId === task.id && workspaceMode === "task") return;
     setFocusedTaskId(task.id);
     setWorkspaceMode("task");
-    setDraftTitle("");
-    setDraftAnalysis(null);
     const stored = getChatHistory(`task_${task.id}`);
     setWorkspaceMessages(stored.map((m) => ({ role: m.role, content: m.content })));
     setWorkspaceOpen(true);
@@ -336,8 +341,12 @@ function TasksPageInner() {
   async function sendWorkspaceChat(text: string) {
     if (!text.trim() || workspaceChatLoading || workspaceMode === "empty") return;
     const focusedTask = focusedTaskId ? ideas.find((i) => i.id === focusedTaskId) : null;
+    const focusedDraftItem = focusedDraftId ? draftItems.find((i) => i.id === focusedDraftId) : null;
+    const focusedDraftResult = focusedDraftId ? draftResults.find((r) => r.itemId === focusedDraftId) : null;
     const taskCtx = workspaceMode === "draft"
-      ? { title: draftTitle, timeframe: getTimeframeLabel(draftTimeframe, draftCustomLabel, language), analysis: draftAnalysis }
+      ? focusedDraftItem && focusedDraftResult
+        ? { title: focusedDraftItem.title, timeframe: getTimeframeLabel(focusedDraftItem.timeframe, undefined, language), analysis: focusedDraftResult.analysis }
+        : null
       : focusedTask
         ? { title: focusedTask.title, timeframe: getTimeframeLabel(focusedTask.taskTimeframe, focusedTask.taskTimeframeCustomLabel, language), analysis: focusedTask.analysis }
         : null;
@@ -587,8 +596,9 @@ function TasksPageInner() {
 
   const focusedTask = focusedTaskId ? ideas.find((i) => i.id === focusedTaskId) ?? null : null;
 
-  const workspaceTitle = workspaceMode === "draft" && draftTitle
-    ? draftTitle
+  const activeFocusedDraftItem = focusedDraftId ? draftItems.find((i) => i.id === focusedDraftId) : null;
+  const workspaceTitle = workspaceMode === "draft" && activeFocusedDraftItem
+    ? activeFocusedDraftItem.title
     : focusedTask?.title ?? "";
 
   // ── Render ─────────────────────────────────────────────────────────────────────
@@ -626,100 +636,111 @@ function TasksPageInner() {
         </div>
       </div>
 
-      {/* Add task input */}
-      <div className="shrink-0 px-4 pt-3 pb-2 space-y-2">
-        <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-          <input
-            value={draftTitle}
-            onChange={(e) => setDraftTitle(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) handleStartDraft(); }}
-            placeholder={language === "zh-TW" ? "輸入任務…" : "Add a task…"}
-            disabled={draftAnalyzing}
-            className="flex-1 min-w-0 text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none"
-          />
-          <select
-            value={draftTimeframe}
-            onChange={(e) => setDraftTimeframe(e.target.value as TaskTimeframe)}
-            className="text-xs text-gray-500 bg-transparent focus:outline-none shrink-0 cursor-pointer"
-          >
-            {TIMEFRAME_TABS.filter((t) => t.key !== "all").map((t) => (
-              <option key={t.key} value={t.key}>{language === "zh-TW" ? t.zh : t.en}</option>
-            ))}
-          </select>
+      {/* Batch task input */}
+      <div className="shrink-0 px-4 pt-3 pb-2 space-y-1.5">
+        {([
+          { id: "draft-daily", label: language === "zh-TW" ? "今日" : "Today" },
+          { id: "draft-weekly", label: language === "zh-TW" ? "本週" : "Week" },
+          { id: "draft-monthly", label: language === "zh-TW" ? "本月" : "Month" },
+        ] as { id: string; label: string }[]).map(({ id, label }) => {
+          const item = draftItems.find((i) => i.id === id)!;
+          return (
+            <div key={id} className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-400 w-7 shrink-0 text-right">{label}</span>
+              <div className="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
+                <input
+                  value={item.title}
+                  onChange={(e) => setDraftItems((prev) => prev.map((i) => i.id === id ? { ...i, title: e.target.value } : i))}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) handleBatchAnalyze(); }}
+                  placeholder={language === "zh-TW" ? `輸入${label}任務…` : `${label} task…`}
+                  disabled={draftAnalyzing}
+                  className="flex-1 min-w-0 text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none"
+                />
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex items-center justify-between pt-0.5">
+          {objectives.length === 0
+            ? <p className="text-xs text-amber-600">{language === "zh-TW" ? "請先到「目標」頁設定 OKR" : "Set up OKR goals first"}</p>
+            : <span />}
           <button
-            onClick={handleStartDraft}
-            disabled={!draftTitle.trim() || draftAnalyzing || objectives.length === 0}
-            className="text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors shrink-0 whitespace-nowrap font-medium"
+            onClick={handleBatchAnalyze}
+            disabled={draftItems.every((i) => !i.title.trim()) || draftAnalyzing || objectives.length === 0}
+            className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors font-medium whitespace-nowrap"
           >
-            {draftAnalyzing ? (language === "zh-TW" ? "分析中…" : "Analyzing…") : (language === "zh-TW" ? "AI 評估" : "Evaluate")}
+            {draftAnalyzing ? (language === "zh-TW" ? "分析中…" : "Analyzing…") : (language === "zh-TW" ? "AI 評估全部" : "Evaluate All")}
           </button>
         </div>
-        {draftTimeframe === "custom" && (
-          <input
-            value={draftCustomLabel}
-            onChange={(e) => setDraftCustomLabel(e.target.value)}
-            placeholder={language === "zh-TW" ? "時段描述（如：Q2 第一個月）" : "Timeframe label (e.g. Q2 first month)"}
-            className="w-full text-xs text-gray-500 border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
-          />
-        )}
-        {objectives.length === 0 && (
-          <p className="text-xs text-amber-600">{language === "zh-TW" ? "請先到「目標」頁設定 OKR，AI 才能評估任務" : "Set up OKR goals first so AI can evaluate tasks"}</p>
-        )}
       </div>
 
-      {/* Inline draft analysis */}
-      {(draftAnalyzing || draftAnalysis) && (
-        <div className="shrink-0 px-4 py-3 border-b border-gray-100 space-y-2.5 bg-white">
-          {draftAnalyzing ? (
+      {/* Batch results */}
+      {(draftAnalyzing || draftResults.length > 0) && (
+        <div className="shrink-0 px-4 py-3 border-b border-gray-100 space-y-3 overflow-y-auto max-h-[50vh]">
+          {draftAnalyzing && draftResults.length === 0 && (
             <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center gap-2">
-              <span className="text-xs text-gray-400 animate-pulse">
-                {language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}
-              </span>
+              <span className="text-xs text-gray-400 animate-pulse">{language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}</span>
             </div>
-          ) : (
-            <>
-              <AnalysisCard analysis={draftAnalysis!} language={language} />
-              {draftSuggestedLinks.length > 0 && (
-                <div className="border border-gray-100 rounded-xl p-3 space-y-2 bg-white">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                    {language === "zh-TW" ? "連結至目標" : "Link to goals"}
-                  </p>
-                  {draftSuggestedLinks.map((l) => (
-                    <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={draftSelectedLinks.has(l.krId)} onChange={() => {
-                        setDraftSelectedLinks((prev) => { const n = new Set(prev); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; });
-                      }} className="accent-indigo-600 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
-                        <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
-                      </div>
-                      <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
-                    </label>
-                  ))}
+          )}
+          {draftResults.map((result) => {
+            const item = draftItems.find((i) => i.id === result.itemId);
+            if (!item) return null;
+            const tfLabel = item.timeframe === "daily" ? (language === "zh-TW" ? "今日" : "Today")
+              : item.timeframe === "weekly" ? (language === "zh-TW" ? "本週" : "Week")
+              : (language === "zh-TW" ? "本月" : "Month");
+            return (
+              <div key={result.itemId} className="space-y-2 pb-3 border-b border-gray-100 last:border-0 last:pb-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-medium text-gray-500 px-1.5 py-0.5 bg-gray-100 rounded shrink-0">{tfLabel}</span>
+                  <p className="text-xs text-gray-700 truncate flex-1">{item.title}</p>
                 </div>
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleConfirmDraft}
-                  disabled={draftSaving}
-                  className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                >
-                  {draftSaving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "確認儲存" : "Save Task")}
-                </button>
-                <button
-                  onClick={() => { setWorkspaceOpen(true); setMobileTab("workspace"); }}
-                  className="px-3 py-2 rounded-xl border border-gray-200 text-xs text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors whitespace-nowrap"
-                >
-                  {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
-                </button>
-                <button
-                  onClick={() => { setDraftAnalysis(null); setDraftSuggestedLinks([]); setDraftSelectedLinks(new Set()); setWorkspaceMode("empty"); }}
-                  className="p-1 text-gray-300 hover:text-gray-500 transition-colors text-xl leading-none shrink-0"
-                >
-                  ×
-                </button>
+                <AnalysisCard analysis={result.analysis} compact language={language} />
+                {result.suggestedLinks.length > 0 && (
+                  <div className="border border-gray-100 rounded-xl p-2.5 space-y-1.5">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                      {language === "zh-TW" ? "連結至目標" : "Link to goals"}
+                    </p>
+                    {result.suggestedLinks.map((l) => (
+                      <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={result.selectedLinks.has(l.krId)} onChange={() => {
+                          setDraftResults((prev) => prev.map((r) => r.itemId === result.itemId ? {
+                            ...r,
+                            selectedLinks: (() => { const n = new Set(r.selectedLinks); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; })(),
+                          } : r));
+                        }} className="accent-indigo-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
+                        </div>
+                        <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-1.5">
+                  {result.saved ? (
+                    <span className="text-xs text-green-600 py-1">{language === "zh-TW" ? "✓ 已儲存" : "✓ Saved"}</span>
+                  ) : (
+                    <>
+                      <button onClick={() => handleSaveDraftItem(result.itemId)} disabled={result.saving}
+                        className="flex-1 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                        {result.saving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "儲存" : "Save")}
+                      </button>
+                      <button onClick={() => { setFocusedDraftId(result.itemId); setWorkspaceMode("draft"); setWorkspaceOpen(true); }}
+                        className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors whitespace-nowrap">
+                        {language === "zh-TW" ? "AI 討論" : "Discuss"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </>
+            );
+          })}
+          {!draftAnalyzing && draftResults.length > 0 && (
+            <button onClick={() => { setDraftResults([]); setWorkspaceMode("empty"); }}
+              className="text-[10px] text-gray-300 hover:text-gray-500 transition-colors">
+              {language === "zh-TW" ? "清除結果" : "Clear results"}
+            </button>
           )}
         </div>
       )}
@@ -975,8 +996,6 @@ function TasksPageInner() {
     </div>
   );
 
-  const currentAnalysis = workspaceMode === "draft" ? draftAnalysis : (focusedTaskId ? ideas.find((i) => i.id === focusedTaskId)?.analysis ?? null : null);
-
   const workspacePanel = (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
@@ -984,55 +1003,21 @@ function TasksPageInner() {
         <span className="text-xs font-semibold text-gray-700">{language === "zh-TW" ? "AI 工作區" : "AI Workspace"}</span>
         {workspaceTitle && <span className="text-xs text-gray-400 truncate flex-1">— {workspaceTitle}</span>}
         {workspaceMode !== "empty" && (
-          <button onClick={() => { setWorkspaceMode("empty"); setFocusedTaskId(null); setWorkspaceMessages([]); setDraftAnalysis(null); }}
+          <button onClick={() => { setWorkspaceMode("empty"); setFocusedTaskId(null); setFocusedDraftId(null); setWorkspaceMessages([]); }}
             className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0">×</button>
         )}
         <button onClick={() => setWorkspaceOpen(false)}
           className="hidden lg:block text-gray-300 hover:text-gray-500 text-sm leading-none shrink-0 ml-1">›</button>
       </div>
 
-      {/* Pinned analysis card */}
-      {workspaceMode === "draft" && draftAnalyzing && (
-        <div className="shrink-0 px-4 py-4 border-b border-gray-100">
-          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center gap-2">
-            <span className="text-xs text-gray-400 animate-pulse">{language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}</span>
-          </div>
-        </div>
-      )}
-      {!draftAnalyzing && currentAnalysis && (
-        <div className="shrink-0 px-4 py-3 border-b border-gray-100 space-y-2 overflow-y-auto max-h-[45%]">
-          <AnalysisCard analysis={currentAnalysis} language={language} />
-          {/* KR link selection (draft only) */}
-          {workspaceMode === "draft" && draftSuggestedLinks.length > 0 && (
-            <div className="border border-gray-100 rounded-xl p-3 space-y-2 bg-white">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                {language === "zh-TW" ? "連結至目標" : "Link to goals"}
-              </p>
-              {draftSuggestedLinks.map((l) => (
-                <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={draftSelectedLinks.has(l.krId)} onChange={() => {
-                    setDraftSelectedLinks((prev) => { const n = new Set(prev); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; });
-                  }} className="accent-indigo-600 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
-                    <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
-                  </div>
-                  <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Chat messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {workspaceMode === "empty" && (
           <p className="text-xs text-gray-400 text-center py-8 leading-relaxed">
-            {language === "zh-TW" ? "點擊任務開始 AI 討論\n或輸入新任務讓 AI 評估" : "Click a task to start an AI discussion\nor type a new task to evaluate it"}
+            {language === "zh-TW" ? "點擊任務開始 AI 討論\n或評估任務後點 AI 討論" : "Click a task to start an AI discussion\nor evaluate a task then click Discuss"}
           </p>
         )}
-        {workspaceMode !== "empty" && currentAnalysis === null && workspaceMessages.length === 0 && (
+        {workspaceMode !== "empty" && workspaceMessages.length === 0 && (
           <p className="text-xs text-gray-400 text-center py-6">
             {language === "zh-TW" ? "有什麼想討論的都可以說…" : "Ask anything about this task…"}
           </p>
@@ -1049,15 +1034,6 @@ function TasksPageInner() {
         <div ref={workspaceEndRef} />
       </div>
 
-      {/* Footer */}
-      {workspaceMode === "draft" && !draftAnalyzing && draftAnalysis && (
-        <div className="shrink-0 px-4 pt-2 pb-2 border-t border-gray-100">
-          <button onClick={handleConfirmDraft} disabled={draftSaving}
-            className="w-full py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {draftSaving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "確認儲存此任務" : "Confirm & Save Task")}
-          </button>
-        </div>
-      )}
       {workspaceMode !== "empty" && (
         <div className="shrink-0 px-3 pb-3 pt-2 border-t border-gray-100">
           <div className="flex gap-2">
