@@ -251,8 +251,6 @@ function TasksPageInner() {
     setWorkspaceMode("draft");
     setFocusedTaskId(null);
     setWorkspaceMessages([]);
-    setWorkspaceOpen(true);
-    setMobileTab("workspace");
     try {
       const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
         ideaTitle: draftTitle.trim(),
@@ -634,7 +632,7 @@ function TasksPageInner() {
           <input
             value={draftTitle}
             onChange={(e) => setDraftTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleStartDraft()}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) handleStartDraft(); }}
             placeholder={language === "zh-TW" ? "輸入任務…" : "Add a task…"}
             disabled={draftAnalyzing}
             className="flex-1 min-w-0 text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none"
@@ -668,6 +666,63 @@ function TasksPageInner() {
           <p className="text-xs text-amber-600">{language === "zh-TW" ? "請先到「目標」頁設定 OKR，AI 才能評估任務" : "Set up OKR goals first so AI can evaluate tasks"}</p>
         )}
       </div>
+
+      {/* Inline draft analysis */}
+      {(draftAnalyzing || draftAnalysis) && (
+        <div className="shrink-0 px-4 py-3 border-b border-gray-100 space-y-2.5 bg-white">
+          {draftAnalyzing ? (
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center gap-2">
+              <span className="text-xs text-gray-400 animate-pulse">
+                {language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}
+              </span>
+            </div>
+          ) : (
+            <>
+              <AnalysisCard analysis={draftAnalysis!} language={language} />
+              {draftSuggestedLinks.length > 0 && (
+                <div className="border border-gray-100 rounded-xl p-3 space-y-2 bg-white">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                    {language === "zh-TW" ? "連結至目標" : "Link to goals"}
+                  </p>
+                  {draftSuggestedLinks.map((l) => (
+                    <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={draftSelectedLinks.has(l.krId)} onChange={() => {
+                        setDraftSelectedLinks((prev) => { const n = new Set(prev); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; });
+                      }} className="accent-indigo-600 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
+                      </div>
+                      <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleConfirmDraft}
+                  disabled={draftSaving}
+                  className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                >
+                  {draftSaving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "確認儲存" : "Save Task")}
+                </button>
+                <button
+                  onClick={() => { setWorkspaceOpen(true); setMobileTab("workspace"); }}
+                  className="px-3 py-2 rounded-xl border border-gray-200 text-xs text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors whitespace-nowrap"
+                >
+                  {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
+                </button>
+                <button
+                  onClick={() => { setDraftAnalysis(null); setDraftSuggestedLinks([]); setDraftSelectedLinks(new Set()); setWorkspaceMode("empty"); }}
+                  className="p-1 text-gray-300 hover:text-gray-500 transition-colors text-xl leading-none shrink-0"
+                >
+                  ×
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Filter bar: status left, timeframe right */}
       <div className="shrink-0 border-b border-gray-100 px-4 py-2 flex items-center justify-between gap-2">
