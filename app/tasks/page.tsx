@@ -44,17 +44,6 @@ function sanitize(text: string): string {
     .trim();
 }
 
-function formatAnalysisAsMessage(analysis: IdeaAnalysis, language: "zh-TW" | "en"): string {
-  const sorted = [...analysis.objectiveScores].sort((a, b) => b.overallScore - a.overallScore);
-  const top3 = sorted.slice(0, 3).map((os) => `${os.objectiveTitle}：${os.overallScore.toFixed(1)} 分`).join("、");
-  let msg = language === "zh-TW"
-    ? `分析完成，綜合分數 ${analysis.finalScore.toFixed(1)}/10。${analysis.summary}`
-    : `Analysis complete. Score: ${analysis.finalScore.toFixed(1)}/10. ${analysis.summary}`;
-  if (top3) msg += language === "zh-TW" ? `\n\n與目標關聯：${top3}。` : `\n\nGoal relevance: ${top3}.`;
-  if (analysis.risks.length > 0) msg += language === "zh-TW" ? `\n\n需注意的風險：${analysis.risks.join("；")}。` : `\n\nRisks: ${analysis.risks.join("; ")}.`;
-  if (analysis.executionSuggestions.length > 0) msg += language === "zh-TW" ? `\n\n執行建議：${analysis.executionSuggestions.join("；")}。` : `\n\nSuggestions: ${analysis.executionSuggestions.join("; ")}.`;
-  return msg;
-}
 
 function calcKRCompletion(kr: KeyResult): number | undefined {
   if (kr.krType === "milestone") return kr.currentValue && kr.currentValue >= 1 ? 100 : 0;
@@ -86,6 +75,40 @@ function getTimeframeLabel(tf: TaskTimeframe | undefined, customLabel: string | 
   if (!tf) return "";
   if (tf === "custom" && customLabel) return customLabel;
   return language === "zh-TW" ? TIMEFRAME_LABELS[tf].zh : TIMEFRAME_LABELS[tf].en;
+}
+
+function AnalysisCard({ analysis, compact = false, language }: {
+  analysis: IdeaAnalysis;
+  compact?: boolean;
+  language: "zh-TW" | "en";
+}) {
+  const score = analysis.finalScore;
+  const scoreColor = score >= 7 ? "text-indigo-600" : score >= 4 ? "text-amber-500" : "text-gray-400";
+  const borderColor = score >= 7 ? "border-indigo-100 bg-indigo-50/40" : score >= 4 ? "border-amber-100 bg-amber-50/30" : "border-gray-100 bg-gray-50/50";
+  return (
+    <div className={`rounded-xl border p-3 space-y-2 ${borderColor}`}>
+      <div className="flex items-start gap-2">
+        <span className={`text-base font-bold shrink-0 ${scoreColor}`}>{score.toFixed(1)}</span>
+        <p className="text-xs text-gray-700 leading-relaxed">{analysis.summary}</p>
+      </div>
+      {!compact && analysis.risks.length > 0 && (
+        <div className="space-y-0.5">
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">{language === "zh-TW" ? "風險" : "Risks"}</p>
+          {analysis.risks.map((r, i) => (
+            <p key={i} className="text-xs text-gray-600 pl-2">· {r}</p>
+          ))}
+        </div>
+      )}
+      {!compact && analysis.executionSuggestions.length > 0 && (
+        <div className="space-y-0.5">
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">{language === "zh-TW" ? "建議" : "Suggestions"}</p>
+          {analysis.executionSuggestions.map((s, i) => (
+            <p key={i} className="text-xs text-gray-600 pl-2">· {s}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function LinkedObjsEditable({ links, objectives, onRemove }: {
@@ -191,7 +214,8 @@ function TasksPageInner() {
     setDraftSelectedLinks(new Set());
     setWorkspaceMode("draft");
     setFocusedTaskId(null);
-    setWorkspaceMessages([{ role: "assistant", content: "", isLoading: true }]);
+    setWorkspaceMessages([]);
+    setWorkspaceOpen(true);
     setMobileTab("workspace");
     try {
       const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
@@ -199,7 +223,6 @@ function TasksPageInner() {
         ideaNotes: "",
         objectives,
       });
-      const formattedMsg = formatAnalysisAsMessage(analysis, language);
       setDraftAnalysis(analysis);
       const links: SuggestedLink[] = [];
       for (const os of analysis.objectiveScores) {
@@ -215,7 +238,6 @@ function TasksPageInner() {
       links.sort((a, b) => b.score - a.score);
       setDraftSuggestedLinks(links);
       setDraftSelectedLinks(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
-      setWorkspaceMessages([{ role: "assistant", content: formattedMsg }]);
     } catch {
       setWorkspaceMessages([{ role: "assistant", content: language === "zh-TW" ? "分析失敗，請再試一次。" : "Analysis failed. Please try again." }]);
     } finally {
@@ -270,13 +292,8 @@ function TasksPageInner() {
     setDraftTitle("");
     setDraftAnalysis(null);
     const stored = getChatHistory(`task_${task.id}`);
-    if (stored.length > 0) {
-      setWorkspaceMessages(stored.map((m) => ({ role: m.role, content: m.content })));
-    } else if (task.analysis) {
-      setWorkspaceMessages([{ role: "assistant", content: formatAnalysisAsMessage(task.analysis, language) }]);
-    } else {
-      setWorkspaceMessages([]);
-    }
+    setWorkspaceMessages(stored.map((m) => ({ role: m.role, content: m.content })));
+    setWorkspaceOpen(true);
     setMobileTab("workspace");
   }
 
@@ -715,6 +732,16 @@ function TasksPageInner() {
 
                     {isExpanded && (
                       <div className="px-4 pb-4 space-y-3 bg-gray-50/70 border-t border-gray-100">
+                        {/* Analysis */}
+                        {idea.analysis && (
+                          <div className="pt-3">
+                            <AnalysisCard analysis={idea.analysis} language={language} />
+                            <button onClick={(e) => { e.stopPropagation(); handleFocusTask(idea); }}
+                              className="mt-1.5 text-xs text-indigo-500 hover:text-indigo-700">
+                              {language === "zh-TW" ? "與 AI 討論 →" : "Discuss with AI →"}
+                            </button>
+                          </div>
+                        )}
                         {/* Todos */}
                         {(() => {
                           const todos = idea.todos ?? [];
@@ -834,95 +861,99 @@ function TasksPageInner() {
     </div>
   );
 
+  const currentAnalysis = workspaceMode === "draft" ? draftAnalysis : (focusedTaskId ? ideas.find((i) => i.id === focusedTaskId)?.analysis ?? null : null);
+
   const workspacePanel = (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Workspace header */}
-      <div className="shrink-0 px-4 py-3 border-b border-gray-100">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-gray-700">{language === "zh-TW" ? "AI 工作區" : "AI Workspace"}</span>
-          {workspaceTitle && (
-            <span className="text-xs text-gray-400 truncate flex-1">— {workspaceTitle}</span>
-          )}
-          {workspaceMode !== "empty" && (
-            <button onClick={() => { setWorkspaceMode("empty"); setFocusedTaskId(null); setWorkspaceMessages([]); }}
-              className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0">×</button>
-          )}
-          <button onClick={() => setWorkspaceOpen(false)}
-            className="hidden lg:block text-gray-300 hover:text-gray-500 text-sm leading-none shrink-0 ml-1" title={language === "zh-TW" ? "折疊" : "Collapse"}>
-            ›
-          </button>
-        </div>
+      {/* Header */}
+      <div className="shrink-0 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+        <span className="text-xs font-semibold text-gray-700">{language === "zh-TW" ? "AI 工作區" : "AI Workspace"}</span>
+        {workspaceTitle && <span className="text-xs text-gray-400 truncate flex-1">— {workspaceTitle}</span>}
+        {workspaceMode !== "empty" && (
+          <button onClick={() => { setWorkspaceMode("empty"); setFocusedTaskId(null); setWorkspaceMessages([]); setDraftAnalysis(null); }}
+            className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0">×</button>
+        )}
+        <button onClick={() => setWorkspaceOpen(false)}
+          className="hidden lg:block text-gray-300 hover:text-gray-500 text-sm leading-none shrink-0 ml-1">›</button>
       </div>
 
-      {/* Messages */}
+      {/* Pinned analysis card */}
+      {workspaceMode === "draft" && draftAnalyzing && (
+        <div className="shrink-0 px-4 py-4 border-b border-gray-100">
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center gap-2">
+            <span className="text-xs text-gray-400 animate-pulse">{language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}</span>
+          </div>
+        </div>
+      )}
+      {!draftAnalyzing && currentAnalysis && (
+        <div className="shrink-0 px-4 py-3 border-b border-gray-100 space-y-2 overflow-y-auto max-h-[45%]">
+          <AnalysisCard analysis={currentAnalysis} language={language} />
+          {/* KR link selection (draft only) */}
+          {workspaceMode === "draft" && draftSuggestedLinks.length > 0 && (
+            <div className="border border-gray-100 rounded-xl p-3 space-y-2 bg-white">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                {language === "zh-TW" ? "連結至目標" : "Link to goals"}
+              </p>
+              {draftSuggestedLinks.map((l) => (
+                <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={draftSelectedLinks.has(l.krId)} onChange={() => {
+                    setDraftSelectedLinks((prev) => { const n = new Set(prev); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; });
+                  }} className="accent-indigo-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
+                    <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
+                  </div>
+                  <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Chat messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {workspaceMode === "empty" && (
           <p className="text-xs text-gray-400 text-center py-8 leading-relaxed">
-            {language === "zh-TW"
-              ? "點擊左側任務，開始 AI 督導討論\n或輸入新任務讓 AI 評估"
-              : "Click a task to start an AI discussion\nor type a new task to evaluate it"}
+            {language === "zh-TW" ? "點擊任務開始 AI 討論\n或輸入新任務讓 AI 評估" : "Click a task to start an AI discussion\nor type a new task to evaluate it"}
+          </p>
+        )}
+        {workspaceMode !== "empty" && currentAnalysis === null && workspaceMessages.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-6">
+            {language === "zh-TW" ? "有什麼想討論的都可以說…" : "Ask anything about this task…"}
           </p>
         )}
         {workspaceMessages.map((msg, idx) => (
           <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[90%] rounded-xl px-3 py-2 text-sm leading-relaxed ${msg.role === "user" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-800"}`}>
               {msg.isLoading
-                ? <span className="text-xs opacity-50 animate-pulse">{language === "zh-TW" ? "分析中…" : "Analyzing…"}</span>
-                : <p className="whitespace-pre-wrap">{msg.content}</p>
-              }
+                ? <span className="text-xs opacity-50 animate-pulse">{language === "zh-TW" ? "思考中…" : "Thinking…"}</span>
+                : <p className="whitespace-pre-wrap">{msg.content}</p>}
             </div>
           </div>
         ))}
-
-        {/* Draft: KR link selection */}
-        {workspaceMode === "draft" && !draftAnalyzing && draftAnalysis && draftSuggestedLinks.length > 0 && (
-          <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3 space-y-2">
-            <p className="text-xs font-medium text-indigo-600">{language === "zh-TW" ? "連結至目標（選填）" : "Link to goals (optional)"}</p>
-            {draftSuggestedLinks.map((l) => (
-              <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={draftSelectedLinks.has(l.krId)} onChange={() => {
-                  setDraftSelectedLinks((prev) => { const n = new Set(prev); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; });
-                }} className="accent-indigo-600 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
-                  <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
-                </div>
-                <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
-              </label>
-            ))}
-          </div>
-        )}
-
-        {/* Draft: confirm button */}
-        {workspaceMode === "draft" && !draftAnalyzing && draftAnalysis && (
-          <button
-            onClick={handleConfirmDraft}
-            disabled={draftSaving}
-            className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-          >
-            {draftSaving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "確認儲存此任務" : "Confirm & Save Task")}
-          </button>
-        )}
         <div ref={workspaceEndRef} />
       </div>
 
-      {/* Chat input */}
+      {/* Footer */}
+      {workspaceMode === "draft" && !draftAnalyzing && draftAnalysis && (
+        <div className="shrink-0 px-4 pt-2 pb-2 border-t border-gray-100">
+          <button onClick={handleConfirmDraft} disabled={draftSaving}
+            className="w-full py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+            {draftSaving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "確認儲存此任務" : "Confirm & Save Task")}
+          </button>
+        </div>
+      )}
       {workspaceMode !== "empty" && (
         <div className="shrink-0 px-3 pb-3 pt-2 border-t border-gray-100">
           <div className="flex gap-2">
-            <input
-              value={workspaceChatInput}
-              onChange={(e) => setWorkspaceChatInput(e.target.value)}
+            <input value={workspaceChatInput} onChange={(e) => setWorkspaceChatInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) handleWorkspaceSend(); }}
-              placeholder={language === "zh-TW" ? "跟 AI 督導討論這個任務…" : "Discuss this task with the AI supervisor…"}
+              placeholder={language === "zh-TW" ? "討論這個任務…" : "Discuss this task…"}
               disabled={workspaceChatLoading}
-              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
-            />
-            <button
-              onClick={handleWorkspaceSend}
-              disabled={!workspaceChatInput.trim() || workspaceChatLoading}
-              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors shrink-0"
-            >
+              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50" />
+            <button onClick={handleWorkspaceSend} disabled={!workspaceChatInput.trim() || workspaceChatLoading}
+              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors shrink-0">
               {language === "zh-TW" ? "送出" : "Send"}
             </button>
           </div>
