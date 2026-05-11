@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { v4 as uuid } from "uuid";
@@ -236,10 +236,39 @@ export default function GoalsPage() {
   const [desktopChatOpen, setDesktopChatOpen] = useState(() =>
     typeof window !== "undefined" && localStorage.getItem("layout_okr_workspace") === "true"
   );
+  const [chatPanelWidth, setChatPanelWidth] = useState(() =>
+    typeof window !== "undefined" ? parseInt(localStorage.getItem("layout_okr_panel_width") || "380") : 380
+  );
+  const okrContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingOkr = useRef(false);
 
   useEffect(() => {
     localStorage.setItem("layout_okr_workspace", desktopChatOpen ? "true" : "false");
   }, [desktopChatOpen]);
+
+  useEffect(() => {
+    localStorage.setItem("layout_okr_panel_width", chatPanelWidth.toString());
+  }, [chatPanelWidth]);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!isDraggingOkr.current || !okrContainerRef.current) return;
+      const rect = okrContainerRef.current.getBoundingClientRect();
+      const newW = Math.max(300, Math.min(rect.width - 400, rect.right - e.clientX));
+      setChatPanelWidth(Math.round(newW));
+    }
+    function onUp() {
+      isDraggingOkr.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
   const [mobileSheetVisible, setMobileSheetVisible] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
 
@@ -442,7 +471,7 @@ export default function GoalsPage() {
 
   return (
     <>
-    <div className="flex">
+    <div ref={okrContainerRef} className="flex">
       {/* Goals list — left column */}
       <div className="flex-1 min-w-0">
       <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-5">
@@ -723,11 +752,25 @@ export default function GoalsPage() {
       </div>
       </div>
 
-      {/* Desktop chat panel */}
+      {/* Desktop chat panel with drag handle */}
       {desktopChatOpen && (
-        <div className="hidden lg:flex w-[380px] shrink-0 flex-col border-l border-gray-100 sticky top-0 self-start h-screen">
-          <OKRChat key={chatKey} {...sharedChatProps} onModeChange={switchMode} onClose={() => setDesktopChatOpen(false)} />
-        </div>
+        <>
+          <div
+            onMouseDown={(e) => {
+              e.preventDefault();
+              isDraggingOkr.current = true;
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+            }}
+            className="hidden lg:flex w-1 shrink-0 cursor-col-resize items-stretch group hover:bg-indigo-100 transition-colors"
+          />
+          <div
+            className="hidden lg:flex shrink-0 flex-col border-l border-gray-100 sticky top-0 self-start h-screen"
+            style={{ width: `${chatPanelWidth}px` }}
+          >
+            <OKRChat key={chatKey} {...sharedChatProps} onModeChange={switchMode} onClose={() => setDesktopChatOpen(false)} />
+          </div>
+        </>
       )}
     </div>
 

@@ -185,10 +185,39 @@ function TasksPageInner() {
   const [workspaceOpen, setWorkspaceOpen] = useState(() =>
     typeof window !== "undefined" && localStorage.getItem("layout_tasks_workspace") === "true"
   );
+  const [panelWidth, setPanelWidth] = useState(() =>
+    typeof window !== "undefined" ? parseInt(localStorage.getItem("layout_tasks_panel_width") || "420") : 420
+  );
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingPanel = useRef(false);
 
   useEffect(() => {
     localStorage.setItem("layout_tasks_workspace", workspaceOpen ? "true" : "false");
   }, [workspaceOpen]);
+
+  useEffect(() => {
+    localStorage.setItem("layout_tasks_panel_width", panelWidth.toString());
+  }, [panelWidth]);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!isDraggingPanel.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const x = Math.max(280, Math.min(rect.width - 300, e.clientX - rect.left));
+      setPanelWidth(Math.round(x));
+    }
+    function onUp() {
+      isDraggingPanel.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   // ── Task detail expansion ─────────────────────────────────────────────────────
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -575,7 +604,7 @@ function TasksPageInner() {
   ];
 
   const taskListPanel = (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className={`flex flex-col h-full overflow-hidden ${!workspaceOpen ? "lg:max-w-xl lg:mx-auto lg:w-full" : ""}`}>
       {/* Page header */}
       <div className="shrink-0 px-4 pt-6 pb-4 md:px-6 border-b border-gray-100">
         <div className="flex items-center justify-between gap-3">
@@ -1007,11 +1036,27 @@ function TasksPageInner() {
       </div>
 
       {/* Main split layout */}
-      <div className="flex flex-1 min-h-0">
+      <div ref={splitContainerRef} className="flex flex-1 min-h-0">
         {/* Left: task list */}
-        <div className={`lg:border-r lg:border-gray-100 flex flex-col min-h-0 transition-all duration-200 ${workspaceOpen ? "lg:w-[420px] lg:shrink-0" : "lg:w-full"} ${mobileTab !== "list" ? "hidden lg:flex" : "flex flex-1"}`}>
+        <div
+          className={`flex flex-col min-h-0 ${workspaceOpen ? "lg:shrink-0" : "lg:flex-1"} ${mobileTab !== "list" ? "hidden lg:flex" : "flex flex-1"}`}
+          style={workspaceOpen ? { width: `${panelWidth}px` } : undefined}
+        >
           {taskListPanel}
         </div>
+
+        {/* Drag handle (desktop, expanded only) */}
+        {workspaceOpen && (
+          <div
+            onMouseDown={(e) => {
+              e.preventDefault();
+              isDraggingPanel.current = true;
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+            }}
+            className="hidden lg:flex w-1 shrink-0 cursor-col-resize items-stretch bg-gray-100 hover:bg-indigo-200 transition-colors"
+          />
+        )}
 
         {/* Right: AI workspace */}
         <div className={`flex-1 flex flex-col min-h-0 ${mobileTab !== "workspace" ? (workspaceOpen ? "hidden lg:flex" : "hidden") : "flex flex-1"}`}>
