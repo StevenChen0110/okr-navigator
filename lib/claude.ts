@@ -1,6 +1,6 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult } from "./types";
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -493,7 +493,17 @@ export async function analyzeIdea(
         (o.meta?.deadline ? `\nDeadline: ${o.meta.deadline}` : "") +
         `\nPriority: ${o.meta?.priority ?? 2} (1=highest, 3=lowest)` +
         (group ? `\nGroup: ${group.name} (Group Priority: ${group.priority}, 1=highest)` : "") +
-        `\nKey Results:\n${o.keyResults.map((kr) => `  - KR ID: ${kr.id}\n    KR: ${kr.title}`).join("\n")}`
+        `\nKey Results:\n${o.keyResults.map((kr) => {
+          let progress = "";
+          if (kr.targetValue !== undefined && kr.currentValue !== undefined && kr.targetValue > 0) {
+            const pct = Math.min(100, Math.round((kr.currentValue / kr.targetValue) * 100));
+            progress = ` [Progress: ${kr.currentValue}${kr.unit ? " " + kr.unit : ""}/${kr.targetValue}${kr.unit ? " " + kr.unit : ""}, ${pct}% complete]`;
+          } else if (kr.checkIns && kr.checkIns.length > 0) {
+            const latest = kr.checkIns[kr.checkIns.length - 1];
+            progress = ` [Latest check-in: ${latest.value}${kr.unit ? " " + kr.unit : ""} on ${latest.date.split("T")[0]}]`;
+          }
+          return `  - KR ID: ${kr.id}\n    KR: ${kr.title}${progress}`;
+        }).join("\n")}`
       );
     })
     .join("\n\n");
@@ -545,6 +555,157 @@ User's objectives:
 ${objList}
 
 Reply in natural conversational prose, no markdown.`;
+  const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 512);
+  return { content: text };
+}
+
+// ── Plan Items Analysis ───────────────────────────────────────────────────────
+
+const PLAN_SYSTEM_PROMPT = `You are a task planning coach. Analyze a list of todo items and evaluate their contribution to the user's OKRs.
+
+IMPORTANT SCORING PHILOSOPHY — time scope changes what a "good" score means:
+- "today" items are TACTICAL single actions completable in one day. Score 7-9 if it is clearly the right action for today. Score 4-6 if acceptable but not ideal. Score 1-3 if it is too vague/large for a single day (mis-scoped).
+- "week" items should advance at least one KR meaningfully within 7 days. Good items score 6-9.
+- "month" items should have strategic impact and move KRs significantly. Strong items score 7-10. Score low if the item is too small/tactical for monthly planning.
+- "custom" items: evaluate based on their apparent scope relative to stated timeframe.
+
+Key insight: a today task like "制定三年計畫" is TOO BIG for today → penalize. A monthly task like "發一封郵件" is TOO SMALL for monthly planning → penalize.
+
+Output ONLY valid JSON:
+{
+  "overallAssessment": "string (2-3 sentences: is the plan well-structured? critical gaps or priority issues?)",
+  "items": [
+    {
+      "id": "string (exact id from input)",
+      "score": number (0-10),
+      "reasoning": "string (≤20 Chinese characters — key reason for this score)",
+      "periodNote": "string (≤20 Chinese characters — is this item appropriately scoped for its time period?)"
+    }
+  ],
+  "suggestions": "string (2-3 concrete suggestions to improve the plan)"
+}
+No markdown fences.`;
+
+export async function analyzePlanItems(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  items: Array<{ id: string; title: string; period: PlanPeriod }>,
+  objectives: Objective[],
+  scope: "all" | "today" | "week" | "month",
+  evaluationContext?: string,
+  groups?: ObjGroup[],
+  provider: AIProvider = "anthropic",
+): Promise<PlanAnalysisResult> {
+  const groupMap = new Map((groups ?? []).map((g) => [g.id, g]));
+  const okrContext = objectives
+    .filter((o) => !o.status || o.status === "active")
+    .map((o) => {
+      const group = o.meta?.groupId ? groupMap.get(o.meta.groupId) : undefined;
+      return (
+        `Objective: ${o.title} (Priority: ${o.meta?.priority ?? 2})` +
+        (group ? ` [Group: ${group.name}]` : "") +
+        `\n  KRs: ${o.keyResults.map((kr) => {
+          let progress = "";
+          if (kr.targetValue !== undefined && kr.currentValue !== undefined && kr.targetValue > 0) {
+            const pct = Math.min(100, Math.round((kr.currentValue / kr.targetValue) * 100));
+            progress = ` [${pct}% complete]`;
+          }
+          return kr.title + progress;
+        }).join("; ")}`
+      );
+    })
+    .join("\n");
+
+  const scopeLabel: Record<string, string> = {
+    all: "all time periods",
+    today: "today only",
+    week: "this week only",
+    month: "this month only",
+  };
+
+  const itemsText = items
+    .map((item) => `- ID: ${item.id} | Period: ${item.period} | Task: ${item.title}`)
+    .join("\n");
+
+  const text = await complete(
+    provider, apiKey, model,
+    PLAN_SYSTEM_PROMPT + (evaluationContext ?? "") + `\n\n${langInstruction(language)}`,
+    `USER'S OKRs:\n${okrContext}\n\nTODO ITEMS TO ANALYZE (scope: ${scopeLabel[scope]}):\n${itemsText}`,
+    2048,
+  );
+  return JSON.parse(extractJSON(stripFences(text))) as PlanAnalysisResult;
+}
+
+// ── Plan / Idea Discussion Coach ──────────────────────────────────────────────
+
+export async function chatPlanCoach(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  context: {
+    type: "idea" | "plan";
+    ideaTitle?: string;
+    ideaScore?: number;
+    ideaSummary?: string;
+    planItems?: Array<{ title: string; period: string; score?: number }>;
+    overallAssessment?: string;
+    suggestions?: string;
+  },
+  objectives: Objective[],
+  provider: AIProvider = "anthropic",
+): Promise<{ content: string }> {
+  const objList = objectives.slice(0, 6).map((o) =>
+    `- ${o.title}: ${o.keyResults.map((kr) => kr.title).join("; ")}`
+  ).join("\n");
+
+  let systemPrompt: string;
+  if (context.type === "idea") {
+    systemPrompt = language === "zh-TW"
+      ? `你是一位 OKR 顧問，正在和用戶討論一個想法的 AI 評估結果，協助他們決定是否推進或如何調整。用自然對話語氣，不使用 markdown。
+
+想法：${context.ideaTitle ?? ""}
+AI 分析分數：${context.ideaScore?.toFixed(1) ?? "─"}/10
+分析摘要：${context.ideaSummary ?? ""}
+
+用戶的目標：
+${objList}
+
+請用繁體中文回應，不使用任何 markdown 格式。`
+      : `You are an OKR consultant discussing an idea evaluation. Help the user decide whether to proceed or how to adapt the idea to better serve their goals. No markdown.
+
+Idea: ${context.ideaTitle ?? ""}
+AI score: ${context.ideaScore?.toFixed(1) ?? "─"}/10
+Summary: ${context.ideaSummary ?? ""}
+
+User's objectives:
+${objList}`;
+  } else {
+    const itemsText = (context.planItems ?? [])
+      .map((i) => `- [${i.period}] ${i.title}${i.score !== undefined ? ` (${i.score.toFixed(1)}/10)` : ""}`)
+      .join("\n");
+    systemPrompt = language === "zh-TW"
+      ? `你是一位任務規劃顧問，正在和用戶討論他們的待辦計畫 AI 分析結果，協助調整優先序、移除低價值任務或識別計畫缺口。用自然對話語氣，不使用 markdown。
+
+整體評估：${context.overallAssessment ?? ""}
+AI 建議：${context.suggestions ?? ""}
+
+當前計畫清單：
+${itemsText}
+
+用戶的目標：
+${objList}
+
+請用繁體中文回應，不使用任何 markdown 格式。`
+      : `You are a task planning consultant discussing a todo plan analysis. Help the user adjust priorities, remove low-value tasks, or identify planning gaps. No markdown.
+
+Overall assessment: ${context.overallAssessment ?? ""}
+Suggestions: ${context.suggestions ?? ""}
+
+Current plan:
+${itemsText}
+
+User's objectives:
+${objList}`;
+  }
+
   const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 512);
   return { content: text };
 }

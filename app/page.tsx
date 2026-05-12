@@ -1,189 +1,207 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import {
   Idea,
   Objective,
   IdeaAnalysis,
   IdeaKRLink,
-  TaskStatus,
   IdeaStatus,
   EvaluationProfile,
   ObjGroup,
+  PlanItem,
+  PlanPeriod,
+  PlanStatus,
+  PlanAnalysisResult,
 } from "@/lib/types";
-import {
-  fetchIdeas,
-  fetchObjectives,
-  saveIdea,
-  updateIdeaTaskStatus,
-  updateIdeaStatus,
-  removeIdea,
-} from "@/lib/db";
+import { fetchIdeas, fetchObjectives, saveIdea } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, getObjGroups } from "@/lib/storage";
-import {
-  buildEvaluationPrompt,
-  DEFAULT_EVALUATION_PROFILE,
-} from "@/lib/evaluation-prompt";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems } from "@/lib/storage";
+import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import RichTextArea from "@/components/RichTextArea";
 
-type ModalStatus = "idle" | "clarifying" | "analyzing" | "confirm" | "saving";
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-interface SuggestedLink {
-  objectiveId: string;
-  objectiveTitle: string;
-  krId: string;
-  krTitle: string;
-  score: number;
+type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
+type PlanPhase = "idle" | "analyzing" | "result";
+type ActivePanel = "idea" | "plan" | null;
+
+interface ChatMsg { role: "user" | "assistant"; content: string; }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function computeWeightedScore(
+  idea: Idea,
+  objectives: Objective[],
+  profile: EvaluationProfile,
+  groups: ObjGroup[],
+): number {
+  if (!idea.analysis) return 0;
+  const w = profile.priorityWeights;
+  const gw = profile.groupPriorityWeights;
+  const groupMap = new Map(groups.map((g) => [g.id, g]));
+  let sumScores = 0;
+  let sumWeights = 0;
+  for (const os of idea.analysis.objectiveScores) {
+    const obj = objectives.find((o) => o.id === os.objectiveId);
+    if (!obj) continue;
+    const objPriority = obj.meta?.priority ?? 2;
+    const objWeight = profile.considerPriority ? (w[objPriority] ?? 1) : 1;
+    let groupWeight = 1;
+    if (profile.considerGroupPriority && obj.meta?.groupId) {
+      const g = groupMap.get(obj.meta.groupId);
+      if (g) groupWeight = gw[g.priority] ?? 1;
+    }
+    const weight = objWeight * groupWeight;
+    sumScores += os.overallScore * weight;
+    sumWeights += weight;
+  }
+  return sumWeights > 0 ? sumScores / sumWeights : (idea.analysis.finalScore ?? 0);
 }
 
+const PERIOD_LABELS_ZH: Record<PlanPeriod, string> = {
+  today: "今日",
+  week: "本週",
+  month: "本月",
+  custom: "自訂",
+};
+const PERIOD_LABELS_EN: Record<PlanPeriod, string> = {
+  today: "Today",
+  week: "This Week",
+  month: "This Month",
+  custom: "Custom",
+};
+const STATUS_LABELS_ZH: Record<PlanStatus, string> = {
+  active: "待辦",
+  "in-progress": "進行中",
+  shelved: "擱置",
+  completed: "已完成",
+};
+const STATUS_LABELS_EN: Record<PlanStatus, string> = {
+  active: "Active",
+  "in-progress": "In Progress",
+  shelved: "Shelved",
+  completed: "Completed",
+};
+const STATUS_STYLE: Record<PlanStatus, string> = {
+  active: "bg-gray-100 text-gray-500",
+  "in-progress": "bg-amber-50 text-amber-600",
+  shelved: "bg-orange-50 text-orange-500",
+  completed: "bg-green-50 text-green-600",
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function HomePage() {
-  const [ideas, setIdeas] = useState<Idea[]>([]);
+  const { user, requireAuth } = useAuth();
+  const { t, language } = useLanguage();
+
+  // Shared
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const { user, openLogin, requireAuth } = useAuth();
-  const { t } = useLanguage();
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"tasks" | "shelved" | "deleted">("tasks");
-  const [filterValue, setFilterValue] = useState("");
-  const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
-  const autoReanalyzeDone = useRef(false);
-
-  const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(DEFAULT_EVALUATION_PROFILE);
+  const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(getEvaluationProfile());
   const [groups, setGroups] = useState<ObjGroup[]>([]);
+  const [activePanel, setActivePanel] = useState<ActivePanel>(null);
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalStatus, setModalStatus] = useState<ModalStatus>("idle");
-  const [modalTitle, setModalTitle] = useState("");
-  const [modalNotes, setModalNotes] = useState("");
-  const [modalDetailsOpen, setModalDetailsOpen] = useState(false);
-  const [modalAnalysis, setModalAnalysis] = useState<IdeaAnalysis | null>(null);
-  const [modalSuggestedLinks, setModalSuggestedLinks] = useState<SuggestedLink[]>([]);
-  const [modalSelectedLinkIds, setModalSelectedLinkIds] = useState<Set<string>>(new Set());
-  const [modalErrorMsg, setModalErrorMsg] = useState("");
-  const [clarifyQuestion, setClarifyQuestion] = useState("");
-  const [clarifyAnswer, setClarifyAnswer] = useState("");
-  const [pendingInboxId, setPendingInboxId] = useState<string | null>(null);
+  // ── Idea Validator state ──
+  const [ideaTitle, setIdeaTitle] = useState("");
+  const [ideaNotes, setIdeaNotes] = useState("");
+  const [ideaNotesOpen, setIdeaNotesOpen] = useState(false);
+  const [ideaPhase, setIdeaPhase] = useState<IdeaPhase>("idle");
+  const [ideaAnalysis, setIdeaAnalysis] = useState<IdeaAnalysis | null>(null);
+  const [ideaError, setIdeaError] = useState("");
+  const [ideaClarifyQ, setIdeaClarifyQ] = useState("");
+  const [ideaClarifyA, setIdeaClarifyA] = useState("");
+  const [ideaMessages, setIdeaMessages] = useState<ChatMsg[]>([]);
+  const [ideaChatInput, setIdeaChatInput] = useState("");
+  const [ideaChatLoading, setIdeaChatLoading] = useState(false);
+  const ideaChatRef = useRef<HTMLDivElement>(null);
 
+  // Suggested KR links after analysis
+  const [suggestedLinks, setSuggestedLinks] = useState<Array<{
+    objectiveId: string; objectiveTitle: string; krId: string; krTitle: string; score: number;
+  }>>([]);
+  const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
+
+  // ── Plan Todos state ──
+  const [planItems, setPlanItems] = useState<PlanItem[]>([]);
+  const [activePeriod, setActivePeriod] = useState<PlanPeriod>("today");
+  const [newTodoText, setNewTodoText] = useState("");
+  const [customLabel, setCustomLabel] = useState("");
+  const [planPhase, setPlanPhase] = useState<PlanPhase>("idle");
+  const [planAnalysis, setPlanAnalysis] = useState<PlanAnalysisResult | null>(null);
+  const [planScope, setPlanScope] = useState<"all" | "today" | "week" | "month">("all");
+  const [planScopeOpen, setPlanScopeOpen] = useState(false);
+  const [planMessages, setPlanMessages] = useState<ChatMsg[]>([]);
+  const [planChatInput, setPlanChatInput] = useState("");
+  const [planChatLoading, setPlanChatLoading] = useState(false);
+  const planChatRef = useRef<HTMLDivElement>(null);
+
+  // Load data
   useEffect(() => {
     setEvalProfile(getEvaluationProfile());
     setGroups(getObjGroups());
+    setPlanItems(getPlanItems());
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      setIdeas([]);
-      setObjectives([]);
-      autoReanalyzeDone.current = false;
-      return;
-    }
-    let cancelled = false;
-
-    Promise.all([fetchIdeas(), fetchObjectives()])
-      .then(([loadedIdeas, loadedObjectives]) => {
-        if (cancelled) return;
-        setIdeas(loadedIdeas);
-        setObjectives(loadedObjectives);
-
-        if (autoReanalyzeDone.current) return;
-        const toReanalyze = loadedIdeas.filter(
-          (i) => i.needsReanalysis && i.analysis && (i.ideaStatus ?? "active") === "active"
-        );
-        if (toReanalyze.length === 0) return;
-
-        autoReanalyzeDone.current = true;
-        setReanalyzingIds(new Set(toReanalyze.map((i) => i.id)));
-
-        const currentProfile = getEvaluationProfile();
-        (async () => {
-          for (const item of toReanalyze) {
-            if (cancelled) break;
-            try {
-              const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
-                ideaTitle: item.title,
-                ideaNotes: item.description || "",
-                objectives: loadedObjectives,
-                evaluationContext: buildEvaluationPrompt(currentProfile),
-                groups: getObjGroups(),
-              });
-              const updated: Idea = { ...item, analysis, needsReanalysis: false };
-              await saveIdea(updated);
-              if (!cancelled) setIdeas((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
-            } catch (e) {
-              console.error("auto re-analysis failed:", item.title, e);
-            } finally {
-              if (!cancelled)
-                setReanalyzingIds((prev) => {
-                  const s = new Set(prev);
-                  s.delete(item.id);
-                  return s;
-                });
-            }
-          }
-        })();
-      })
-      .catch(console.error);
-
-    return () => { cancelled = true; };
+    if (!user) { setObjectives([]); return; }
+    fetchObjectives().then(setObjectives).catch(console.error);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isQuickMode = !modalNotes.trim();
+  // Scroll chat to bottom
+  useEffect(() => {
+    ideaChatRef.current?.scrollTo({ top: ideaChatRef.current.scrollHeight, behavior: "smooth" });
+  }, [ideaMessages]);
+  useEffect(() => {
+    planChatRef.current?.scrollTo({ top: planChatRef.current.scrollHeight, behavior: "smooth" });
+  }, [planMessages]);
 
-  function openNewModal() {
+  const isQuickIdea = !ideaNotes.trim();
+  const periodLabel = language === "zh-TW" ? PERIOD_LABELS_ZH : PERIOD_LABELS_EN;
+  const statusLabel = language === "zh-TW" ? STATUS_LABELS_ZH : STATUS_LABELS_EN;
+
+  // ── Idea Validator handlers ────────────────────────────────────────────────
+
+  async function handleIdeaAnalyze() {
+    if (!ideaTitle.trim()) return;
     if (!user) { requireAuth(); return; }
-    setPendingInboxId(null);
-    setModalTitle("");
-    setModalNotes("");
-    setModalDetailsOpen(false);
-    setModalAnalysis(null);
-    setModalSuggestedLinks([]);
-    setModalSelectedLinkIds(new Set());
-    setModalErrorMsg("");
-    setClarifyQuestion("");
-    setClarifyAnswer("");
-    setModalStatus("idle");
-    setModalOpen(true);
+    if (objectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
+    setIdeaError("");
+
+    if (isQuickIdea) {
+      setIdeaPhase("clarifying");
+      try {
+        const { shouldClarify, question } = await callAI<{ shouldClarify: boolean; question: string }>(
+          "clarifyIdea", { ideaTitle, objectives }
+        );
+        if (shouldClarify && question) {
+          setIdeaClarifyQ(question);
+          setIdeaClarifyA("");
+          return;
+        }
+      } catch { /* fall through */ }
+    }
+    await runIdeaAnalysis();
   }
 
-  function openAnalyzeInbox(item: Idea) {
-    if (!user) { requireAuth(); return; }
-    setPendingInboxId(item.id);
-    setModalTitle(item.title);
-    setModalNotes("");
-    setModalDetailsOpen(false);
-    setModalAnalysis(null);
-    setModalSuggestedLinks([]);
-    setModalSelectedLinkIds(new Set());
-    setModalErrorMsg("");
-    setClarifyQuestion("");
-    setClarifyAnswer("");
-    setModalStatus("idle");
-    setModalOpen(true);
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setModalStatus("idle");
-    setPendingInboxId(null);
-  }
-
-  async function runAnalysis(extraNotes?: string) {
-    setModalStatus("analyzing");
-    setModalErrorMsg("");
+  async function runIdeaAnalysis(extraNotes?: string) {
+    setIdeaPhase("analyzing");
+    setIdeaError("");
     try {
-      const combinedNotes = [modalNotes, extraNotes].filter(Boolean).join("\n");
+      const combined = [ideaNotes, extraNotes].filter(Boolean).join("\n");
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
-        ideaTitle: modalTitle,
-        ideaNotes: combinedNotes,
+        ideaTitle,
+        ideaNotes: combined,
         objectives,
         evaluationContext: buildEvaluationPrompt(evalProfile),
         groups,
       });
-      setModalAnalysis(result);
-      const links: SuggestedLink[] = [];
+      setIdeaAnalysis(result);
+
+      const links: typeof suggestedLinks = [];
       for (const os of result.objectiveScores) {
         for (const krs of os.keyResultScores) {
           if (krs.score >= 5)
@@ -197,779 +215,761 @@ export default function HomePage() {
         }
       }
       links.sort((a, b) => b.score - a.score);
-      setModalSuggestedLinks(links);
-      setModalSelectedLinkIds(
-        new Set(links.filter((l) => l.score >= 7).map((l) => l.krId))
-      );
-      setModalStatus("confirm");
+      setSuggestedLinks(links);
+      setSelectedLinkIds(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
+      setIdeaPhase("result");
+      setActivePanel("idea");
+      setIdeaMessages([{
+        role: "assistant",
+        content: language === "zh-TW"
+          ? `這個想法的綜合分數是 ${result.finalScore.toFixed(1)}/10。${result.summary} 你有什麼想討論或調整的嗎？`
+          : `This idea scored ${result.finalScore.toFixed(1)}/10. ${result.summary} Want to discuss or adjust anything?`,
+      }]);
     } catch (e) {
-      setModalErrorMsg(e instanceof Error ? e.message : t("modal.analyzing"));
-      setModalStatus("idle");
+      setIdeaError(e instanceof Error ? e.message : String(e));
+      setIdeaPhase("idle");
     }
   }
 
-  async function handleAnalyze() {
-    if (!modalTitle.trim()) return;
-    if (objectives.length === 0) {
-      setModalErrorMsg(t("error.noObjectives"));
+  async function handleIdeaSave(status: IdeaStatus) {
+    if (!ideaAnalysis) return;
+    setIdeaPhase("saving");
+    const linkedKRs: IdeaKRLink[] = suggestedLinks
+      .filter((l) => selectedLinkIds.has(l.krId))
+      .map((l) => ({ objectiveId: l.objectiveId, krId: l.krId }));
+    const newIdea: Idea = {
+      id: uuid(),
+      title: ideaTitle,
+      description: ideaNotes,
+      analysis: ideaAnalysis,
+      createdAt: new Date().toISOString(),
+      completed: false,
+      linkedKRs,
+      taskStatus: "todo",
+      ideaStatus: status,
+      quickAnalysis: isQuickIdea,
+    };
+    try {
+      await saveIdea(newIdea);
+      resetIdeaValidator();
+    } catch (e) {
+      setIdeaError(e instanceof Error ? e.message : String(e));
+      setIdeaPhase("result");
+    }
+  }
+
+  function resetIdeaValidator() {
+    setIdeaTitle("");
+    setIdeaNotes("");
+    setIdeaNotesOpen(false);
+    setIdeaPhase("idle");
+    setIdeaAnalysis(null);
+    setIdeaError("");
+    setIdeaClarifyQ("");
+    setIdeaClarifyA("");
+    setIdeaMessages([]);
+    setSuggestedLinks([]);
+    setSelectedLinkIds(new Set());
+    if (activePanel === "idea") setActivePanel(null);
+  }
+
+  async function handleIdeaChat() {
+    const text = ideaChatInput.trim();
+    if (!text || ideaChatLoading) return;
+    setIdeaChatInput("");
+    const nextMessages: ChatMsg[] = [...ideaMessages, { role: "user", content: text }];
+    setIdeaMessages(nextMessages);
+    setIdeaChatLoading(true);
+    try {
+      const { content } = await callAI<{ content: string }>("chatPlanCoach", {
+        messages: nextMessages,
+        context: {
+          type: "idea",
+          ideaTitle,
+          ideaScore: ideaAnalysis?.finalScore,
+          ideaSummary: ideaAnalysis?.summary,
+        },
+        objectives,
+      });
+      setIdeaMessages([...nextMessages, { role: "assistant", content }]);
+    } catch (e) {
+      setIdeaMessages([...nextMessages, { role: "assistant", content: String(e) }]);
+    } finally {
+      setIdeaChatLoading(false);
+    }
+  }
+
+  // ── Plan Todo handlers ─────────────────────────────────────────────────────
+
+  function addTodo() {
+    const title = newTodoText.trim();
+    if (!title) return;
+    const item: PlanItem = {
+      id: uuid(),
+      title,
+      period: activePeriod,
+      customLabel: activePeriod === "custom" ? customLabel.trim() || undefined : undefined,
+      status: "active",
+      createdAt: new Date().toISOString(),
+    };
+    const next = [item, ...planItems];
+    setPlanItems(next);
+    savePlanItems(next);
+    setNewTodoText("");
+  }
+
+  function updateTodoStatus(id: string, status: PlanStatus) {
+    const next = planItems.map((i) => (i.id === id ? { ...i, status } : i));
+    setPlanItems(next);
+    savePlanItems(next);
+  }
+
+  function deleteTodo(id: string) {
+    const next = planItems.filter((i) => i.id !== id);
+    setPlanItems(next);
+    savePlanItems(next);
+  }
+
+  async function handlePlanAnalyze(scope: "all" | "today" | "week" | "month") {
+    if (!user) { requireAuth(); return; }
+    if (objectives.length === 0) return;
+    setPlanScope(scope);
+    setPlanScopeOpen(false);
+    setPlanPhase("analyzing");
+    setActivePanel("plan");
+
+    const scopeItems = scope === "all"
+      ? planItems
+      : planItems.filter((i) => i.period === (scope === "today" ? "today" : scope === "week" ? "week" : "month"));
+
+    if (scopeItems.length === 0) {
+      setPlanPhase("idle");
+      setActivePanel(null);
       return;
     }
-    setModalErrorMsg("");
-    if (isQuickMode) {
-      setModalStatus("clarifying");
-      try {
-        const { shouldClarify, question } = await callAI<{
-          shouldClarify: boolean;
-          question: string;
-        }>("clarifyIdea", { ideaTitle: modalTitle, objectives });
-        if (shouldClarify && question) {
-          setClarifyQuestion(question);
-          setClarifyAnswer("");
-          return;
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-    await runAnalysis();
-  }
 
-  async function handleSave(ideaStatus: IdeaStatus | undefined, taskStatus: TaskStatus) {
-    if (!modalAnalysis) return;
-    setModalStatus("saving");
-    const linkedKRs: IdeaKRLink[] = modalSuggestedLinks
-      .filter((l) => modalSelectedLinkIds.has(l.krId))
-      .map((l) => ({ objectiveId: l.objectiveId, krId: l.krId }));
+    try {
+      const result = await callAI<PlanAnalysisResult>("analyzePlanItems", {
+        items: scopeItems.map((i) => ({ id: i.id, title: i.title, period: i.period })),
+        objectives,
+        scope,
+        evaluationContext: buildEvaluationPrompt(evalProfile),
+        groups,
+      });
+      setPlanAnalysis(result);
+      setPlanPhase("result");
+      setPlanMessages([{
+        role: "assistant",
+        content: language === "zh-TW"
+          ? `計畫分析完成。${result.overallAssessment} 有什麼想調整的嗎？`
+          : `Plan analysis complete. ${result.overallAssessment} Want to make any adjustments?`,
+      }]);
 
-    if (pendingInboxId) {
-      const existing = ideas.find((i) => i.id === pendingInboxId);
-      if (existing) {
-        const updated: Idea = {
-          ...existing,
-          analysis: modalAnalysis,
-          ideaStatus: ideaStatus ?? "active",
-          taskStatus,
-          linkedKRs,
-          quickAnalysis: isQuickMode,
+      // Apply scores to items
+      const scoreMap = new Map(result.items.map((i) => [i.id, i]));
+      const next = planItems.map((item) => {
+        const scored = scoreMap.get(item.id);
+        if (!scored) return item;
+        return {
+          ...item,
+          analysis: {
+            score: scored.score,
+            reasoning: scored.reasoning,
+            periodNote: scored.periodNote,
+            objectiveContributions: [],
+          },
         };
-        try {
-          await saveIdea(updated);
-          setIdeas((prev) => prev.map((i) => (i.id === pendingInboxId ? updated : i)));
-          closeModal();
-        } catch (e) {
-          setModalErrorMsg(e instanceof Error ? e.message : t("modal.saving"));
-          setModalStatus("confirm");
-        }
-      }
-    } else {
-      const descParts: string[] = [];
-      if (modalNotes.trim()) descParts.push(modalNotes.trim());
-      const newIdea: Idea = {
-        id: uuid(),
-        title: modalTitle,
-        description: descParts.join("\n"),
-        analysis: modalAnalysis,
-        createdAt: new Date().toISOString(),
-        completed: false,
-        linkedKRs,
-        taskStatus,
-        ideaStatus: ideaStatus ?? "active",
-        quickAnalysis: isQuickMode,
-      };
-      try {
-        await saveIdea(newIdea);
-        setIdeas((prev) => [newIdea, ...prev]);
-        closeModal();
-      } catch (e) {
-        setModalErrorMsg(e instanceof Error ? e.message : t("modal.saving"));
-        setModalStatus("confirm");
-      }
+      });
+      setPlanItems(next);
+      savePlanItems(next);
+    } catch (e) {
+      console.error(e);
+      setPlanPhase("idle");
+      setActivePanel(null);
     }
   }
 
-  async function promoteToTask(item: Idea) {
-    if (!user) { requireAuth(); return; }
-    const updated: Idea = { ...item, ideaStatus: "active", taskStatus: "todo" };
-    setIdeas((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
-    await saveIdea(updated).catch(console.error);
+  async function handlePlanChat() {
+    const text = planChatInput.trim();
+    if (!text || planChatLoading) return;
+    setPlanChatInput("");
+    const scopeItems = planScope === "all"
+      ? planItems
+      : planItems.filter((i) => i.period === (planScope === "today" ? "today" : planScope === "week" ? "week" : "month"));
+    const nextMessages: ChatMsg[] = [...planMessages, { role: "user", content: text }];
+    setPlanMessages(nextMessages);
+    setPlanChatLoading(true);
+    try {
+      const { content } = await callAI<{ content: string }>("chatPlanCoach", {
+        messages: nextMessages,
+        context: {
+          type: "plan",
+          planItems: scopeItems.map((i) => ({
+            title: i.title,
+            period: i.period,
+            score: i.analysis?.score,
+          })),
+          overallAssessment: planAnalysis?.overallAssessment,
+          suggestions: planAnalysis?.suggestions,
+        },
+        objectives,
+      });
+      setPlanMessages([...nextMessages, { role: "assistant", content }]);
+    } catch (e) {
+      setPlanMessages([...nextMessages, { role: "assistant", content: String(e) }]);
+    } finally {
+      setPlanChatLoading(false);
+    }
   }
 
-  async function archiveIdea(item: Idea) {
-    if (!user) { requireAuth(); return; }
-    setIdeas((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "shelved" as IdeaStatus } : i))
+  const periodItems = activePeriod === "all" as PlanPeriod
+    ? planItems
+    : planItems.filter((i) => i.period === activePeriod);
+
+  // Score display helper
+  function scoreChip(score: number | undefined) {
+    if (score === undefined) return null;
+    const color = score >= 7 ? "bg-indigo-50 text-indigo-600" : score >= 4 ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-400";
+    return (
+      <span className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${color}`}>
+        {score.toFixed(1)}
+      </span>
     );
-    await updateIdeaStatus(item.id, "shelved").catch(console.error);
   }
 
-  async function deleteIdea(item: Idea) {
-    if (!user) { requireAuth(); return; }
-    setIdeas((prev) => prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "deleted" as IdeaStatus } : i)));
-    await updateIdeaStatus(item.id, "deleted").catch(console.error);
-  }
+  // ── Right Panel ────────────────────────────────────────────────────────────
 
-  async function restoreIdea(item: Idea) {
-    if (!user) { requireAuth(); return; }
-    setIdeas((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, ideaStatus: "active" as IdeaStatus } : i))
+  function IdeaPanel() {
+    if (!ideaAnalysis) return null;
+    const wScore = computeWeightedScore(
+      { id: "", title: ideaTitle, description: ideaNotes, analysis: ideaAnalysis, createdAt: "" },
+      objectives, evalProfile, groups,
     );
-    await updateIdeaStatus(item.id, "active").catch(console.error);
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
+            <span className="text-2xl font-bold font-mono text-indigo-600">{wScore.toFixed(1)}</span>
+            <span className="text-[10px] text-gray-400">{language === "zh-TW" ? "綜合" : "Score"}</span>
+          </div>
+          <p className="text-sm font-semibold text-gray-800 leading-snug">{ideaTitle}</p>
+        </div>
+
+        {ideaAnalysis.summary && (
+          <p className="text-xs text-indigo-700 bg-indigo-50 rounded-xl px-3 py-2 leading-relaxed">
+            {ideaAnalysis.summary}
+          </p>
+        )}
+
+        <div className="space-y-2">
+          {ideaAnalysis.objectiveScores.map((os) => (
+            <div key={os.objectiveId} className="bg-gray-50 rounded-lg px-3 py-2 flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-gray-700 truncate">{os.objectiveTitle}</p>
+                {os.reasoning && <p className="text-[11px] text-gray-500 mt-0.5">{os.reasoning}</p>}
+              </div>
+              <span className={`text-xs font-bold font-mono shrink-0 mt-0.5 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"}`}>
+                {os.overallScore.toFixed(1)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {ideaAnalysis.risks.length > 0 && (
+          <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+            <span className="font-medium">{language === "zh-TW" ? "風險：" : "Risks: "}</span>
+            {ideaAnalysis.risks.join("；")}
+          </div>
+        )}
+
+        {/* Save actions */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleIdeaSave("shelved")}
+            disabled={ideaPhase === "saving"}
+            className="flex-1 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {language === "zh-TW" ? "暫存想法" : "Save to Backlog"}
+          </button>
+          <button
+            onClick={() => handleIdeaSave("active")}
+            disabled={ideaPhase === "saving"}
+            className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {ideaPhase === "saving"
+              ? (language === "zh-TW" ? "儲存中…" : "Saving…")
+              : (language === "zh-TW" ? "加入任務清單" : "Add to Tasks")}
+          </button>
+        </div>
+
+        {/* Discussion */}
+        <div className="border-t border-gray-100 pt-3 space-y-3">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            {language === "zh-TW" ? "與 AI 討論" : "Discuss"}
+          </p>
+          <div ref={ideaChatRef} className="max-h-48 overflow-y-auto space-y-2">
+            {ideaMessages.map((m, i) => (
+              <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl max-w-[90%] ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800 self-start" : "bg-gray-100 text-gray-700 ml-auto"}`}>
+                {m.content}
+              </div>
+            ))}
+            {ideaChatLoading && (
+              <div className="text-xs text-indigo-400 animate-pulse px-3">
+                {language === "zh-TW" ? "思考中…" : "Thinking…"}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={ideaChatInput}
+              onChange={(e) => setIdeaChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleIdeaChat()}
+              placeholder={language === "zh-TW" ? "輸入問題或想法…" : "Ask a question…"}
+              className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            <button
+              onClick={handleIdeaChat}
+              disabled={ideaChatLoading || !ideaChatInput.trim()}
+              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40"
+            >
+              ↑
+            </button>
+          </div>
+        </div>
+
+        <button onClick={resetIdeaValidator} className="text-xs text-gray-300 hover:text-gray-500 w-full text-center pt-1">
+          {language === "zh-TW" ? "清除，分析下一個" : "Clear, analyze next"}
+        </button>
+      </div>
+    );
   }
 
-  function setTaskStatus(ideaId: string, status: TaskStatus) {
-    if (!user) { requireAuth(); return; }
-    setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, taskStatus: status } : i)));
-    updateIdeaTaskStatus(ideaId, status).catch(console.error);
-  }
+  function PlanPanel() {
+    if (!planAnalysis) return null;
+    const scopeItems = planScope === "all"
+      ? planItems
+      : planItems.filter((i) => i.period === (planScope === "today" ? "today" : planScope === "week" ? "week" : "month"));
+    const scoreMap = new Map(planAnalysis.items.map((i) => [i.id, i]));
+    return (
+      <div className="space-y-4">
+        <div className="bg-indigo-50 rounded-xl px-3 py-2.5">
+          <p className="text-xs font-semibold text-indigo-700 mb-1">{language === "zh-TW" ? "整體評估" : "Overall Assessment"}</p>
+          <p className="text-xs text-indigo-700 leading-relaxed">{planAnalysis.overallAssessment}</p>
+        </div>
 
-  function toggleExpand(id: string) {
-    setExpandedIds((prev) => {
-      const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
-      return s;
-    });
-  }
-
-  const inboxItems = ideas.filter((i) => i.ideaStatus === "inbox");
-  const unevaluated = ideas.filter(
-    (i) => (i.ideaStatus ?? "active") === "active" && !i.analysis
-  );
-  const pendingItems = [...inboxItems, ...unevaluated];
-  const shelved = ideas.filter((i) => i.ideaStatus === "shelved");
-  const deleted = ideas.filter((i) => i.ideaStatus === "deleted");
-
-  const selectedObjId = filterValue.startsWith("g:") || filterValue === "" ? null : filterValue;
-  const selectedGroupId = filterValue.startsWith("g:") ? filterValue.slice(2) : null;
-
-  const evaluated = ideas
-    .filter((i) => (i.ideaStatus ?? "active") === "active" && i.analysis)
-    .sort((a, b) => {
-      const aDone = a.taskStatus === "done" ? 1 : 0;
-      const bDone = b.taskStatus === "done" ? 1 : 0;
-      if (aDone !== bDone) return aDone - bDone;
-      if (selectedObjId) {
-        const aScore = a.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? 0;
-        const bScore = b.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? 0;
-        return bScore - aScore;
-      }
-      if (selectedGroupId) {
-        const groupObjIds = new Set(objectives.filter((o) => o.meta?.groupId === selectedGroupId).map((o) => o.id));
-        const avg = (idea: typeof a) => {
-          const scores = idea.analysis!.objectiveScores.filter((os) => groupObjIds.has(os.objectiveId));
-          return scores.length ? scores.reduce((s, os) => s + os.overallScore, 0) / scores.length : 0;
-        };
-        return avg(b) - avg(a);
-      }
-      return (b.analysis!.finalScore ?? 0) - (a.analysis!.finalScore ?? 0);
-    });
-
-  const taskStatusLabel: Record<TaskStatus, string> = {
-    todo: t("status.todo"),
-    "in-progress": t("status.inProgress"),
-    done: t("status.done"),
-  };
-  const taskStatusStyle: Record<TaskStatus, string> = {
-    todo: "bg-gray-100 text-gray-500",
-    "in-progress": "bg-amber-50 text-amber-600",
-    done: "bg-green-50 text-green-600",
-  };
-
-  return (
-    <div className="max-w-xl mx-auto px-4 py-6 md:px-6 md:py-10 space-y-6">
-      {/* Analyze Modal */}
-      {modalOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && modalStatus === "idle") closeModal();
-          }}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-700">
-                  {pendingInboxId ? t("modal.evaluateTask") : t("modal.newTask")}
-                </h2>
-                {(modalStatus === "idle" || modalStatus === "confirm") && (
-                  <button
-                    onClick={closeModal}
-                    className="text-gray-300 hover:text-gray-500 text-xl leading-none"
-                  >
-                    ×
-                  </button>
+        <div className="space-y-1.5">
+          {scopeItems.map((item) => {
+            const scored = scoreMap.get(item.id);
+            return (
+              <div key={item.id} className="bg-gray-50 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-gray-700 flex-1 truncate">{item.title}</p>
+                  {scored && scoreChip(scored.score)}
+                </div>
+                {scored && (
+                  <div className="mt-1 space-y-0.5">
+                    {scored.reasoning && <p className="text-[11px] text-gray-500">{scored.reasoning}</p>}
+                    {scored.periodNote && (
+                      <p className="text-[11px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
+                        {scored.periodNote}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
+            );
+          })}
+        </div>
 
-              {(modalStatus === "analyzing" ||
-                modalStatus === "saving" ||
-                (modalStatus === "clarifying" && !clarifyQuestion)) && (
+        {planAnalysis.suggestions && (
+          <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+            <p className="text-xs font-semibold text-gray-600 mb-1">{language === "zh-TW" ? "AI 建議" : "Suggestions"}</p>
+            <p className="text-xs text-gray-600 leading-relaxed">{planAnalysis.suggestions}</p>
+          </div>
+        )}
+
+        {/* Discussion */}
+        <div className="border-t border-gray-100 pt-3 space-y-3">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            {language === "zh-TW" ? "與 AI 討論" : "Discuss"}
+          </p>
+          <div ref={planChatRef} className="max-h-48 overflow-y-auto space-y-2">
+            {planMessages.map((m, i) => (
+              <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl max-w-[90%] ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto"}`}>
+                {m.content}
+              </div>
+            ))}
+            {planChatLoading && (
+              <div className="text-xs text-indigo-400 animate-pulse px-3">
+                {language === "zh-TW" ? "思考中…" : "Thinking…"}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={planChatInput}
+              onChange={(e) => setPlanChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handlePlanChat()}
+              placeholder={language === "zh-TW" ? "輸入問題或調整建議…" : "Ask or suggest changes…"}
+              className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            <button
+              onClick={handlePlanChat}
+              disabled={planChatLoading || !planChatInput.trim()}
+              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40"
+            >
+              ↑
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  const hasRightPanel = activePanel !== null && (
+    (activePanel === "idea" && ideaPhase === "result") ||
+    (activePanel === "plan" && (planPhase === "result" || planPhase === "analyzing"))
+  );
+
+  return (
+    <div className="max-w-5xl mx-auto px-4 py-6 md:px-6 md:py-8">
+      <div className={`flex gap-6 ${hasRightPanel ? "items-start" : ""}`}>
+
+        {/* ── Left Column ────────────────────────────────────────────── */}
+        <div className="flex-1 min-w-0 space-y-8">
+
+          {/* ── Section 1: Idea Validator ── */}
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">
+                {language === "zh-TW" ? "想法驗證" : "Idea Validator"}
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {language === "zh-TW"
+                  ? "輸入一個想法，看它對你的目標幫助有多大"
+                  : "Enter an idea and see how much it helps your goals"}
+              </p>
+            </div>
+
+            {(ideaPhase === "idle" || ideaPhase === "clarifying") && (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    value={ideaTitle}
+                    onChange={(e) => setIdeaTitle(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && ideaPhase === "idle" && handleIdeaAnalyze()}
+                    placeholder={language === "zh-TW" ? "用一句話描述這個想法…" : "Describe your idea in one line…"}
+                    disabled={ideaPhase === "clarifying" && !!ideaClarifyQ}
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+                    autoFocus
+                  />
+                  <button
+                    onClick={ideaPhase === "idle" ? handleIdeaAnalyze : undefined}
+                    disabled={!ideaTitle.trim() || ideaPhase !== "idle"}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 shrink-0"
+                  >
+                    {language === "zh-TW" ? "分析" : "Analyze"}
+                  </button>
+                </div>
+
+                {ideaPhase === "idle" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIdeaNotesOpen((v) => !v)}
+                      className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      <span className={`transition-transform ${ideaNotesOpen ? "rotate-90" : ""}`}>›</span>
+                      {language === "zh-TW" ? "補充說明（選填）" : "Add notes (optional)"}
+                      {ideaNotes.trim() && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />}
+                    </button>
+                    {ideaNotesOpen && (
+                      <div className="pl-3 border-l-2 border-gray-100">
+                        <RichTextArea
+                          value={ideaNotes}
+                          onChange={setIdeaNotes}
+                          placeholder={language === "zh-TW" ? "備註，幫助 AI 更準確判斷" : "Notes to help AI score more accurately"}
+                          rows={2}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {ideaPhase === "clarifying" && ideaClarifyQ && (
+                  <div className="bg-indigo-50 rounded-xl px-4 py-3 space-y-2">
+                    <p className="text-sm text-indigo-800 font-medium">{ideaClarifyQ}</p>
+                    <div className="flex gap-2">
+                      <input
+                        value={ideaClarifyA}
+                        onChange={(e) => setIdeaClarifyA(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && runIdeaAnalysis(ideaClarifyA.trim() || undefined)}
+                        placeholder={language === "zh-TW" ? "你的回答…" : "Your answer…"}
+                        autoFocus
+                        className="flex-1 rounded-lg border border-indigo-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                      <button
+                        onClick={() => runIdeaAnalysis()}
+                        className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 shrink-0"
+                      >
+                        {language === "zh-TW" ? "跳過" : "Skip"}
+                      </button>
+                      <button
+                        onClick={() => runIdeaAnalysis(ideaClarifyA.trim() || undefined)}
+                        disabled={!ideaClarifyA.trim()}
+                        className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 shrink-0"
+                      >
+                        {language === "zh-TW" ? "繼續" : "Continue"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {ideaPhase === "analyzing" && (
+              <div className="flex items-center gap-2 py-3 text-sm text-indigo-600">
+                <span className="animate-pulse text-lg">◎</span>
+                {language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}
+              </div>
+            )}
+
+            {ideaPhase === "result" && (
+              <div className="flex items-center gap-3 bg-white rounded-xl border border-indigo-100 px-4 py-3">
+                <div className="flex flex-col items-center bg-indigo-50 rounded-lg px-2.5 py-1.5 shrink-0">
+                  <span className="text-lg font-bold font-mono text-indigo-600">
+                    {computeWeightedScore(
+                      { id: "", title: ideaTitle, description: ideaNotes, analysis: ideaAnalysis, createdAt: "" },
+                      objectives, evalProfile, groups,
+                    ).toFixed(1)}
+                  </span>
+                  <span className="text-[10px] text-gray-400">{language === "zh-TW" ? "分" : "pts"}</span>
+                </div>
+                <p className="text-sm font-medium text-gray-800 flex-1 truncate">{ideaTitle}</p>
+                <span className="text-xs text-indigo-500 shrink-0">
+                  {language === "zh-TW" ? "→ 查看右側分析" : "→ See analysis →"}
+                </span>
+              </div>
+            )}
+
+            {ideaPhase === "saving" && (
+              <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
+                <span className="animate-pulse">◎</span>
+                {language === "zh-TW" ? "儲存中…" : "Saving…"}
+              </div>
+            )}
+
+            {ideaError && (
+              <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{ideaError}</p>
+            )}
+          </section>
+
+          <div className="border-t border-gray-100" />
+
+          {/* ── Section 2: Todo Planner ── */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700">
+                  {language === "zh-TW" ? "待辦規劃" : "Todo Planner"}
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {language === "zh-TW"
+                    ? "按時間段規劃任務，AI 協助評估優先序"
+                    : "Plan tasks by time period, AI evaluates priorities"}
+                </p>
+              </div>
+
+              {/* AI Analyze button */}
+              <div className="relative">
+                <button
+                  onClick={() => setPlanScopeOpen((v) => !v)}
+                  disabled={planPhase === "analyzing" || planItems.length === 0}
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {planPhase === "analyzing"
+                    ? <span className="animate-pulse">◎</span>
+                    : null}
+                  {language === "zh-TW" ? "AI 分析" : "AI Analyze"}
+                  <span className="text-indigo-300">▾</span>
+                </button>
+                {planScopeOpen && (
+                  <div className="absolute right-0 top-full mt-1 bg-white rounded-xl border border-gray-200 shadow-lg py-1 z-10 min-w-[120px]">
+                    {(["all", "today", "week", "month"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handlePlanAnalyze(s)}
+                        className="w-full text-left text-xs px-4 py-2 hover:bg-indigo-50 text-gray-700"
+                      >
+                        {language === "zh-TW"
+                          ? s === "all" ? "全部分析" : `只分析${PERIOD_LABELS_ZH[s as PlanPeriod]}`
+                          : s === "all" ? "Analyze All" : `Only ${PERIOD_LABELS_EN[s as PlanPeriod]}`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Period Tabs */}
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+              {(["today", "week", "month", "custom"] as PlanPeriod[]).map((p) => {
+                const count = planItems.filter((i) => i.period === p).length;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setActivePeriod(p)}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      activePeriod === p ? "bg-white text-gray-800 shadow-sm" : "text-gray-400 hover:text-gray-600"
+                    }`}
+                  >
+                    {periodLabel[p]}
+                    {count > 0 && (
+                      <span className={`text-[10px] px-1 py-0.5 rounded-full ${activePeriod === p ? "bg-gray-100 text-gray-500" : "bg-gray-200 text-gray-400"}`}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom label input */}
+            {activePeriod === "custom" && (
+              <input
+                value={customLabel}
+                onChange={(e) => setCustomLabel(e.target.value)}
+                placeholder={language === "zh-TW" ? "自訂時間標籤（如：下週四、6月前）" : "Custom label (e.g., Next Thursday)"}
+                className="w-full text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+            )}
+
+            {/* New todo input */}
+            <div className="flex gap-2">
+              <input
+                value={newTodoText}
+                onChange={(e) => setNewTodoText(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && addTodo()}
+                placeholder={language === "zh-TW"
+                  ? `新增${periodLabel[activePeriod]}任務…`
+                  : `Add ${periodLabel[activePeriod]} task…`}
+                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+              <button
+                onClick={addTodo}
+                disabled={!newTodoText.trim()}
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                +
+              </button>
+            </div>
+
+            {/* Todo list */}
+            {periodItems.length === 0 ? (
+              <div className="text-center py-10">
+                <p className="text-sm text-gray-400">
+                  {language === "zh-TW"
+                    ? `${periodLabel[activePeriod]}還沒有任務，輸入上方新增`
+                    : `No ${periodLabel[activePeriod]} tasks yet`}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {periodItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`bg-white rounded-xl border px-4 py-3 flex items-center gap-3 ${
+                      item.status === "completed"
+                        ? "border-gray-100 opacity-60"
+                        : item.status === "shelved"
+                        ? "border-orange-100 bg-orange-50/30"
+                        : "border-gray-200"
+                    }`}
+                  >
+                    <p className={`flex-1 text-sm min-w-0 truncate ${item.status === "completed" ? "line-through text-gray-400" : "text-gray-800"}`}>
+                      {item.title}
+                    </p>
+                    {item.analysis && scoreChip(item.analysis.score)}
+                    <select
+                      value={item.status}
+                      onChange={(e) => updateTodoStatus(item.id, e.target.value as PlanStatus)}
+                      className={`text-xs px-2 py-0.5 rounded-lg font-medium border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-300 shrink-0 ${STATUS_STYLE[item.status]}`}
+                    >
+                      {(["active", "in-progress", "shelved", "completed"] as PlanStatus[]).map((s) => (
+                        <option key={s} value={s}>{statusLabel[s]}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => deleteTodo(item.id)}
+                      className="text-gray-200 hover:text-red-400 text-sm shrink-0 transition-colors"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* ── Right Panel (desktop sticky) ───────────────────────────── */}
+        {hasRightPanel && (
+          <div className="hidden md:block w-[360px] shrink-0 sticky top-6 self-start max-h-[calc(100vh-5rem)] overflow-y-auto">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  {activePanel === "idea"
+                    ? (language === "zh-TW" ? "想法分析" : "Idea Analysis")
+                    : (language === "zh-TW" ? "計畫分析" : "Plan Analysis")}
+                </p>
+                <button
+                  onClick={() => setActivePanel(null)}
+                  className="text-gray-300 hover:text-gray-500 text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+
+              {activePanel === "idea" && planPhase !== "analyzing" && <IdeaPanel />}
+
+              {activePanel === "plan" && planPhase === "analyzing" && (
                 <div className="text-center py-10">
-                  <div className="text-3xl mb-3 animate-pulse">◎</div>
+                  <div className="text-3xl mb-3 animate-pulse text-indigo-400">◎</div>
                   <p className="text-xs text-gray-400">
-                    {modalStatus === "saving" ? t("modal.saving") : t("modal.analyzing")}
+                    {language === "zh-TW" ? "AI 分析計畫中…" : "Analyzing your plan…"}
                   </p>
                 </div>
               )}
 
-              {modalStatus === "clarifying" && clarifyQuestion && (
-                <div className="space-y-3">
-                  <p className="text-sm text-gray-700 font-medium">{clarifyQuestion}</p>
-                  <textarea
-                    value={clarifyAnswer}
-                    onChange={(e) => setClarifyAnswer(e.target.value)}
-                    placeholder={t("modal.notesPlaceholder")}
-                    rows={3}
-                    autoFocus
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => runAnalysis()}
-                      className="text-xs px-3 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50"
-                    >
-                      {t("modal.skip")}
-                    </button>
-                    <button
-                      onClick={() => runAnalysis(clarifyAnswer.trim() || undefined)}
-                      disabled={!clarifyAnswer.trim()}
-                      className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-                    >
-                      {t("modal.continue")}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {modalStatus === "idle" && (
-                <div className="space-y-3">
-                  <input
-                    value={modalTitle}
-                    onChange={(e) => setModalTitle(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleAnalyze()}
-                    placeholder={t("modal.taskPlaceholder")}
-                    autoFocus
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setModalDetailsOpen((v) => !v)}
-                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600"
-                  >
-                    <span className={`transition-transform ${modalDetailsOpen ? "rotate-90" : ""}`}>
-                      ›
-                    </span>
-                    {t("modal.addNotes")}
-                    {modalNotes.trim() && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />
-                    )}
-                  </button>
-                  {modalDetailsOpen && (
-                    <div className="pl-3 border-l-2 border-gray-100">
-                      <RichTextArea
-                        value={modalNotes}
-                        onChange={setModalNotes}
-                        placeholder={t("modal.notesPlaceholder")}
-                        rows={3}
-                      />
-                    </div>
-                  )}
-                  {modalErrorMsg && (
-                    <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                      {modalErrorMsg}
-                    </div>
-                  )}
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={!modalTitle.trim()}
-                    className="w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isQuickMode ? t("modal.aiEval") : t("modal.fullAnalysis")}
-                  </button>
-                </div>
-              )}
-
-              {modalStatus === "confirm" && modalAnalysis && (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
-                      <span className="text-2xl font-bold font-mono text-indigo-600">
-                        {modalAnalysis.finalScore.toFixed(1)}
-                      </span>
-                      <span className="text-[10px] text-gray-400">{t("modal.overall")}</span>
-                    </div>
-                    <p className="text-sm font-medium text-gray-800 leading-snug">{modalTitle}</p>
-                  </div>
-
-                  {modalAnalysis.summary && (
-                    <div className="bg-indigo-50 rounded-xl px-3 py-2.5 text-xs text-indigo-700 leading-relaxed">
-                      {modalAnalysis.summary}
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    {modalAnalysis.objectiveScores.map((os) => {
-                      const obj = objectives.find((o) => o.id === os.objectiveId);
-                      const desc = obj?.description || os.objectiveDescription;
-                      return (
-                        <div key={os.objectiveId} className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
-                          <div className="flex items-start justify-between gap-2 mb-1">
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium text-gray-700 truncate">{os.objectiveTitle}</p>
-                              {desc && <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{desc}</p>}
-                            </div>
-                            <span className={`text-sm font-bold font-mono shrink-0 ${
-                              os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"
-                            }`}>
-                              {os.overallScore.toFixed(1)}
-                            </span>
-                          </div>
-                          {os.reasoning && (
-                            <p className="text-[11px] text-gray-500">{os.reasoning}</p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {modalAnalysis.risks.length > 0 && (
-                    <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                      <span className="font-medium">{t("modal.risks")}</span>
-                      {modalAnalysis.risks.join("；")}
-                    </div>
-                  )}
-                  {modalErrorMsg && (
-                    <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                      {modalErrorMsg}
-                    </div>
-                  )}
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={() => handleSave("deleted", "todo")}
-                      className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50"
-                    >
-                      {t("modal.discard")}
-                    </button>
-                    <button
-                      onClick={() => handleSave("shelved", "todo")}
-                      className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-200"
-                    >
-                      {t("modal.shelve")}
-                    </button>
-                    <button
-                      onClick={() => handleSave(undefined, "todo")}
-                      className="flex-1 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
-                    >
-                      {t("modal.addToList")}
-                    </button>
-                  </div>
-                </div>
-              )}
+              {activePanel === "plan" && planPhase === "result" && <PlanPanel />}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">{t("tasks.title")}</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {t("tasks.subtitle")}
-            <span className="ml-1.5 text-gray-300">·</span>
-            <span className="ml-1.5 text-indigo-400">{t(`mode.${evalProfile.mode}`)}</span>
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {!user && (
-            <button
-              onClick={openLogin}
-              className="text-xs font-medium px-3 py-2 rounded-xl border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors"
-            >
-              {t("tasks.signIn")}
-            </button>
-          )}
-          <button
-            onClick={openNewModal}
-            className="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-          >
-            {t("tasks.add")}
-          </button>
-        </div>
+        )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-        {([
-          { key: "tasks", labelKey: "tab.tasks", count: pendingItems.length + evaluated.length },
-          { key: "shelved", labelKey: "tab.shelved", count: shelved.length },
-          { key: "deleted", labelKey: "tab.deleted", count: deleted.length },
-        ] as const).map(({ key, labelKey, count }) => (
-          <button
-            key={key}
-            onClick={() => setActiveTab(key)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === key
-                ? "bg-white text-gray-800 shadow-sm"
-                : "text-gray-400 hover:text-gray-600"
-            }`}
-          >
-            {t(labelKey)}
-            {count > 0 && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                activeTab === key ? "bg-gray-100 text-gray-500" : "bg-gray-200 text-gray-400"
-              }`}>
-                {count}
-              </span>
+      {/* ── Mobile: Right Panel below ───────────────────────────────── */}
+      {hasRightPanel && (
+        <div className="md:hidden mt-6">
+          <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                {activePanel === "idea"
+                  ? (language === "zh-TW" ? "想法分析" : "Idea Analysis")
+                  : (language === "zh-TW" ? "計畫分析" : "Plan Analysis")}
+              </p>
+              <button onClick={() => setActivePanel(null)} className="text-gray-300 hover:text-gray-500 text-lg leading-none">×</button>
+            </div>
+            {activePanel === "idea" && <IdeaPanel />}
+            {activePanel === "plan" && planPhase === "analyzing" && (
+              <div className="text-center py-6">
+                <div className="text-2xl animate-pulse text-indigo-400 mb-2">◎</div>
+                <p className="text-xs text-gray-400">{language === "zh-TW" ? "AI 分析計畫中…" : "Analyzing…"}</p>
+              </div>
             )}
-          </button>
-        ))}
-      </div>
-
-      {/* Re-analysis in progress banner */}
-      {reanalyzingIds.size > 0 && activeTab === "tasks" && (
-        <div className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
-          <span className="animate-pulse">◎</span>
-          {t("reanalyzing", { n: reanalyzingIds.size })}
-        </div>
-      )}
-
-      {/* Objective / group filter dropdown */}
-      {activeTab === "tasks" && evaluated.length > 0 && objectives.length > 0 && (
-        <div className="relative">
-          <select
-            value={filterValue}
-            onChange={(e) => setFilterValue(e.target.value)}
-            className="w-full appearance-none bg-white border border-gray-200 rounded-xl px-3 py-2 pr-8 text-sm text-gray-700 focus:outline-none focus:border-gray-400"
-          >
-            <option value="">{t("filter.all")}</option>
-            {groups.length > 0 && (() => {
-              const activeObjs = objectives.filter((o) => !o.status || o.status === "active");
-              const ungrouped = activeObjs.filter((o) => !o.meta?.groupId);
-              return (
-                <>
-                  {groups
-                    .slice()
-                    .sort((a, b) => a.priority - b.priority)
-                    .map((g) => {
-                      const gObjs = activeObjs
-                        .filter((o) => o.meta?.groupId === g.id)
-                        .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2));
-                      if (gObjs.length === 0) return null;
-                      return (
-                        <optgroup key={g.id} label={`▸ ${g.name}`}>
-                          <option value={`g:${g.id}`}>{t("filter.groupAll", { name: g.name })}</option>
-                          {gObjs.map((o) => (
-                            <option key={o.id} value={o.id}>　{o.title}</option>
-                          ))}
-                        </optgroup>
-                      );
-                    })}
-                  {ungrouped.length > 0 && (
-                    <optgroup label={`▸ ${t("goals.ungrouped")}`}>
-                      {ungrouped
-                        .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
-                        .map((o) => (
-                          <option key={o.id} value={o.id}>　{o.title}</option>
-                        ))}
-                    </optgroup>
-                  )}
-                </>
-              );
-            })()}
-            {groups.length === 0 && objectives
-              .filter((o) => !o.status || o.status === "active")
-              .sort((a, b) => (a.meta?.priority ?? 2) - (b.meta?.priority ?? 2))
-              .map((o) => (
-                <option key={o.id} value={o.id}>{o.title}</option>
-              ))}
-          </select>
-          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            {activePanel === "plan" && planPhase === "result" && <PlanPanel />}
           </div>
-        </div>
-      )}
-
-      {/* Tasks tab */}
-      {activeTab === "tasks" && (
-        <>
-          {pendingItems.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  {t("pending.title")}
-                </h2>
-                <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">
-                  {pendingItems.length}
-                </span>
-              </div>
-              <p className="text-xs text-gray-400">{t("pending.hint")}</p>
-              {pendingItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-white rounded-xl border border-amber-100 px-4 py-3"
-                >
-                  <p className="text-sm text-gray-800 mb-3 leading-snug">{item.title}</p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={() => openAnalyzeInbox(item)}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
-                    >
-                      {t("pending.aiEval")}
-                    </button>
-                    {item.ideaStatus === "inbox" && (
-                      <button
-                        onClick={() => promoteToTask(item)}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-                      >
-                        {t("pending.addToTodo")}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => archiveIdea(item)}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors"
-                    >
-                      {t("pending.shelve")}
-                    </button>
-                    <button
-                      onClick={() => deleteIdea(item)}
-                      className="text-xs text-gray-300 hover:text-red-400 ml-auto transition-colors"
-                    >
-                      {t("pending.delete")}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {evaluated.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{t("evaluated.title")}</h2>
-                <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                  <span className="text-indigo-500 font-medium">7+</span><span>{t("evaluated.high")}</span>
-                  <span className="text-amber-500 font-medium">4–7</span><span>{t("evaluated.mid")}</span>
-                  <span className="text-gray-400 font-medium">&lt;4</span><span>{t("evaluated.low")}</span>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                {evaluated.map((idea) => {
-                  const isExpanded = expandedIds.has(idea.id);
-                  const isDone = idea.taskStatus === "done";
-                  const displayScore = selectedObjId
-                    ? (idea.analysis!.objectiveScores.find((os) => os.objectiveId === selectedObjId)?.overallScore ?? idea.analysis!.finalScore)
-                    : idea.analysis!.finalScore;
-                  return (
-                    <div
-                      key={idea.id}
-                      className={`bg-white rounded-xl border transition-all ${
-                        isDone
-                          ? "border-gray-100 opacity-60"
-                          : isExpanded
-                          ? "border-indigo-100"
-                          : "border-gray-200"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 px-4 py-3">
-                        <button
-                          onClick={() => toggleExpand(idea.id)}
-                          className="flex-1 text-left min-w-0"
-                        >
-                          <p
-                            className={`text-sm font-medium truncate ${
-                              isDone ? "line-through text-gray-400" : "text-gray-800"
-                            }`}
-                          >
-                            {idea.title}
-                          </p>
-                          {reanalyzingIds.has(idea.id) && (
-                            <span className="text-[10px] text-indigo-400 animate-pulse">{t("reanalyzingItem")}</span>
-                          )}
-                        </button>
-                        <span
-                          className={`text-xs font-bold font-mono px-2 py-0.5 rounded-lg shrink-0 ${
-                            displayScore >= 7
-                              ? "bg-indigo-50 text-indigo-600"
-                              : displayScore >= 4
-                              ? "bg-amber-50 text-amber-600"
-                              : "bg-gray-100 text-gray-500"
-                          }`}
-                        >
-                          {displayScore.toFixed(1)}
-                        </span>
-                        <select
-                          value={idea.taskStatus ?? "todo"}
-                          onChange={(e) => setTaskStatus(idea.id, e.target.value as TaskStatus)}
-                          onClick={(e) => e.stopPropagation()}
-                          className={`text-xs px-2 py-0.5 rounded-lg font-medium shrink-0 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-300 ${taskStatusStyle[idea.taskStatus ?? "todo"]}`}
-                        >
-                          {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                            <option key={s} value={s}>{taskStatusLabel[s]}</option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => toggleExpand(idea.id)}
-                          className="text-gray-300 text-xs shrink-0 ml-1"
-                        >
-                          {isExpanded ? "▲" : "▼"}
-                        </button>
-                      </div>
-
-                      {isExpanded && (
-                        <div className="px-4 pb-4 pt-2 border-t border-gray-50 space-y-2">
-                          {idea.analysis!.summary && (
-                            <p className="text-xs text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5 leading-relaxed">
-                              {idea.analysis!.summary}
-                            </p>
-                          )}
-                          {idea.analysis!.objectiveScores.map((os) => {
-                            const obj = objectives.find((o) => o.id === os.objectiveId);
-                            const desc = obj?.description || os.objectiveDescription;
-                            return (
-                              <div key={os.objectiveId} className="flex items-start gap-2">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-medium text-gray-600 truncate">{os.objectiveTitle}</p>
-                                  {desc && <p className="text-[11px] text-gray-400 leading-snug">{desc}</p>}
-                                  {os.reasoning && <p className="text-[11px] text-gray-500 mt-0.5">{os.reasoning}</p>}
-                                </div>
-                                <span className={`text-xs font-bold font-mono shrink-0 mt-0.5 ${
-                                  os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"
-                                }`}>
-                                  {os.overallScore.toFixed(1)}
-                                </span>
-                              </div>
-                            );
-                          })}
-                          <div className="flex gap-3 pt-1 border-t border-gray-50">
-                            <button
-                              onClick={() => archiveIdea(idea)}
-                              className="text-xs text-gray-400 hover:text-gray-600"
-                            >
-                              {t("action.shelve")}
-                            </button>
-                            <button
-                              onClick={() => deleteIdea(idea)}
-                              className="text-xs text-gray-300 hover:text-red-400"
-                            >
-                              {t("action.delete")}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {evaluated.length === 0 && pendingItems.length === 0 && (
-            objectives.length === 0 ? (
-              <div className="py-10 space-y-4">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider text-center">{t("onboarding.title")}</p>
-                {[
-                  { step: "1", titleKey: "onboarding.step1.title", descKey: "onboarding.step1.desc", href: "/okr", ctaKey: "onboarding.step1.cta", active: true },
-                  { step: "2", titleKey: "onboarding.step2.title", descKey: "onboarding.step2.desc", href: null, ctaKey: null, active: false },
-                  { step: "3", titleKey: "onboarding.step3.title", descKey: "onboarding.step3.desc", href: null, ctaKey: null, active: false },
-                ].map(({ step, titleKey, descKey, href, ctaKey, active }) => (
-                  <div key={step} className={`flex gap-4 items-start rounded-xl border px-4 py-3 ${active ? "bg-indigo-50 border-indigo-100" : "bg-white border-gray-100 opacity-50"}`}>
-                    <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${active ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-400"}`}>
-                      {step}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${active ? "text-indigo-800" : "text-gray-500"}`}>{t(titleKey)}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{t(descKey)}</p>
-                    </div>
-                    {href && ctaKey && (
-                      <Link href={href} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800 mt-0.5">
-                        {t(ctaKey)}
-                      </Link>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-20">
-                <div className="text-4xl mb-3 text-gray-200">◎</div>
-                <p className="text-sm text-gray-500">{t("noTasks.title")}</p>
-                <p className="text-xs text-gray-400 mt-1 mb-5">{t("noTasks.hint")}</p>
-                <button onClick={openNewModal} className="text-sm text-indigo-500 hover:text-indigo-700">
-                  {t("noTasks.addFirst")}
-                </button>
-              </div>
-            )
-          )}
-        </>
-      )}
-
-      {/* Shelved tab */}
-      {activeTab === "shelved" && (
-        <div className="space-y-2">
-          {shelved.length === 0 ? (
-            <div className="text-center py-20">
-              <p className="text-sm text-gray-400">{t("shelved.empty")}</p>
-            </div>
-          ) : (
-            shelved.map((item) => (
-              <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
-                <p className="text-sm text-gray-500 flex-1 truncate">{item.title}</p>
-                <button
-                  onClick={() => restoreIdea(item)}
-                  className="text-xs text-indigo-500 hover:text-indigo-700 shrink-0"
-                >
-                  {t("action.restore")}
-                </button>
-                <button
-                  onClick={() => deleteIdea(item)}
-                  className="text-xs text-gray-300 hover:text-red-400 shrink-0"
-                >
-                  {t("action.delete")}
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Deleted tab */}
-      {activeTab === "deleted" && (
-        <div className="space-y-2">
-          {deleted.length === 0 ? (
-            <div className="text-center py-20">
-              <p className="text-sm text-gray-400">{t("deleted.empty")}</p>
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center justify-between pb-1">
-                <p className="text-xs text-gray-400">{t("deleted.count", { n: deleted.length })}</p>
-                <button
-                  onClick={async () => {
-                    const toDelete = [...deleted];
-                    setIdeas((prev) => prev.filter((i) => i.ideaStatus !== "deleted"));
-                    await Promise.all(toDelete.map((i) => removeIdea(i.id).catch(console.error)));
-                  }}
-                  className="text-xs text-red-400 hover:text-red-600 transition-colors"
-                >
-                  {t("action.clearAll")}
-                </button>
-              </div>
-              {deleted.map((item) => (
-                <div key={item.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3">
-                  <p className="text-sm text-gray-400 flex-1 truncate line-through">{item.title}</p>
-                  <button onClick={() => restoreIdea(item)} className="text-xs text-gray-400 hover:text-indigo-600 shrink-0 transition-colors">{t("action.restore")}</button>
-                  <button
-                    onClick={async () => {
-                      setIdeas((prev) => prev.filter((i) => i.id !== item.id));
-                      await removeIdea(item.id).catch(console.error);
-                    }}
-                    className="text-xs text-red-300 hover:text-red-500 shrink-0 transition-colors"
-                  >
-                    {t("action.permanentDelete")}
-                  </button>
-                </div>
-              ))}
-            </>
-          )}
         </div>
       )}
     </div>

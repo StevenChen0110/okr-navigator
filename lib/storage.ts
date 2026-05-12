@@ -1,4 +1,4 @@
-import { Objective, Idea, AppSettings, EvaluationProfile, ObjGroup, Milestone, GroupSequencePhase, StoredMessage } from "./types";
+import { Objective, Idea, AppSettings, EvaluationProfile, ObjGroup, Milestone, GroupSequencePhase, StoredMessage, PlanItem } from "./types";
 import { DEFAULT_EVALUATION_PROFILE } from "./evaluation-prompt";
 
 const KEYS = {
@@ -7,6 +7,7 @@ const KEYS = {
   SETTINGS: "okr_settings",
   EVAL_PROFILE: "loco_eval_profile",
   OBJ_GROUPS: "loco_obj_groups",
+  PLAN_ITEMS: "loco_plan_items",
 } as const;
 
 function load<T>(key: string, fallback: T): T {
@@ -95,6 +96,15 @@ export function getObjGroups(): ObjGroup[] {
 
 export function saveObjGroups(groups: ObjGroup[]): void {
   save(KEYS.OBJ_GROUPS, groups);
+}
+
+// Plan Items
+export function getPlanItems(): PlanItem[] {
+  return load<PlanItem[]>(KEYS.PLAN_ITEMS, []);
+}
+
+export function savePlanItems(items: PlanItem[]): void {
+  save(KEYS.PLAN_ITEMS, items);
 }
 
 // Chat history (key = "goalBuilder" | "optimize" | "roadmap_<id>" | "groupRoadmap_<id>")

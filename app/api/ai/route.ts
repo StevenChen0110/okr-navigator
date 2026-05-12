@@ -16,6 +16,8 @@ import {
   chatRoadmapCoach,
   chatGroupRoadmapCoach,
   chatTaskCoach,
+  analyzePlanItems,
+  chatPlanCoach,
 } from "@/lib/claude";
 
 function getEnvKey(provider: AIProvider): string | undefined {
@@ -184,6 +186,28 @@ export async function POST(req: NextRequest) {
           apiKey, model, language,
           payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
           payload.task as { title: string; timeframe?: string; analysis?: import("@/lib/types").IdeaAnalysis | null },
+          payload.objectives as Objective[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "analyzePlanItems": {
+        const result = await analyzePlanItems(
+          apiKey, model, language,
+          payload.items as Array<{ id: string; title: string; period: import("@/lib/types").PlanPeriod }>,
+          payload.objectives as Objective[],
+          payload.scope as "all" | "today" | "week" | "month",
+          payload.evaluationContext as string | undefined,
+          payload.groups as ObjGroup[] | undefined,
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "chatPlanCoach": {
+        const result = await chatPlanCoach(
+          apiKey, model, language,
+          payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
+          payload.context as Parameters<typeof chatPlanCoach>[4],
           payload.objectives as Objective[],
           provider,
         );

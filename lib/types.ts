@@ -88,6 +88,44 @@ export type TaskStatus = "todo" | "in-progress" | "done";
 export type IdeaStatus = "active" | "shelved" | "deleted" | "inbox";
 export type TaskTimeframe = "daily" | "weekly" | "monthly" | "custom";
 
+// ── Plan / Todo Planner ───────────────────────────────────────────────────────
+
+export type PlanPeriod = "today" | "week" | "month" | "custom";
+export type PlanStatus = "active" | "in-progress" | "shelved" | "completed";
+
+export interface PlanItemAnalysis {
+  score: number;
+  reasoning: string;
+  periodNote: string;
+  objectiveContributions: Array<{
+    objectiveId: string;
+    objectiveTitle: string;
+    score: number;
+    reasoning: string;
+  }>;
+}
+
+export interface PlanItem {
+  id: string;
+  title: string;
+  period: PlanPeriod;
+  customLabel?: string;
+  status: PlanStatus;
+  analysis?: PlanItemAnalysis;
+  createdAt: string;
+}
+
+export interface PlanAnalysisResult {
+  overallAssessment: string;
+  items: Array<{
+    id: string;
+    score: number;
+    reasoning: string;
+    periodNote: string;
+  }>;
+  suggestions: string;
+}
+
 export interface TodoItem {
   id: string;
   title: string;
