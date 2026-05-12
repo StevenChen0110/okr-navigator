@@ -1,1107 +1,722 @@
 "use client";
 
-import { useState, useEffect, useRef, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
 import { v4 as uuid } from "uuid";
 import {
-  Idea, Objective, KeyResult, TaskStatus, IdeaStatus,
-  IdeaKRLink, IdeaAnalysis, TodoItem, TaskTimeframe,
+  Idea, Objective, IdeaAnalysis, IdeaKRLink, IdeaStatus,
+  EvaluationProfile, ObjGroup, PlanItem, PlanPeriod, PlanStatus, PlanAnalysisResult,
 } from "@/lib/types";
-import {
-  fetchIdeas, fetchObjectives, removeIdea, saveIdea,
-  saveObjective, updateIdeaTaskStatus, updateIdeaStatus,
-} from "@/lib/db";
+import { fetchObjectives, saveIdea } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
-import ScoreBar from "@/components/ScoreBar";
-import { useLanguage } from "@/components/LanguageProvider";
-import { getChatHistory, saveChatHistory } from "@/lib/storage";
 import { useAuth } from "@/components/AuthProvider";
-import EditableTagline from "@/components/EditableTagline";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems } from "@/lib/storage";
+import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
+import { useLanguage } from "@/components/LanguageProvider";
 
-interface UIMessage {
-  role: "user" | "assistant";
-  content: string;
-  isLoading?: boolean;
+type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
+type PlanPhase = "idle" | "analyzing" | "result";
+interface ChatMsg { role: "user" | "assistant"; content: string; }
+
+function computeWeightedScore(
+  idea: { analysis: IdeaAnalysis | null },
+  objectives: Objective[],
+  profile: EvaluationProfile,
+  groups: ObjGroup[],
+): number {
+  if (!idea.analysis) return 0;
+  const w = profile.priorityWeights;
+  const gw = profile.groupPriorityWeights;
+  const groupMap = new Map(groups.map((g) => [g.id, g]));
+  let sumScores = 0;
+  let sumWeights = 0;
+  for (const os of idea.analysis.objectiveScores) {
+    const obj = objectives.find((o) => o.id === os.objectiveId);
+    if (!obj) continue;
+    const objPriority = obj.meta?.priority ?? 2;
+    const objWeight = profile.considerPriority ? (w[objPriority] ?? 1) : 1;
+    let groupWeight = 1;
+    if (profile.considerGroupPriority && obj.meta?.groupId) {
+      const g = groupMap.get(obj.meta.groupId);
+      if (g) groupWeight = gw[g.priority] ?? 1;
+    }
+    const weight = objWeight * groupWeight;
+    sumScores += os.overallScore * weight;
+    sumWeights += weight;
+  }
+  return sumWeights > 0 ? sumScores / sumWeights : (idea.analysis.finalScore ?? 0);
 }
 
-interface SuggestedLink {
-  objectiveId: string;
-  objectiveTitle: string;
-  krId: string;
-  krTitle: string;
-  score: number;
-}
-
-interface DraftItem {
-  id: string;
-  title: string;
-  timeframe: TaskTimeframe;
-}
-
-interface DraftResult {
-  itemId: string;
-  analysis: IdeaAnalysis;
-  suggestedLinks: SuggestedLink[];
-  selectedLinks: Set<string>;
-  saving: boolean;
-  saved: boolean;
-}
-
-type MeasurementInputs = Record<string, Record<string, string>>;
-
-function sanitize(text: string): string {
-  return text
-    .replace(/#{1,6}\s+/g, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/\*(.*?)\*/g, "$1")
-    .replace(/`{1,3}([\s\S]*?)`{1,3}/g, "$1")
-    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, "")
-    .replace(/^\s*[-+]\s+/gm, "")
-    .trim();
-}
-
-
-function calcKRCompletion(kr: KeyResult): number | undefined {
-  if (kr.krType === "milestone") return kr.currentValue && kr.currentValue >= 1 ? 100 : 0;
-  if (!kr.targetValue || kr.targetValue <= 0) return undefined;
-  return Math.min(100, Math.round(((kr.currentValue ?? 0) / kr.targetValue) * 100));
-}
-
-function getProgressColor(completion: number): string {
-  if (completion >= 60) return "bg-green-400";
-  if (completion >= 30) return "bg-amber-400";
-  return "bg-gray-400";
-}
-
-const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: "待辦", "in-progress": "進行中", done: "完成" };
-const TASK_STATUS_STYLE: Record<TaskStatus, string> = {
-  todo: "bg-gray-100 text-gray-500",
+const PERIOD_LABELS_ZH: Record<PlanPeriod, string> = { today: "今日", week: "本週", month: "本月", custom: "自訂" };
+const PERIOD_LABELS_EN: Record<PlanPeriod, string> = { today: "Today", week: "This Week", month: "This Month", custom: "Custom" };
+const STATUS_LABELS_ZH: Record<PlanStatus, string> = { active: "待辦", "in-progress": "進行中", shelved: "擱置", completed: "已完成" };
+const STATUS_LABELS_EN: Record<PlanStatus, string> = { active: "Active", "in-progress": "In Progress", shelved: "Shelved", completed: "Completed" };
+const STATUS_STYLE: Record<PlanStatus, string> = {
+  active: "bg-gray-100 text-gray-500",
   "in-progress": "bg-amber-50 text-amber-600",
-  done: "bg-green-50 text-green-600",
+  shelved: "bg-orange-50 text-orange-500",
+  completed: "bg-green-50 text-green-600",
 };
 
-const TIMEFRAME_LABELS: Record<TaskTimeframe, { zh: string; en: string }> = {
-  daily: { zh: "今日", en: "Today" },
-  weekly: { zh: "本週", en: "This week" },
-  monthly: { zh: "本月", en: "This month" },
-  custom: { zh: "自定", en: "Custom" },
-};
+export default function TasksPage() {
+  const { user, requireAuth } = useAuth();
+  const { t, language } = useLanguage();
 
-function getTimeframeLabel(tf: TaskTimeframe | undefined, customLabel: string | undefined, language: "zh-TW" | "en"): string {
-  if (!tf) return "";
-  if (tf === "custom" && customLabel) return customLabel;
-  return language === "zh-TW" ? TIMEFRAME_LABELS[tf].zh : TIMEFRAME_LABELS[tf].en;
-}
-
-function AnalysisCard({ analysis, compact = false, language }: {
-  analysis: IdeaAnalysis;
-  compact?: boolean;
-  language: "zh-TW" | "en";
-}) {
-  const score = analysis.finalScore;
-  const scoreColor = score >= 7 ? "text-indigo-600" : score >= 4 ? "text-amber-500" : "text-gray-400";
-  const borderColor = score >= 7 ? "border-indigo-100 bg-indigo-50/40" : score >= 4 ? "border-amber-100 bg-amber-50/30" : "border-gray-100 bg-gray-50/50";
-  return (
-    <div className={`rounded-xl border p-3 space-y-2 ${borderColor}`}>
-      <div className="flex items-start gap-2">
-        <span className={`text-base font-bold shrink-0 ${scoreColor}`}>{score.toFixed(1)}</span>
-        <p className="text-xs text-gray-700 leading-relaxed">{analysis.summary}</p>
-      </div>
-      {!compact && analysis.risks.length > 0 && (
-        <div className="space-y-0.5">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">{language === "zh-TW" ? "風險" : "Risks"}</p>
-          {analysis.risks.map((r, i) => (
-            <p key={i} className="text-xs text-gray-600 pl-2">· {r}</p>
-          ))}
-        </div>
-      )}
-      {!compact && analysis.executionSuggestions.length > 0 && (
-        <div className="space-y-0.5">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">{language === "zh-TW" ? "建議" : "Suggestions"}</p>
-          {analysis.executionSuggestions.map((s, i) => (
-            <p key={i} className="text-xs text-gray-600 pl-2">· {s}</p>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LinkedObjsEditable({ links, objectives, onRemove }: {
-  links: IdeaKRLink[];
-  objectives: Objective[];
-  onRemove: (index: number) => void;
-}) {
-  if (links.length === 0) return null;
-  const grouped: { obj: Objective; items: { kr: KeyResult | null; linkIndex: number }[] }[] = [];
-  links.forEach((link, idx) => {
-    const obj = objectives.find((o) => o.id === link.objectiveId);
-    if (!obj) return;
-    let entry = grouped.find((g) => g.obj.id === obj.id);
-    if (!entry) { entry = { obj, items: [] }; grouped.push(entry); }
-    const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) ?? null : null;
-    entry.items.push({ kr, linkIndex: idx });
-  });
-  return (
-    <div className="space-y-1.5">
-      {grouped.map(({ obj, items }) => (
-        <div key={obj.id}>
-          <p className="text-xs text-gray-500 font-medium leading-snug">{obj.title}</p>
-          {items.map(({ kr, linkIndex }) => (
-            <div key={linkIndex} className="flex items-center gap-1.5 pl-2 mt-0.5">
-              <span className="text-xs text-gray-600 flex-1 truncate">{kr ? `↳ ${kr.title}` : "（整體目標）"}</span>
-              <button onClick={() => onRemove(linkIndex)} className="text-gray-300 hover:text-red-400 text-sm leading-none">×</button>
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TasksPageInner() {
-  const searchParams = useSearchParams();
-  const { language } = useLanguage();
-  const { user } = useAuth();
-
-  const [ideas, setIdeas] = useState<Idea[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(getEvaluationProfile());
+  const [groups, setGroups] = useState<ObjGroup[]>([]);
+
+  // Idea validator state
+  const [ideaTitle, setIdeaTitle] = useState("");
+  const [ideaNotes, setIdeaNotes] = useState("");
+  const [ideaNotesOpen, setIdeaNotesOpen] = useState(false);
+  const [ideaPhase, setIdeaPhase] = useState<IdeaPhase>("idle");
+  const [ideaAnalysis, setIdeaAnalysis] = useState<IdeaAnalysis | null>(null);
+  const [ideaError, setIdeaError] = useState("");
+  const [ideaClarifyQ, setIdeaClarifyQ] = useState("");
+  const [ideaClarifyA, setIdeaClarifyA] = useState("");
+  const [ideaMessages, setIdeaMessages] = useState<ChatMsg[]>([]);
+  const [ideaChatInput, setIdeaChatInput] = useState("");
+  const [ideaChatLoading, setIdeaChatLoading] = useState(false);
+  const [suggestedLinks, setSuggestedLinks] = useState<Array<{
+    objectiveId: string; objectiveTitle: string; krId: string; krTitle: string; score: number;
+  }>>([]);
+  const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
+  const ideaChatRef = useRef<HTMLDivElement>(null);
+
+  // Plan todos state
+  const [planItems, setPlanItems] = useState<PlanItem[]>([]);
+  const [activePeriod, setActivePeriod] = useState<PlanPeriod>("today");
+  const [newTodoText, setNewTodoText] = useState("");
+  const [customLabel, setCustomLabel] = useState("");
+  const [planPhase, setPlanPhase] = useState<PlanPhase>("idle");
+  const [planAnalysis, setPlanAnalysis] = useState<PlanAnalysisResult | null>(null);
+  const [planScope, setPlanScope] = useState<"all" | "today" | "week" | "month">("all");
+  const [planScopeOpen, setPlanScopeOpen] = useState(false);
+  const [planMessages, setPlanMessages] = useState<ChatMsg[]>([]);
+  const [planChatInput, setPlanChatInput] = useState("");
+  const [planChatLoading, setPlanChatLoading] = useState(false);
+  const planChatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchIdeas().then(setIdeas).catch(console.error);
+    setEvalProfile(getEvaluationProfile());
+    setGroups(getObjGroups());
+    setPlanItems(getPlanItems());
+  }, []);
+
+  useEffect(() => {
+    if (!user) { setObjectives([]); return; }
     fetchObjectives().then(setObjectives).catch(console.error);
-  }, []);
-
-  // ── Timeframe filter ──────────────────────────────────────────────────────────
-  const [activeTimeframe, setActiveTimeframe] = useState<"all" | TaskTimeframe>("daily");
-  const [taskFilter, setTaskFilter] = useState<"active" | "shelved" | "deleted">("active");
-
-  // ── Workspace state ───────────────────────────────────────────────────────────
-  type WorkspaceMode = "empty" | "draft" | "task";
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("empty");
-  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
-  const [workspaceMessages, setWorkspaceMessages] = useState<UIMessage[]>([]);
-  const [workspaceChatInput, setWorkspaceChatInput] = useState("");
-  const [workspaceChatLoading, setWorkspaceChatLoading] = useState(false);
-  const workspaceEndRef = useRef<HTMLDivElement>(null);
-
-  // ── Draft task state ──────────────────────────────────────────────────────────
-  const [draftItems, setDraftItems] = useState<DraftItem[]>([
-    { id: "draft-daily", title: searchParams.get("title") ?? "", timeframe: "daily" },
-    { id: "draft-weekly", title: "", timeframe: "weekly" },
-    { id: "draft-monthly", title: "", timeframe: "monthly" },
-  ]);
-  const [draftAnalyzing, setDraftAnalyzing] = useState(false);
-  const [draftResults, setDraftResults] = useState<DraftResult[]>([]);
-  const [focusedDraftId, setFocusedDraftId] = useState<string | null>(null);
-
-  // ── Mobile tabs ───────────────────────────────────────────────────────────────
-  const [mobileTab, setMobileTab] = useState<"list" | "workspace">("list");
-  const [workspaceOpen, setWorkspaceOpen] = useState(() =>
-    typeof window !== "undefined" && localStorage.getItem("layout_tasks_workspace") === "true"
-  );
-  const [panelWidth, setPanelWidth] = useState(() =>
-    typeof window !== "undefined" ? parseInt(localStorage.getItem("layout_tasks_panel_width") || "420") : 420
-  );
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-  const isDraggingPanel = useRef(false);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    localStorage.setItem("layout_tasks_workspace", workspaceOpen ? "true" : "false");
-  }, [workspaceOpen]);
-
+    ideaChatRef.current?.scrollTo({ top: ideaChatRef.current.scrollHeight, behavior: "smooth" });
+  }, [ideaMessages]);
   useEffect(() => {
-    localStorage.setItem("layout_tasks_panel_width", panelWidth.toString());
-  }, [panelWidth]);
+    planChatRef.current?.scrollTo({ top: planChatRef.current.scrollHeight, behavior: "smooth" });
+  }, [planMessages]);
 
-  useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (!isDraggingPanel.current || !splitContainerRef.current) return;
-      const rect = splitContainerRef.current.getBoundingClientRect();
-      const x = Math.max(280, Math.min(rect.width - 300, e.clientX - rect.left));
-      setPanelWidth(Math.round(x));
+  const isQuickIdea = !ideaNotes.trim();
+  const periodLabel = language === "zh-TW" ? PERIOD_LABELS_ZH : PERIOD_LABELS_EN;
+  const statusLabel = language === "zh-TW" ? STATUS_LABELS_ZH : STATUS_LABELS_EN;
+
+  // ── Idea handlers ─────────────────────────────────────────────────────────
+
+  async function handleIdeaAnalyze() {
+    if (!ideaTitle.trim()) return;
+    if (!user) { requireAuth(); return; }
+    if (objectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
+    setIdeaError("");
+    if (isQuickIdea) {
+      setIdeaPhase("clarifying");
+      try {
+        const { shouldClarify, question } = await callAI<{ shouldClarify: boolean; question: string }>(
+          "clarifyIdea", { ideaTitle, objectives }
+        );
+        if (shouldClarify && question) { setIdeaClarifyQ(question); setIdeaClarifyA(""); return; }
+      } catch { /* fall through */ }
     }
-    function onUp() {
-      isDraggingPanel.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-  }, []);
+    await runIdeaAnalysis();
+  }
 
-  // ── Task detail expansion ─────────────────────────────────────────────────────
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [expandedAnalysisIds, setExpandedAnalysisIds] = useState<Set<string>>(new Set());
-  const [showObjPickerId, setShowObjPickerId] = useState<string | null>(null);
-  const [pendingMeasure, setPendingMeasure] = useState<string | null>(null);
-  const [measureInputs, setMeasureInputs] = useState<MeasurementInputs>({});
-  const [reanalyzingIds, setReanalyzingIds] = useState<Set<string>>(new Set());
-  const todoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-
-  // Scroll workspace to bottom on new messages
-  useEffect(() => {
-    workspaceEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [workspaceMessages]);
-
-  // Save workspace chat when messages change (task mode only)
-  useEffect(() => {
-    if (workspaceMode !== "task" || !focusedTaskId || workspaceMessages.length === 0) return;
-    saveChatHistory(`task_${focusedTaskId}`, workspaceMessages.filter((m) => !m.isLoading).map((m) => ({ role: m.role, content: m.content })));
-  }, [workspaceMessages, workspaceMode, focusedTaskId]);
-
-  // ── Draft task flow ───────────────────────────────────────────────────────────
-
-  async function handleBatchAnalyze() {
-    const toAnalyze = draftItems.filter((i) => i.title.trim());
-    if (toAnalyze.length === 0 || draftAnalyzing || objectives.length === 0) return;
-    setDraftAnalyzing(true);
-    setDraftResults([]);
-    setWorkspaceMode("draft");
-    setFocusedTaskId(null);
-    setWorkspaceMessages([]);
+  async function runIdeaAnalysis(extraNotes?: string) {
+    setIdeaPhase("analyzing");
+    setIdeaError("");
     try {
-      await Promise.all(toAnalyze.map(async (item) => {
-        try {
-          const analysis = await callAI<IdeaAnalysis>("analyzeIdea", {
-            ideaTitle: item.title.trim(),
-            ideaNotes: "",
-            objectives,
-          });
-          const links: SuggestedLink[] = [];
-          for (const os of analysis.objectiveScores) {
-            for (const krs of os.keyResultScores) {
-              if (krs.score >= 5) {
-                links.push({
-                  objectiveId: os.objectiveId, objectiveTitle: os.objectiveTitle,
-                  krId: krs.keyResultId, krTitle: krs.keyResultTitle, score: krs.score,
-                });
-              }
-            }
-          }
-          links.sort((a, b) => b.score - a.score);
-          const selectedLinks = new Set(links.filter((l) => l.score >= 7).map((l) => l.krId));
-          setDraftResults((prev) => [...prev, { itemId: item.id, analysis, suggestedLinks: links, selectedLinks, saving: false, saved: false }]);
-        } catch { /* skip failed items */ }
-      }));
-    } finally {
-      setDraftAnalyzing(false);
+      const combined = [ideaNotes, extraNotes].filter(Boolean).join("\n");
+      const result = await callAI<IdeaAnalysis>("analyzeIdea", {
+        ideaTitle, ideaNotes: combined, objectives,
+        evaluationContext: buildEvaluationPrompt(evalProfile), groups,
+      });
+      setIdeaAnalysis(result);
+      const links: typeof suggestedLinks = [];
+      for (const os of result.objectiveScores)
+        for (const krs of os.keyResultScores)
+          if (krs.score >= 5) links.push({ objectiveId: os.objectiveId, objectiveTitle: os.objectiveTitle, krId: krs.keyResultId, krTitle: krs.keyResultTitle, score: krs.score });
+      links.sort((a, b) => b.score - a.score);
+      setSuggestedLinks(links);
+      setSelectedLinkIds(new Set(links.filter((l) => l.score >= 7).map((l) => l.krId)));
+      setIdeaPhase("result");
+      setIdeaMessages([{
+        role: "assistant",
+        content: language === "zh-TW"
+          ? `這個想法的綜合分數是 ${result.finalScore.toFixed(1)}/10。${result.summary} 你有什麼想討論或調整的嗎？`
+          : `This idea scored ${result.finalScore.toFixed(1)}/10. ${result.summary} Want to discuss or adjust anything?`,
+      }]);
+    } catch (e) {
+      setIdeaError(e instanceof Error ? e.message : String(e));
+      setIdeaPhase("idle");
     }
   }
 
-  async function handleSaveDraftItem(itemId: string) {
-    const item = draftItems.find((i) => i.id === itemId);
-    const result = draftResults.find((r) => r.itemId === itemId);
-    if (!item || !result || result.saving || result.saved) return;
-    setDraftResults((prev) => prev.map((r) => r.itemId === itemId ? { ...r, saving: true } : r));
-    const linkedKRs: IdeaKRLink[] = result.suggestedLinks
-      .filter((l) => result.selectedLinks.has(l.krId))
+  async function handleIdeaSave(status: IdeaStatus) {
+    if (!ideaAnalysis) return;
+    setIdeaPhase("saving");
+    const linkedKRs: IdeaKRLink[] = suggestedLinks
+      .filter((l) => selectedLinkIds.has(l.krId))
       .map((l) => ({ objectiveId: l.objectiveId, krId: l.krId }));
     const newIdea: Idea = {
-      id: uuid(),
-      title: item.title.trim(),
-      description: "",
-      analysis: result.analysis,
-      createdAt: new Date().toISOString(),
-      completed: false,
-      linkedKRs,
-      taskStatus: "todo",
-      taskTimeframe: item.timeframe,
+      id: uuid(), title: ideaTitle, description: ideaNotes, analysis: ideaAnalysis,
+      createdAt: new Date().toISOString(), completed: false, linkedKRs,
+      taskStatus: "todo", ideaStatus: status, quickAnalysis: isQuickIdea,
     };
-    try {
-      await saveIdea(newIdea);
-      setIdeas((prev) => [newIdea, ...prev]);
-      const chatHistory = workspaceMode === "draft" && focusedDraftId === itemId
-        ? workspaceMessages.filter((m) => !m.isLoading).map((m) => ({ role: m.role, content: m.content }))
-        : [];
-      if (chatHistory.length > 0) saveChatHistory(`task_${newIdea.id}`, chatHistory);
-      setDraftItems((prev) => prev.map((i) => i.id === itemId ? { ...i, title: "" } : i));
-      setDraftResults((prev) => prev.map((r) => r.itemId === itemId ? { ...r, saving: false, saved: true } : r));
-    } catch {
-      setDraftResults((prev) => prev.map((r) => r.itemId === itemId ? { ...r, saving: false } : r));
-    }
+    try { await saveIdea(newIdea); resetIdeaValidator(); }
+    catch (e) { setIdeaError(e instanceof Error ? e.message : String(e)); setIdeaPhase("result"); }
   }
 
-  function handleFocusTask(task: Idea) {
-    if (focusedTaskId === task.id && workspaceMode === "task") return;
-    setFocusedTaskId(task.id);
-    setWorkspaceMode("task");
-    const stored = getChatHistory(`task_${task.id}`);
-    setWorkspaceMessages(stored.map((m) => ({ role: m.role, content: m.content })));
-    setWorkspaceOpen(true);
-    setMobileTab("workspace");
+  function resetIdeaValidator() {
+    setIdeaTitle(""); setIdeaNotes(""); setIdeaNotesOpen(false);
+    setIdeaPhase("idle"); setIdeaAnalysis(null); setIdeaError("");
+    setIdeaClarifyQ(""); setIdeaClarifyA(""); setIdeaMessages([]);
+    setSuggestedLinks([]); setSelectedLinkIds(new Set());
   }
 
-  // ── Workspace chat ────────────────────────────────────────────────────────────
-
-  async function sendWorkspaceChat(text: string) {
-    if (!text.trim() || workspaceChatLoading || workspaceMode === "empty") return;
-    const focusedTask = focusedTaskId ? ideas.find((i) => i.id === focusedTaskId) : null;
-    const focusedDraftItem = focusedDraftId ? draftItems.find((i) => i.id === focusedDraftId) : null;
-    const focusedDraftResult = focusedDraftId ? draftResults.find((r) => r.itemId === focusedDraftId) : null;
-    const taskCtx = workspaceMode === "draft"
-      ? focusedDraftItem && focusedDraftResult
-        ? { title: focusedDraftItem.title, timeframe: getTimeframeLabel(focusedDraftItem.timeframe, undefined, language), analysis: focusedDraftResult.analysis }
-        : null
-      : focusedTask
-        ? { title: focusedTask.title, timeframe: getTimeframeLabel(focusedTask.taskTimeframe, focusedTask.taskTimeframeCustomLabel, language), analysis: focusedTask.analysis }
-        : null;
-    if (!taskCtx) return;
-    const userMsg: UIMessage = { role: "user", content: text };
-    const history = workspaceMessages.filter((m) => !m.isLoading);
-    const newHistory = [...history, userMsg];
-    setWorkspaceMessages([...newHistory, { role: "assistant", content: "", isLoading: true }]);
-    setWorkspaceChatLoading(true);
+  async function handleIdeaChat() {
+    const text = ideaChatInput.trim();
+    if (!text || ideaChatLoading) return;
+    setIdeaChatInput("");
+    const nextMessages: ChatMsg[] = [...ideaMessages, { role: "user", content: text }];
+    setIdeaMessages(nextMessages);
+    setIdeaChatLoading(true);
     try {
-      const result = await callAI<{ content: string }>("chatTask", {
-        messages: newHistory.map((m) => ({ role: m.role, content: m.content })),
-        task: taskCtx,
+      const { content } = await callAI<{ content: string }>("chatPlanCoach", {
+        messages: nextMessages,
+        context: { type: "idea", ideaTitle, ideaScore: ideaAnalysis?.finalScore, ideaSummary: ideaAnalysis?.summary },
         objectives,
       });
-      const newMessages: UIMessage[] = [...newHistory, { role: "assistant", content: sanitize(result.content) }];
-      setWorkspaceMessages(newMessages);
-    } catch {
-      setWorkspaceMessages([...newHistory, { role: "assistant" as const, content: language === "zh-TW" ? "發生錯誤，請再試一次。" : "An error occurred." }]);
-    } finally {
-      setWorkspaceChatLoading(false);
-    }
+      setIdeaMessages([...nextMessages, { role: "assistant", content }]);
+    } catch (e) {
+      setIdeaMessages([...nextMessages, { role: "assistant", content: String(e) }]);
+    } finally { setIdeaChatLoading(false); }
   }
 
-  function handleWorkspaceSend() {
-    const text = workspaceChatInput.trim();
-    if (!text || workspaceChatLoading) return;
-    setWorkspaceChatInput("");
-    sendWorkspaceChat(text);
+  // ── Plan handlers ──────────────────────────────────────────────────────────
+
+  function addTodo() {
+    const title = newTodoText.trim();
+    if (!title) return;
+    const item: PlanItem = {
+      id: uuid(), title, period: activePeriod,
+      customLabel: activePeriod === "custom" ? customLabel.trim() || undefined : undefined,
+      status: "active", createdAt: new Date().toISOString(),
+    };
+    const next = [item, ...planItems];
+    setPlanItems(next); savePlanItems(next); setNewTodoText("");
   }
 
-  // ── Task list operations ──────────────────────────────────────────────────────
-
-  function setIdeaStatus(id: string, status: IdeaStatus) {
-    updateIdeaStatus(id, status).catch(console.error);
-    setIdeas((prev) => prev.map((i) => i.id === id ? { ...i, ideaStatus: status } : i));
+  function updateTodoStatus(id: string, status: PlanStatus) {
+    const next = planItems.map((i) => (i.id === id ? { ...i, status } : i));
+    setPlanItems(next); savePlanItems(next);
   }
 
-  function handlePermanentDelete(id: string) {
-    if (!confirm("永久刪除後無法復原，確定嗎？")) return;
-    removeIdea(id).catch(console.error);
-    setIdeas((prev) => prev.filter((i) => i.id !== id));
+  function deleteTodo(id: string) {
+    const next = planItems.filter((i) => i.id !== id);
+    setPlanItems(next); savePlanItems(next);
   }
 
-  async function handleReanalyze(idea: Idea) {
-    if (reanalyzingIds.has(idea.id)) return;
-    setReanalyzingIds((prev) => new Set(prev).add(idea.id));
+  async function handlePlanAnalyze(scope: "all" | "today" | "week" | "month") {
+    if (!user) { requireAuth(); return; }
+    if (objectives.length === 0) return;
+    setPlanScope(scope); setPlanScopeOpen(false); setPlanPhase("analyzing");
+
+    const scopeItems = scope === "all"
+      ? planItems
+      : planItems.filter((i) => i.period === (scope === "today" ? "today" : scope === "week" ? "week" : "month"));
+
+    if (scopeItems.length === 0) { setPlanPhase("idle"); return; }
+
     try {
-      const result = await callAI<IdeaAnalysis>("analyzeIdea", {
-        ideaTitle: idea.title, ideaNotes: idea.description ?? "", objectives,
+      const result = await callAI<PlanAnalysisResult>("analyzePlanItems", {
+        items: scopeItems.map((i) => ({ id: i.id, title: i.title, period: i.period })),
+        objectives, scope,
+        evaluationContext: buildEvaluationPrompt(evalProfile),
+        groups,
       });
-      const updated: Idea = { ...idea, analysis: result, needsReanalysis: false };
-      setIdeas((prev) => prev.map((i) => i.id === idea.id ? updated : i));
-      saveIdea(updated).catch(console.error);
-    } catch { /* silent */ } finally {
-      setReanalyzingIds((prev) => { const s = new Set(prev); s.delete(idea.id); return s; });
+      setPlanAnalysis(result); setPlanPhase("result");
+      setPlanMessages([{
+        role: "assistant",
+        content: language === "zh-TW"
+          ? `${result.overallAssessment} ${result.suggestions || ""}`
+          : `${result.overallAssessment} ${result.suggestions || ""}`,
+      }]);
+    } catch (e) {
+      setPlanPhase("idle");
     }
   }
 
-  function handleToggleTodo(ideaId: string, todoId: string) {
-    setIdeas((prev) => prev.map((i) => {
-      if (i.id !== ideaId) return i;
-      const todos = (i.todos ?? []).map((t) =>
-        t.id === todoId ? { ...t, done: !t.done, doneAt: !t.done ? new Date().toISOString() : undefined } : t
-      );
-      const updated = { ...i, todos };
-      saveIdea(updated).catch(console.error);
-      return updated;
-    }));
-  }
-
-  function handleAddTodoAfter(ideaId: string, afterTodoId?: string) {
-    const todo: TodoItem = { id: crypto.randomUUID(), title: "", done: false };
-    setIdeas((prev) => prev.map((i) => {
-      if (i.id !== ideaId) return i;
-      const todos = i.todos ?? [];
-      const newTodos = afterTodoId
-        ? (() => { const idx = todos.findIndex((t) => t.id === afterTodoId); return [...todos.slice(0, idx + 1), todo, ...todos.slice(idx + 1)]; })()
-        : [...todos, todo];
-      const updated = { ...i, todos: newTodos };
-      saveIdea(updated).catch(console.error);
-      return updated;
-    }));
-    setTimeout(() => todoInputRefs.current[todo.id]?.focus(), 30);
-  }
-
-  function handleUpdateTodoTitle(ideaId: string, todoId: string, newTitle: string) {
-    setIdeas((prev) => prev.map((i) => {
-      if (i.id !== ideaId) return i;
-      const todos = (i.todos ?? []).map((t) => t.id === todoId ? { ...t, title: newTitle } : t);
-      const updated = { ...i, todos };
-      saveIdea(updated).catch(console.error);
-      return updated;
-    }));
-  }
-
-  function handleDeleteTodo(ideaId: string, todoId: string) {
-    const idea = ideas.find((i) => i.id === ideaId);
-    const todos = idea?.todos ?? [];
-    const idx = todos.findIndex((t) => t.id === todoId);
-    const prevId = idx > 0 ? todos[idx - 1].id : null;
-    setIdeas((prev) => prev.map((i) => {
-      if (i.id !== ideaId) return i;
-      const updated = { ...i, todos: (i.todos ?? []).filter((t) => t.id !== todoId) };
-      saveIdea(updated).catch(console.error);
-      return updated;
-    }));
-    if (prevId) setTimeout(() => todoInputRefs.current[prevId]?.focus(), 30);
-  }
-
-  function handleUpdateLinkedKRs(ideaId: string, links: IdeaKRLink[]) {
-    setIdeas((prev) => {
-      const updated = prev.map((i) => i.id === ideaId ? { ...i, linkedKRs: links } : i);
-      const idea = updated.find((i) => i.id === ideaId);
-      if (idea) saveIdea(idea).catch(console.error);
-      return updated;
-    });
-  }
-
-  function collectLinkedKRs(task: Idea) {
-    return (task.linkedKRs ?? []).flatMap((link) => {
-      const obj = objectives.find((o) => o.id === link.objectiveId);
-      if (!obj) return [];
-      const kr = link.krId ? obj.keyResults.find((k) => k.id === link.krId) : null;
-      if (!kr) return [];
-      return [{ obj, kr, link }];
-    });
-  }
-
-  function handleSetTaskStatus(taskId: string, status: TaskStatus) {
-    const task = ideas.find((i) => i.id === taskId);
-    if (!task || task.taskStatus === status) return;
-    const wasDown = task.taskStatus === "done";
-    if (status !== "done") {
-      if (wasDown) applyTaskUndo(task);
-      updateIdeaTaskStatus(taskId, status).catch(console.error);
-      setIdeas((prev) => prev.map((i) => i.id === taskId ? { ...i, taskStatus: status } : i));
-      return;
-    }
-    const linkedKRs = collectLinkedKRs(task);
-    if (linkedKRs.some((r) => (r.kr.krType ?? "cumulative") === "measurement")) {
-      const initInputs: Record<string, string> = {};
-      linkedKRs.filter((r) => (r.kr.krType ?? "cumulative") === "measurement").forEach((r) => {
-        initInputs[r.kr.id] = String(r.kr.currentValue ?? "");
+  async function handlePlanChat() {
+    const text = planChatInput.trim();
+    if (!text || planChatLoading) return;
+    setPlanChatInput("");
+    const scopeItems = planScope === "all"
+      ? planItems
+      : planItems.filter((i) => i.period === (planScope === "today" ? "today" : planScope === "week" ? "week" : "month"));
+    const nextMessages: ChatMsg[] = [...planMessages, { role: "user", content: text }];
+    setPlanMessages(nextMessages); setPlanChatLoading(true);
+    try {
+      const { content } = await callAI<{ content: string }>("chatPlanCoach", {
+        messages: nextMessages,
+        context: {
+          type: "plan",
+          planItems: scopeItems.map((i) => ({ title: i.title, period: i.period, score: i.analysis?.score })),
+          overallAssessment: planAnalysis?.overallAssessment, suggestions: planAnalysis?.suggestions,
+        },
+        objectives,
       });
-      setMeasureInputs((prev) => ({ ...prev, [taskId]: initInputs }));
-      setPendingMeasure(taskId);
-      return;
-    }
-    applyTaskDone(taskId, task, linkedKRs, {});
+      setPlanMessages([...nextMessages, { role: "assistant", content }]);
+    } catch (e) {
+      setPlanMessages([...nextMessages, { role: "assistant", content: String(e) }]);
+    } finally { setPlanChatLoading(false); }
   }
 
-  function applyTaskUndo(task: Idea) {
-    const linkedKRLinks = (task.linkedKRs ?? []).filter((l) => l.krId);
-    if (linkedKRLinks.length === 0) return;
-    setObjectives((prevObjs) => {
-      const updatedMap = new Map<string, Objective>();
-      for (const link of linkedKRLinks) {
-        const obj = prevObjs.find((o) => o.id === link.objectiveId);
-        if (!obj || !link.krId) continue;
-        const current = updatedMap.get(obj.id) ?? obj;
-        const kr = current.keyResults.find((k) => k.id === link.krId);
-        if (!kr) continue;
-        const krType = kr.krType ?? "cumulative";
-        let newValue: number | undefined;
-        if (krType === "cumulative") {
-          newValue = ideas.filter((i) =>
-            i.id !== task.id && (i.ideaStatus ?? "active") !== "deleted" &&
-            i.taskStatus === "done" && (i.linkedKRs ?? []).some((l) => l.krId === link.krId)
-          ).length;
-        } else if (krType === "milestone") {
-          newValue = 0;
-        }
-        if (newValue !== undefined)
-          updatedMap.set(obj.id, { ...current, keyResults: current.keyResults.map((k) => k.id === link.krId ? { ...k, currentValue: newValue } : k) });
-      }
-      updatedMap.forEach((o) => saveObjective(o).catch(console.error));
-      return prevObjs.map((o) => updatedMap.get(o.id) ?? o);
-    });
+  const periodItems = activePeriod === "all" as PlanPeriod
+    ? planItems
+    : planItems.filter((i) => i.period === activePeriod);
+
+  function scoreChip(score: number | undefined) {
+    if (score === undefined) return null;
+    const color = score >= 7 ? "bg-indigo-50 text-indigo-600" : score >= 4 ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-400";
+    return <span className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${color}`}>{score.toFixed(1)}</span>;
   }
 
-  function confirmMeasurement(taskId: string) {
-    const task = ideas.find((i) => i.id === taskId);
-    if (!task) return;
-    applyTaskDone(taskId, task, collectLinkedKRs(task), measureInputs[taskId] ?? {});
-    setPendingMeasure(null);
-  }
+  // ── Render ─────────────────────────────────────────────────────────────────
 
-  function applyTaskDone(
-    taskId: string, task: Idea,
-    linkedKRs: Array<{ obj: Objective; kr: KeyResult; link: IdeaKRLink }>,
-    measurements: Record<string, string>
-  ) {
-    const updatedObjectives = new Map<string, Objective>();
-    for (const { obj, kr } of linkedKRs) {
-      const current = updatedObjectives.get(obj.id) ?? obj;
-      const krType = kr.krType ?? "cumulative";
-      let newValue: number | undefined;
-      if (krType === "cumulative") {
-        const doneCount = ideas.filter((i) =>
-          i.id !== taskId && (i.ideaStatus ?? "active") !== "deleted" &&
-          i.taskStatus === "done" && (i.linkedKRs ?? []).some((l) => l.krId === kr.id)
-        ).length + 1;
-        newValue = kr.targetValue ? Math.min(kr.targetValue, doneCount) : doneCount;
-      } else if (krType === "measurement") {
-        const raw = measurements[kr.id];
-        if (raw !== undefined && raw !== "") newValue = parseFloat(raw);
-      } else if (krType === "milestone") {
-        newValue = 1;
-      }
-      if (newValue !== undefined) {
-        updatedObjectives.set(obj.id, { ...current, keyResults: current.keyResults.map((k) => k.id === kr.id ? { ...k, currentValue: newValue } : k) });
-      }
-    }
-    updatedObjectives.forEach((o) => saveObjective(o).catch(console.error));
-    setObjectives((prev) => prev.map((o) => updatedObjectives.get(o.id) ?? o));
-    updateIdeaTaskStatus(taskId, "done").catch(console.error);
-    setIdeas((prev) => {
-      const updatedKRIds = new Set(linkedKRs.map((r) => r.kr.id));
-      return prev.map((i) => {
-        if (i.id === taskId) return { ...i, taskStatus: "done" };
-        if (i.taskStatus === "done" || !i.analysis) return i;
-        if (!(i.linkedKRs ?? []).some((l) => l.krId && updatedKRIds.has(l.krId))) return i;
-        const updated = { ...i, needsReanalysis: true };
-        saveIdea(updated).catch(console.error);
-        return updated;
-      });
-    });
-  }
+  const wScore = ideaAnalysis
+    ? computeWeightedScore({ analysis: ideaAnalysis }, objectives, evalProfile, groups)
+    : 0;
 
-  // ── Derived ────────────────────────────────────────────────────────────────────
+  return (
+    <div className="max-w-xl mx-auto px-4 py-6 space-y-8">
 
-  const activeTasks = ideas.filter((i) => (i.ideaStatus ?? "active") === "active");
-  const shelvedTasks = ideas.filter((i) => i.ideaStatus === "shelved");
-  const deletedTasks = ideas.filter((i) => i.ideaStatus === "deleted");
-
-  const filteredActive = activeTimeframe === "all"
-    ? activeTasks
-    : activeTasks.filter((i) => i.taskTimeframe === activeTimeframe);
-
-  const sortedActive = [...filteredActive].sort((a, b) => {
-    const aDone = a.taskStatus === "done" ? 1 : 0;
-    const bDone = b.taskStatus === "done" ? 1 : 0;
-    if (aDone !== bDone) return aDone - bDone;
-    return (b.analysis?.finalScore ?? -1) - (a.analysis?.finalScore ?? -1);
-  });
-
-  const focusedTask = focusedTaskId ? ideas.find((i) => i.id === focusedTaskId) ?? null : null;
-
-  const activeFocusedDraftItem = focusedDraftId ? draftItems.find((i) => i.id === focusedDraftId) : null;
-  const workspaceTitle = workspaceMode === "draft" && activeFocusedDraftItem
-    ? activeFocusedDraftItem.title
-    : focusedTask?.title ?? "";
-
-  // ── Render ─────────────────────────────────────────────────────────────────────
-
-  const TIMEFRAME_TABS: { key: "all" | TaskTimeframe; zh: string; en: string }[] = [
-    { key: "all", zh: "全部", en: "All" },
-    { key: "daily", zh: "今日", en: "Today" },
-    { key: "weekly", zh: "本週", en: "Week" },
-    { key: "monthly", zh: "本月", en: "Month" },
-    { key: "custom", zh: "自定", en: "Custom" },
-  ];
-
-  const taskListPanel = (
-    <div className={`flex flex-col h-full overflow-hidden ${!workspaceOpen ? "lg:max-w-xl lg:mx-auto lg:w-full" : ""}`}>
-      {/* Page header */}
-      <div className="shrink-0 px-4 pt-6 pb-4 md:px-6 border-b border-gray-100">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-gray-900">{language === "zh-TW" ? "任務" : "Tasks"}</h1>
-            <EditableTagline
-              storageKey="tagline_tasks"
-              defaultText={language === "zh-TW" ? "評估想法，找出真正值得做的事" : "Evaluate ideas, find what's truly worth doing"}
-            />
-          </div>
-          <button
-            onClick={() => setWorkspaceOpen((v) => !v)}
-            className={`hidden lg:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors shrink-0 ${workspaceOpen ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"}`}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3"/>
-              <line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" strokeWidth="1.3"/>
-            </svg>
-            {language === "zh-TW" ? "AI 工作區" : "AI Workspace"}
-          </button>
-        </div>
+      {/* Page Header */}
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900">
+          {language === "zh-TW" ? "任務" : "Tasks"}
+        </h1>
+        <p className="text-sm text-gray-400 mt-0.5">
+          {language === "zh-TW"
+            ? "規劃待辦清單，驗證想法對目標的幫助"
+            : "Plan your todos and validate ideas against your goals"}
+        </p>
       </div>
 
-      {/* Batch task input */}
-      <div className="shrink-0 px-4 pt-3 pb-2 space-y-1.5">
-        {([
-          { id: "draft-daily", label: language === "zh-TW" ? "今日" : "Today" },
-          { id: "draft-weekly", label: language === "zh-TW" ? "本週" : "Week" },
-          { id: "draft-monthly", label: language === "zh-TW" ? "本月" : "Month" },
-        ] as { id: string; label: string }[]).map(({ id, label }) => {
-          const item = draftItems.find((i) => i.id === id)!;
-          return (
-            <div key={id} className="flex items-center gap-2">
-              <span className="text-[10px] text-gray-400 w-7 shrink-0 text-right">{label}</span>
-              <div className="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-                <input
-                  value={item.title}
-                  onChange={(e) => setDraftItems((prev) => prev.map((i) => i.id === id ? { ...i, title: e.target.value } : i))}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) handleBatchAnalyze(); }}
-                  placeholder={language === "zh-TW" ? `輸入${label}任務…` : `${label} task…`}
-                  disabled={draftAnalyzing}
-                  className="flex-1 min-w-0 text-sm text-gray-700 placeholder-gray-400 bg-transparent focus:outline-none"
-                />
-              </div>
-            </div>
-          );
-        })}
-        <div className="flex items-center justify-between pt-0.5">
-          {objectives.length === 0
-            ? <p className="text-xs text-amber-600">{language === "zh-TW" ? "請先到「目標」頁設定 OKR" : "Set up OKR goals first"}</p>
-            : <span />}
-          <button
-            onClick={handleBatchAnalyze}
-            disabled={draftItems.every((i) => !i.title.trim()) || draftAnalyzing || objectives.length === 0}
-            className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors font-medium whitespace-nowrap"
-          >
-            {draftAnalyzing ? (language === "zh-TW" ? "分析中…" : "Analyzing…") : (language === "zh-TW" ? "AI 評估全部" : "Evaluate All")}
-          </button>
+      {/* ── Section 1: Idea Validator ─────────────────────────────────── */}
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700">
+            {language === "zh-TW" ? "想法驗證" : "Idea Validator"}
+          </h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {language === "zh-TW"
+              ? "輸入一個想法，看它對你的目標幫助有多大"
+              : "Enter an idea and see how much it helps your goals"}
+          </p>
         </div>
-      </div>
 
-      {/* Batch results */}
-      {(draftAnalyzing || draftResults.length > 0) && (
-        <div className="shrink-0 px-4 py-3 border-b border-gray-100 space-y-3 overflow-y-auto max-h-[50vh]">
-          {draftAnalyzing && draftResults.length === 0 && (
-            <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center gap-2">
-              <span className="text-xs text-gray-400 animate-pulse">{language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}</span>
+        {(ideaPhase === "idle" || ideaPhase === "clarifying") && (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                value={ideaTitle}
+                onChange={(e) => setIdeaTitle(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && ideaPhase === "idle" && handleIdeaAnalyze()}
+                placeholder={language === "zh-TW" ? "用一句話描述這個想法…" : "Describe your idea in one line…"}
+                disabled={ideaPhase === "clarifying" && !!ideaClarifyQ}
+                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+              />
+              <button
+                onClick={ideaPhase === "idle" ? handleIdeaAnalyze : undefined}
+                disabled={!ideaTitle.trim() || ideaPhase === "clarifying"}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors whitespace-nowrap"
+              >
+                {language === "zh-TW" ? "分析" : "Analyze"}
+              </button>
             </div>
-          )}
-          {draftResults.map((result) => {
-            const item = draftItems.find((i) => i.id === result.itemId);
-            if (!item) return null;
-            const tfLabel = item.timeframe === "daily" ? (language === "zh-TW" ? "今日" : "Today")
-              : item.timeframe === "weekly" ? (language === "zh-TW" ? "本週" : "Week")
-              : (language === "zh-TW" ? "本月" : "Month");
-            return (
-              <div key={result.itemId} className="space-y-2 pb-3 border-b border-gray-100 last:border-0 last:pb-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-medium text-gray-500 px-1.5 py-0.5 bg-gray-100 rounded shrink-0">{tfLabel}</span>
-                  <p className="text-xs text-gray-700 truncate flex-1">{item.title}</p>
+
+            <button
+              onClick={() => setIdeaNotesOpen((v) => !v)}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              › {language === "zh-TW" ? "補充說明（選填）" : "Add notes (optional)"}
+            </button>
+            {ideaNotesOpen && (
+              <textarea
+                value={ideaNotes}
+                onChange={(e) => setIdeaNotes(e.target.value)}
+                rows={2}
+                placeholder={language === "zh-TW" ? "補充背景、目的或限制…" : "Add context, purpose, or constraints…"}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+              />
+            )}
+
+            {ideaPhase === "clarifying" && ideaClarifyQ && (
+              <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-3 space-y-2">
+                <p className="text-xs text-indigo-700 font-medium">{ideaClarifyQ}</p>
+                <div className="flex gap-2">
+                  <input
+                    value={ideaClarifyA}
+                    onChange={(e) => setIdeaClarifyA(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && runIdeaAnalysis(ideaClarifyA)}
+                    placeholder={language === "zh-TW" ? "輸入你的回答…" : "Your answer…"}
+                    className="flex-1 text-sm rounded-lg border border-indigo-200 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                  <button
+                    onClick={() => runIdeaAnalysis(ideaClarifyA)}
+                    disabled={!ideaClarifyA.trim()}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+                  >
+                    {language === "zh-TW" ? "繼續" : "Continue"}
+                  </button>
+                  <button
+                    onClick={() => runIdeaAnalysis()}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                  >
+                    {language === "zh-TW" ? "跳過" : "Skip"}
+                  </button>
                 </div>
-                <AnalysisCard analysis={result.analysis} compact language={language} />
-                {result.suggestedLinks.length > 0 && (
-                  <div className="border border-gray-100 rounded-xl p-2.5 space-y-1.5">
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                      {language === "zh-TW" ? "連結至目標" : "Link to goals"}
-                    </p>
-                    {result.suggestedLinks.map((l) => (
-                      <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={result.selectedLinks.has(l.krId)} onChange={() => {
-                          setDraftResults((prev) => prev.map((r) => r.itemId === result.itemId ? {
-                            ...r,
-                            selectedLinks: (() => { const n = new Set(r.selectedLinks); n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId); return n; })(),
-                          } : r));
-                        }} className="accent-indigo-600 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
-                          <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
-                        </div>
-                        <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
-                      </label>
-                    ))}
+              </div>
+            )}
+
+            {ideaError && <p className="text-xs text-red-500">{ideaError}</p>}
+          </div>
+        )}
+
+        {ideaPhase === "analyzing" && (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-6 flex items-center justify-center gap-2">
+            <span className="text-xs text-gray-400 animate-pulse">
+              {language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}
+            </span>
+          </div>
+        )}
+
+        {(ideaPhase === "result" || ideaPhase === "saving") && ideaAnalysis && (
+          <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-4">
+            {/* Score + title */}
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
+                <span className="text-xl font-bold font-mono text-indigo-600">{wScore.toFixed(1)}</span>
+                <span className="text-[10px] text-gray-400">{language === "zh-TW" ? "綜合" : "Score"}</span>
+              </div>
+              <p className="text-sm font-medium text-gray-800 leading-snug">{ideaTitle}</p>
+            </div>
+
+            {ideaAnalysis.summary && (
+              <p className="text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2 leading-relaxed">
+                {ideaAnalysis.summary}
+              </p>
+            )}
+
+            <div className="space-y-1.5">
+              {ideaAnalysis.objectiveScores.map((os) => (
+                <div key={os.objectiveId} className="bg-white rounded-lg border border-gray-100 px-3 py-2 flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-700 truncate">{os.objectiveTitle}</p>
+                    {os.reasoning && <p className="text-[11px] text-gray-500 mt-0.5">{os.reasoning}</p>}
+                  </div>
+                  <span className={`text-xs font-bold font-mono shrink-0 mt-0.5 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"}`}>
+                    {os.overallScore.toFixed(1)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {ideaAnalysis.risks.length > 0 && (
+              <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                <span className="font-medium">{language === "zh-TW" ? "風險：" : "Risks: "}</span>
+                {ideaAnalysis.risks.join("；")}
+              </p>
+            )}
+
+            {/* KR link selection */}
+            {suggestedLinks.length > 0 && (
+              <div className="border border-gray-100 rounded-lg px-3 py-2.5 space-y-1.5">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                  {language === "zh-TW" ? "連結至目標" : "Link to goals"}
+                </p>
+                {suggestedLinks.map((l) => (
+                  <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={selectedLinkIds.has(l.krId)} onChange={() => {
+                      const n = new Set(selectedLinkIds);
+                      n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId);
+                      setSelectedLinkIds(n);
+                    }} className="accent-indigo-600 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
+                      <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
+                    </div>
+                    <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {/* Save buttons */}
+            <div className="flex gap-2">
+              <button onClick={() => handleIdeaSave("shelved")} disabled={ideaPhase === "saving"}
+                className="flex-1 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                {language === "zh-TW" ? "暫存想法" : "Save to Backlog"}
+              </button>
+              <button onClick={() => handleIdeaSave("active")} disabled={ideaPhase === "saving"}
+                className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50">
+                {ideaPhase === "saving"
+                  ? (language === "zh-TW" ? "儲存中…" : "Saving…")
+                  : (language === "zh-TW" ? "加入任務清單" : "Add to Tasks")}
+              </button>
+            </div>
+
+            {/* Chat discussion */}
+            <div className="border-t border-gray-100 pt-3 space-y-2">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
+              </p>
+              <div ref={ideaChatRef} className="max-h-40 overflow-y-auto space-y-1.5">
+                {ideaMessages.map((m, i) => (
+                  <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto max-w-[85%]"}`}>
+                    {m.content}
+                  </div>
+                ))}
+                {ideaChatLoading && (
+                  <div className="text-xs text-indigo-400 animate-pulse px-3">
+                    {language === "zh-TW" ? "思考中…" : "Thinking…"}
                   </div>
                 )}
-                <div className="flex gap-1.5">
-                  {result.saved ? (
-                    <span className="text-xs text-green-600 py-1">{language === "zh-TW" ? "✓ 已儲存" : "✓ Saved"}</span>
-                  ) : (
-                    <>
-                      <button onClick={() => handleSaveDraftItem(result.itemId)} disabled={result.saving}
-                        className="flex-1 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-                        {result.saving ? (language === "zh-TW" ? "儲存中…" : "Saving…") : (language === "zh-TW" ? "儲存" : "Save")}
-                      </button>
-                      <button onClick={() => { setFocusedDraftId(result.itemId); setWorkspaceMode("draft"); setWorkspaceOpen(true); }}
-                        className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors whitespace-nowrap">
-                        {language === "zh-TW" ? "AI 討論" : "Discuss"}
-                      </button>
-                    </>
-                  )}
-                </div>
               </div>
-            );
-          })}
-          {!draftAnalyzing && draftResults.length > 0 && (
-            <button onClick={() => { setDraftResults([]); setWorkspaceMode("empty"); }}
-              className="text-[10px] text-gray-300 hover:text-gray-500 transition-colors">
-              {language === "zh-TW" ? "清除結果" : "Clear results"}
-            </button>
-          )}
-        </div>
-      )}
+              <div className="flex gap-2">
+                <input value={ideaChatInput} onChange={(e) => setIdeaChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleIdeaChat()}
+                  placeholder={language === "zh-TW" ? "輸入問題或想法…" : "Ask a question…"}
+                  className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                <button onClick={handleIdeaChat} disabled={ideaChatLoading || !ideaChatInput.trim()}
+                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40">↑</button>
+              </div>
+            </div>
 
-      {/* Filter bar: status left, timeframe right */}
-      <div className="shrink-0 border-b border-gray-100 px-4 py-2 flex items-center justify-between gap-2">
-        <div className="flex gap-1">
-          {(["active", "shelved", "deleted"] as const).map((f) => {
-            const count = f === "active" ? activeTasks.length : f === "shelved" ? shelvedTasks.length : deletedTasks.length;
-            return (
-              <button key={f} onClick={() => setTaskFilter(f)}
-                className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${taskFilter === f ? "bg-indigo-50 text-indigo-600 font-medium" : "text-gray-400 hover:text-gray-600"}`}>
-                {f === "active" ? (language === "zh-TW" ? "進行中" : "Active") : f === "shelved" ? (language === "zh-TW" ? "暫存" : "Shelved") : (language === "zh-TW" ? "垃圾桶" : "Trash")}
-                {count > 0 ? <span className="ml-1 text-[10px] opacity-70">{count}</span> : null}
-              </button>
-            );
-          })}
+            <button onClick={resetIdeaValidator} className="text-xs text-gray-300 hover:text-gray-500 w-full text-center">
+              {language === "zh-TW" ? "清除，分析下一個" : "Clear and analyze next"}
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* Divider */}
+      <div className="border-t border-gray-100" />
+
+      {/* ── Section 2: Todo Planner ───────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">
+              {language === "zh-TW" ? "待辦規劃" : "Todo Planner"}
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {language === "zh-TW"
+                ? "按時間段規劃任務，AI 協助評估優先序"
+                : "Plan by timeframe, AI helps evaluate priority"}
+            </p>
+          </div>
+
+          {/* AI Analyze dropdown */}
+          <div className="relative shrink-0">
+            <button
+              onClick={() => setPlanScopeOpen((v) => !v)}
+              disabled={planItems.length === 0 || objectives.length === 0 || planPhase === "analyzing"}
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors font-medium"
+            >
+              {planPhase === "analyzing"
+                ? (language === "zh-TW" ? "分析中…" : "Analyzing…")
+                : (language === "zh-TW" ? "AI 分析" : "AI Analyze")}
+              {planPhase !== "analyzing" && <span className="opacity-70">▾</span>}
+            </button>
+            {planScopeOpen && (
+              <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-gray-100 z-20 w-28 py-1">
+                {([
+                  { key: "all", zh: "全部", en: "All" },
+                  { key: "today", zh: "今日", en: "Today" },
+                  { key: "week", zh: "本週", en: "Week" },
+                  { key: "month", zh: "本月", en: "Month" },
+                ] as const).map((opt) => (
+                  <button key={opt.key} onClick={() => handlePlanAnalyze(opt.key)}
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">
+                    {language === "zh-TW" ? opt.zh : opt.en}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-        {taskFilter === "active" && (
-          <div className="flex gap-0.5 overflow-x-auto">
-            {TIMEFRAME_TABS.map((tab) => (
-              <button key={tab.key} onClick={() => setActiveTimeframe(tab.key)}
-                className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap transition-colors ${activeTimeframe === tab.key ? "bg-indigo-600 text-white" : "text-gray-400 hover:text-gray-600"}`}>
-                {language === "zh-TW" ? tab.zh : tab.en}
-              </button>
+
+        {/* Period tabs */}
+        <div className="flex rounded-xl bg-gray-100 p-0.5 gap-0.5">
+          {(["today", "week", "month", "custom"] as PlanPeriod[]).map((p) => (
+            <button key={p} onClick={() => setActivePeriod(p)}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${activePeriod === p ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              {periodLabel[p]}
+            </button>
+          ))}
+        </div>
+
+        {activePeriod === "custom" && (
+          <input value={customLabel} onChange={(e) => setCustomLabel(e.target.value)}
+            placeholder={language === "zh-TW" ? "自訂時間標籤…" : "Custom label…"}
+            className="w-full text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+        )}
+
+        {/* Add task input */}
+        <div className="flex gap-2">
+          <input
+            value={newTodoText}
+            onChange={(e) => setNewTodoText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && addTodo()}
+            placeholder={language === "zh-TW" ? `新增${periodLabel[activePeriod]}任務…` : `Add ${periodLabel[activePeriod].toLowerCase()} task…`}
+            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <button onClick={addTodo} disabled={!newTodoText.trim()}
+            className="w-8 h-[38px] flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-30 transition-colors text-lg leading-none">
+            +
+          </button>
+        </div>
+
+        {/* Task list */}
+        {periodItems.length === 0 ? (
+          <p className="text-xs text-gray-400 text-center py-6">
+            {language === "zh-TW" ? `${periodLabel[activePeriod]}還沒有任務，輸入上方新增` : `No ${periodLabel[activePeriod].toLowerCase()} tasks yet`}
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {periodItems.map((item) => (
+              <div key={item.id} className="flex items-center gap-2 bg-white rounded-lg border border-gray-100 px-3 py-2">
+                <p className={`flex-1 text-sm min-w-0 truncate ${item.status === "completed" ? "line-through text-gray-400" : "text-gray-700"}`}>
+                  {item.title}
+                </p>
+                {item.analysis && scoreChip(item.analysis.score)}
+                <select
+                  value={item.status}
+                  onChange={(e) => updateTodoStatus(item.id, e.target.value as PlanStatus)}
+                  className={`text-xs rounded px-1.5 py-0.5 border-0 cursor-pointer focus:outline-none shrink-0 ${STATUS_STYLE[item.status]}`}
+                >
+                  {(["active", "in-progress", "shelved", "completed"] as PlanStatus[]).map((s) => (
+                    <option key={s} value={s}>{statusLabel[s]}</option>
+                  ))}
+                </select>
+                <button onClick={() => deleteTodo(item.id)}
+                  className="text-gray-300 hover:text-red-400 text-base leading-none shrink-0">×</button>
+              </div>
             ))}
           </div>
         )}
-      </div>
 
-      {/* Task list */}
-      <div className="flex-1 overflow-y-auto">
-        {taskFilter === "shelved" && (
-          shelvedTasks.length === 0
-            ? <div className="px-4 py-8 text-center text-xs text-gray-400">{language === "zh-TW" ? "沒有暫存的任務" : "No shelved tasks"}</div>
-            : <div className="divide-y divide-gray-50">
-              {shelvedTasks.map((idea) => (
-                <div key={idea.id} className="px-4 py-3 flex items-center gap-2">
-                  <p className="text-sm text-gray-700 flex-1 truncate">{idea.title}</p>
-                  <button onClick={() => setIdeaStatus(idea.id, "active")} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 shrink-0">{language === "zh-TW" ? "還原" : "Restore"}</button>
-                  <button onClick={() => setIdeaStatus(idea.id, "deleted")} className="text-gray-300 hover:text-red-400 text-base leading-none px-1 shrink-0">×</button>
+        {/* Plan Analysis result */}
+        {(planPhase === "analyzing" || planPhase === "result") && (
+          <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-4 space-y-3 mt-2">
+            {planPhase === "analyzing" && !planAnalysis && (
+              <p className="text-xs text-gray-400 animate-pulse text-center py-4">
+                {language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}
+              </p>
+            )}
+
+            {planAnalysis && (
+              <>
+                <div className="bg-indigo-50 rounded-lg px-3 py-2.5">
+                  <p className="text-xs font-semibold text-indigo-700 mb-1">
+                    {language === "zh-TW" ? "整體評估" : "Overall Assessment"}
+                  </p>
+                  <p className="text-xs text-indigo-700 leading-relaxed">{planAnalysis.overallAssessment}</p>
                 </div>
-              ))}
-            </div>
-        )}
 
-        {taskFilter === "deleted" && (
-          deletedTasks.length === 0
-            ? <div className="px-4 py-8 text-center text-xs text-gray-400">{language === "zh-TW" ? "垃圾桶是空的" : "Trash is empty"}</div>
-            : <div className="divide-y divide-gray-50">
-              {deletedTasks.map((idea) => (
-                <div key={idea.id} className="px-4 py-3 flex items-center gap-2 opacity-60">
-                  <p className="text-sm text-gray-500 flex-1 truncate line-through">{idea.title}</p>
-                  <button onClick={() => setIdeaStatus(idea.id, "active")} className="text-xs px-2 py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50 shrink-0">{language === "zh-TW" ? "還原" : "Restore"}</button>
-                  <button onClick={() => handlePermanentDelete(idea.id)} className="text-xs text-red-400 hover:text-red-600 shrink-0">{language === "zh-TW" ? "永久刪除" : "Delete"}</button>
-                </div>
-              ))}
-            </div>
-        )}
-
-        {taskFilter === "active" && (
-          sortedActive.length === 0
-            ? <div className="px-4 py-8 text-center text-xs text-gray-400">{language === "zh-TW" ? "沒有任務，在上方輸入開始" : "No tasks yet — type above to add one"}</div>
-            : <div className="divide-y divide-gray-50">
-              {sortedActive.map((idea) => {
-                const isExpanded = expandedIds.has(idea.id);
-                const isDone = idea.taskStatus === "done";
-                const isFocused = focusedTaskId === idea.id && workspaceMode === "task";
-                const links = idea.linkedKRs ?? [];
-                const isPicking = showObjPickerId === idea.id;
-                const isMeasurePending = pendingMeasure === idea.id;
-                const measureKRs = links.flatMap((link) => {
-                  const obj = objectives.find((o) => o.id === link.objectiveId);
-                  const kr = obj?.keyResults.find((k) => k.id === link.krId);
-                  if (!kr || (kr.krType ?? "cumulative") !== "measurement") return [];
-                  return [{ obj: obj!, kr }];
-                });
-                return (
-                  <div key={idea.id} className={`${isDone ? "opacity-60" : ""} ${isFocused ? "bg-indigo-50/60" : ""}`}>
-                    <div className="px-4 py-3">
-                      <div className="flex items-start gap-2">
-                        <button
-                          onClick={() => handleFocusTask(idea)}
-                          className="flex-1 text-left min-w-0"
-                        >
-                          <p className={`text-sm text-gray-800 ${isDone ? "line-through text-gray-400" : ""}`}>{idea.title}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            {idea.taskTimeframe && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
-                                {getTimeframeLabel(idea.taskTimeframe, idea.taskTimeframeCustomLabel, language)}
-                              </span>
-                            )}
-                            {idea.analysis && (
-                              <span className={`text-[10px] font-semibold ${idea.analysis.finalScore >= 7 ? "text-indigo-600" : idea.analysis.finalScore >= 4 ? "text-amber-500" : "text-gray-400"}`}>
-                                {idea.analysis.finalScore.toFixed(1)}
-                              </span>
-                            )}
-                            {idea.needsReanalysis && (
-                              <button onClick={(e) => { e.stopPropagation(); handleReanalyze(idea); }} disabled={reanalyzingIds.has(idea.id)}
-                                className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 disabled:opacity-50">
-                                {reanalyzingIds.has(idea.id) ? (language === "zh-TW" ? "評估中…" : "Analyzing…") : (language === "zh-TW" ? "重新評估" : "Re-evaluate")}
-                              </button>
-                            )}
+                <div className="space-y-1.5">
+                  {(() => {
+                    const scopeItems = planScope === "all"
+                      ? planItems
+                      : planItems.filter((i) => i.period === (planScope === "today" ? "today" : planScope === "week" ? "week" : "month"));
+                    const scoreMap = new Map(planAnalysis.items.map((i) => [i.id, i]));
+                    return scopeItems.map((item) => {
+                      const scored = scoreMap.get(item.id);
+                      return (
+                        <div key={item.id} className="bg-white rounded-lg border border-gray-100 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs text-gray-700 flex-1 truncate">{item.title}</p>
+                            {scored && scoreChip(scored.score)}
                           </div>
-                        </button>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {(["todo", "in-progress", "done"] as TaskStatus[]).map((s) => (
-                            <button key={s} onClick={(e) => { e.stopPropagation(); handleSetTaskStatus(idea.id, s); }}
-                              className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${idea.taskStatus === s ? TASK_STATUS_STYLE[s] + " font-medium" : "text-gray-200 hover:text-gray-500"}`}>
-                              {TASK_STATUS_LABEL[s]}
-                            </button>
-                          ))}
-                          <button onClick={(e) => { e.stopPropagation(); setExpandedIds((prev) => { const s = new Set(prev); isExpanded ? s.delete(idea.id) : s.add(idea.id); return s; }); }}
-                            className="text-gray-300 hover:text-gray-500 text-xs px-1">
-                            {isExpanded ? "▲" : "▼"}
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); setIdeaStatus(idea.id, "shelved"); }}
-                            className="text-gray-300 hover:text-amber-500 text-xs px-0.5" title={language === "zh-TW" ? "暫存" : "Shelve"}>⊸</button>
-                          <button onClick={(e) => { e.stopPropagation(); setIdeaStatus(idea.id, "deleted"); }}
-                            className="text-gray-300 hover:text-red-400 text-base leading-none px-0.5">×</button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {isExpanded && (
-                      <div className="px-4 pb-4 space-y-3 bg-gray-50/70 border-t border-gray-100">
-                        {/* Analysis */}
-                        {idea.analysis && (
-                          <div className="pt-3">
-                            <AnalysisCard analysis={idea.analysis} language={language} />
-                            <button onClick={(e) => { e.stopPropagation(); handleFocusTask(idea); }}
-                              className="mt-1.5 text-xs text-indigo-500 hover:text-indigo-700">
-                              {language === "zh-TW" ? "與 AI 討論 →" : "Discuss with AI →"}
-                            </button>
-                          </div>
-                        )}
-                        {/* Todos */}
-                        {(() => {
-                          const todos = idea.todos ?? [];
-                          const doneCount = todos.filter((t) => t.done).length;
-                          const allDone = todos.length > 0 && doneCount === todos.length;
-                          const pct = todos.length > 0 ? Math.round((doneCount / todos.length) * 100) : 0;
-                          return (
-                            <div className="pt-3">
-                              <div className="flex items-center gap-2 mb-2">
-                                <span className="text-xs font-medium text-gray-600">{language === "zh-TW" ? "子任務" : "Subtasks"}</span>
-                                {todos.length > 0 && (
-                                  <>
-                                    <span className="text-xs text-gray-400">{doneCount}/{todos.length}</span>
-                                    <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                                      <div className={`h-full rounded-full transition-all ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
-                                    </div>
-                                    {allDone && idea.taskStatus !== "done" && (
-                                      <button onClick={() => handleSetTaskStatus(idea.id, "done")}
-                                        className="text-xs px-2 py-0.5 bg-green-600 text-white rounded-lg hover:bg-green-700 shrink-0">
-                                        {language === "zh-TW" ? "標記完成" : "Mark done"}
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                              <div className="space-y-0.5">
-                                {todos.map((todo) => (
-                                  <div key={todo.id} className="flex items-center gap-2 group rounded-md px-1 py-0.5 hover:bg-white">
-                                    <button onClick={() => handleToggleTodo(idea.id, todo.id)}
-                                      className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${todo.done ? "bg-green-500 border-green-500" : "border-gray-300 hover:border-indigo-400"}`}>
-                                      {todo.done && <span className="text-white text-[9px] leading-none">✓</span>}
-                                    </button>
-                                    <input ref={(el) => { todoInputRefs.current[todo.id] = el; }} type="text"
-                                      defaultValue={todo.title}
-                                      onBlur={(e) => handleUpdateTodoTitle(idea.id, todo.id, e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") { e.preventDefault(); handleAddTodoAfter(idea.id, todo.id); }
-                                        if (e.key === "Backspace" && e.currentTarget.value === "") { e.preventDefault(); handleDeleteTodo(idea.id, todo.id); }
-                                      }}
-                                      className={`flex-1 text-xs bg-transparent border-none outline-none py-0.5 ${todo.done ? "line-through text-gray-400" : "text-gray-700"}`}
-                                      placeholder={language === "zh-TW" ? "待辦事項" : "Subtask"} />
-                                  </div>
-                                ))}
-                                <button onClick={() => handleAddTodoAfter(idea.id)}
-                                  className="flex items-center gap-2 w-full px-1 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded-md hover:bg-white">
-                                  <span className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-300 text-base leading-none">+</span>
-                                  {language === "zh-TW" ? "新增待辦" : "Add subtask"}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Linked KRs */}
-                        <div className="border-t border-gray-100 pt-3 space-y-1.5">
-                          <LinkedObjsEditable links={links} objectives={objectives}
-                            onRemove={(idx) => handleUpdateLinkedKRs(idea.id, links.filter((_, i) => i !== idx))} />
-                          <button onClick={() => setShowObjPickerId(isPicking ? null : idea.id)}
-                            className="text-xs text-indigo-500 hover:text-indigo-700">
-                            {isPicking ? (language === "zh-TW" ? "完成指定" : "Done") : (language === "zh-TW" ? "＋ 指定目標" : "+ Link to goal")}
-                          </button>
-                          {isPicking && (
-                            <div className="border border-gray-200 rounded-lg overflow-hidden">
-                              {objectives.map((obj) => (
-                                <div key={obj.id}>
-                                  <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-600 border-b border-gray-100">{obj.title}</div>
-                                  {obj.keyResults.map((kr) => {
-                                    const alreadyLinked = links.some((l) => l.krId === kr.id);
-                                    return (
-                                      <button key={kr.id}
-                                        onClick={() => alreadyLinked
-                                          ? handleUpdateLinkedKRs(idea.id, links.filter((l) => l.krId !== kr.id))
-                                          : handleUpdateLinkedKRs(idea.id, [...links, { objectiveId: obj.id, krId: kr.id }])}
-                                        className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 border-b border-gray-50 ${alreadyLinked ? "text-indigo-600 bg-indigo-50" : "text-gray-700"}`}>
-                                        <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[10px] ${alreadyLinked ? "border-indigo-500 bg-indigo-500 text-white" : "border-gray-300"}`}>
-                                          {alreadyLinked && "✓"}
-                                        </span>
-                                        <span className="flex-1 truncate">{kr.title}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ))}
+                          {scored && (
+                            <div className="mt-0.5 space-y-0.5">
+                              {scored.reasoning && <p className="text-[11px] text-gray-500">{scored.reasoning}</p>}
+                              {scored.periodNote && (
+                                <p className="text-[11px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
+                                  {scored.periodNote}
+                                </p>
+                              )}
                             </div>
                           )}
                         </div>
+                      );
+                    });
+                  })()}
+                </div>
 
-                        {/* Measurement input */}
-                        {isMeasurePending && measureKRs.length > 0 && (
-                          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3 space-y-2">
-                            <p className="text-xs font-medium text-amber-700">{language === "zh-TW" ? "完成前，請填入目前的數值：" : "Enter current values before marking done:"}</p>
-                            {measureKRs.map(({ kr }) => (
-                              <div key={kr.id} className="flex items-center gap-2">
-                                <label className="text-xs text-gray-600 flex-1 truncate">{kr.title}</label>
-                                <input type="number"
-                                  value={measureInputs[idea.id]?.[kr.id] ?? ""}
-                                  onChange={(e) => setMeasureInputs((prev) => ({ ...prev, [idea.id]: { ...(prev[idea.id] ?? {}), [kr.id]: e.target.value } }))}
-                                  className="w-28 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                              </div>
-                            ))}
-                            <div className="flex gap-2 pt-1">
-                              <button onClick={() => confirmMeasurement(idea.id)}
-                                className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">{language === "zh-TW" ? "確認完成" : "Confirm"}</button>
-                              <button onClick={() => setPendingMeasure(null)}
-                                className="text-xs px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50">{language === "zh-TW" ? "取消" : "Cancel"}</button>
-                            </div>
-                          </div>
-                        )}
+                {planAnalysis.suggestions && (
+                  <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-gray-600 mb-1">
+                      {language === "zh-TW" ? "AI 建議" : "Suggestions"}
+                    </p>
+                    <p className="text-xs text-gray-600 leading-relaxed">{planAnalysis.suggestions}</p>
+                  </div>
+                )}
+
+                {/* Chat discussion */}
+                <div className="border-t border-gray-100 pt-3 space-y-2">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                    {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
+                  </p>
+                  <div ref={planChatRef} className="max-h-40 overflow-y-auto space-y-1.5">
+                    {planMessages.map((m, i) => (
+                      <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto max-w-[85%]"}`}>
+                        {m.content}
+                      </div>
+                    ))}
+                    {planChatLoading && (
+                      <div className="text-xs text-indigo-400 animate-pulse px-3">
+                        {language === "zh-TW" ? "思考中…" : "Thinking…"}
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
-        )}
-      </div>
-    </div>
-  );
+                  <div className="flex gap-2">
+                    <input value={planChatInput} onChange={(e) => setPlanChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handlePlanChat()}
+                      placeholder={language === "zh-TW" ? "輸入問題或調整建議…" : "Ask or suggest changes…"}
+                      className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                    <button onClick={handlePlanChat} disabled={planChatLoading || !planChatInput.trim()}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40">↑</button>
+                  </div>
+                </div>
 
-  const workspacePanel = (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
-        <span className="text-xs font-semibold text-gray-700">{language === "zh-TW" ? "AI 工作區" : "AI Workspace"}</span>
-        {workspaceTitle && <span className="text-xs text-gray-400 truncate flex-1">— {workspaceTitle}</span>}
-        {workspaceMode !== "empty" && (
-          <button onClick={() => { setWorkspaceMode("empty"); setFocusedTaskId(null); setFocusedDraftId(null); setWorkspaceMessages([]); }}
-            className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0">×</button>
-        )}
-        <button onClick={() => setWorkspaceOpen(false)}
-          className="hidden lg:block text-gray-300 hover:text-gray-500 text-sm leading-none shrink-0 ml-1">›</button>
-      </div>
-
-      {/* Chat messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {workspaceMode === "empty" && (
-          <p className="text-xs text-gray-400 text-center py-8 leading-relaxed">
-            {language === "zh-TW" ? "點擊任務開始 AI 討論\n或評估任務後點 AI 討論" : "Click a task to start an AI discussion\nor evaluate a task then click Discuss"}
-          </p>
-        )}
-        {workspaceMode !== "empty" && workspaceMessages.length === 0 && (
-          <p className="text-xs text-gray-400 text-center py-6">
-            {language === "zh-TW" ? "有什麼想討論的都可以說…" : "Ask anything about this task…"}
-          </p>
-        )}
-        {workspaceMessages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[90%] rounded-xl px-3 py-2 text-sm leading-relaxed ${msg.role === "user" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-800"}`}>
-              {msg.isLoading
-                ? <span className="text-xs opacity-50 animate-pulse">{language === "zh-TW" ? "思考中…" : "Thinking…"}</span>
-                : <p className="whitespace-pre-wrap">{msg.content}</p>}
-            </div>
+                <button onClick={() => { setPlanPhase("idle"); setPlanAnalysis(null); setPlanMessages([]); }}
+                  className="text-xs text-gray-300 hover:text-gray-500 w-full text-center">
+                  {language === "zh-TW" ? "清除分析結果" : "Clear analysis"}
+                </button>
+              </>
+            )}
           </div>
-        ))}
-        <div ref={workspaceEndRef} />
-      </div>
-
-      {workspaceMode !== "empty" && (
-        <div className="shrink-0 px-3 pb-3 pt-2 border-t border-gray-100">
-          <div className="flex gap-2">
-            <input value={workspaceChatInput} onChange={(e) => setWorkspaceChatInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) handleWorkspaceSend(); }}
-              placeholder={language === "zh-TW" ? "討論這個任務…" : "Discuss this task…"}
-              disabled={workspaceChatLoading}
-              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50" />
-            <button onClick={handleWorkspaceSend} disabled={!workspaceChatInput.trim() || workspaceChatLoading}
-              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors shrink-0">
-              {language === "zh-TW" ? "送出" : "Send"}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col h-screen">
-      {/* Mobile tabs */}
-      <div className="lg:hidden shrink-0 flex border-b border-gray-100">
-        {(["list", "workspace"] as const).map((tab) => (
-          <button key={tab} onClick={() => setMobileTab(tab)}
-            className={`flex-1 py-2.5 text-xs font-medium transition-colors ${mobileTab === tab ? "text-indigo-600 border-b-2 border-indigo-600" : "text-gray-400"}`}>
-            {tab === "list"
-              ? (language === "zh-TW" ? "任務清單" : "Task List")
-              : (language === "zh-TW" ? "AI 工作區" : "AI Workspace")}
-          </button>
-        ))}
-      </div>
-
-      {/* Main split layout */}
-      <div ref={splitContainerRef} className="flex flex-1 min-h-0">
-        {/* Left: task list */}
-        <div
-          className={`flex flex-col min-h-0 ${workspaceOpen ? "lg:shrink-0" : "lg:flex-1"} ${mobileTab !== "list" ? "hidden lg:flex" : "flex flex-1"}`}
-          style={workspaceOpen ? { width: `${panelWidth}px` } : undefined}
-        >
-          {taskListPanel}
-        </div>
-
-        {/* Drag handle (desktop, expanded only) */}
-        {workspaceOpen && (
-          <div
-            onMouseDown={(e) => {
-              e.preventDefault();
-              isDraggingPanel.current = true;
-              document.body.style.cursor = "col-resize";
-              document.body.style.userSelect = "none";
-            }}
-            className="hidden lg:flex w-1 shrink-0 cursor-col-resize items-stretch bg-gray-100 hover:bg-indigo-200 transition-colors"
-          />
         )}
-
-        {/* Right: AI workspace */}
-        <div className={`flex-1 flex flex-col min-h-0 ${mobileTab !== "workspace" ? (workspaceOpen ? "hidden lg:flex" : "hidden") : "flex flex-1"}`}>
-          {workspacePanel}
-        </div>
-      </div>
+      </section>
     </div>
-  );
-}
-
-export default function TasksPage() {
-  return (
-    <Suspense>
-      <TasksPageInner />
-    </Suspense>
   );
 }
