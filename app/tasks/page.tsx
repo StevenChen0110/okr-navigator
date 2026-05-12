@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import {
   Idea, Objective, IdeaAnalysis, IdeaKRLink, IdeaStatus,
   EvaluationProfile, ObjGroup, PlanItem, PlanPeriod, PlanStatus, PlanAnalysisResult,
+  StoredMessage,
 } from "@/lib/types";
 import { fetchObjectives, saveIdea } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
@@ -12,57 +13,18 @@ import { useAuth } from "@/components/AuthProvider";
 import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
+import { computeWeightedScore } from "@/lib/scoring";
+import { PERIOD_LABELS_ZH, PERIOD_LABELS_EN, STATUS_LABELS_ZH, STATUS_LABELS_EN, STATUS_STYLE } from "@/lib/plan-constants";
 
 type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
 type PlanPhase = "idle" | "analyzing" | "result";
-interface ChatMsg { role: "user" | "assistant"; content: string; }
-
-function computeWeightedScore(
-  idea: { analysis: IdeaAnalysis | null },
-  objectives: Objective[],
-  profile: EvaluationProfile,
-  groups: ObjGroup[],
-): number {
-  if (!idea.analysis) return 0;
-  const w = profile.priorityWeights;
-  const gw = profile.groupPriorityWeights;
-  const groupMap = new Map(groups.map((g) => [g.id, g]));
-  let sumScores = 0;
-  let sumWeights = 0;
-  for (const os of idea.analysis.objectiveScores) {
-    const obj = objectives.find((o) => o.id === os.objectiveId);
-    if (!obj) continue;
-    const objPriority = obj.meta?.priority ?? 2;
-    const objWeight = profile.considerPriority ? (w[objPriority] ?? 1) : 1;
-    let groupWeight = 1;
-    if (profile.considerGroupPriority && obj.meta?.groupId) {
-      const g = groupMap.get(obj.meta.groupId);
-      if (g) groupWeight = gw[g.priority] ?? 1;
-    }
-    const weight = objWeight * groupWeight;
-    sumScores += os.overallScore * weight;
-    sumWeights += weight;
-  }
-  return sumWeights > 0 ? sumScores / sumWeights : (idea.analysis.finalScore ?? 0);
-}
-
-const PERIOD_LABELS_ZH: Record<PlanPeriod, string> = { today: "今日", week: "本週", month: "本月", custom: "自訂" };
-const PERIOD_LABELS_EN: Record<PlanPeriod, string> = { today: "Today", week: "This Week", month: "This Month", custom: "Custom" };
-const STATUS_LABELS_ZH: Record<PlanStatus, string> = { active: "待辦", "in-progress": "進行中", shelved: "擱置", completed: "已完成" };
-const STATUS_LABELS_EN: Record<PlanStatus, string> = { active: "Active", "in-progress": "In Progress", shelved: "Shelved", completed: "Completed" };
-const STATUS_STYLE: Record<PlanStatus, string> = {
-  active: "bg-gray-100 text-gray-500",
-  "in-progress": "bg-amber-50 text-amber-600",
-  shelved: "bg-orange-50 text-orange-500",
-  completed: "bg-green-50 text-green-600",
-};
 
 export default function TasksPage() {
   const { user, requireAuth } = useAuth();
   const { t, language } = useLanguage();
 
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const [evalProfile, setEvalProfile] = useState<EvaluationProfile>(getEvaluationProfile());
+  const [evalProfile] = useState<EvaluationProfile>(getEvaluationProfile());
   const [groups, setGroups] = useState<ObjGroup[]>([]);
 
   // Idea validator state
@@ -74,7 +36,7 @@ export default function TasksPage() {
   const [ideaError, setIdeaError] = useState("");
   const [ideaClarifyQ, setIdeaClarifyQ] = useState("");
   const [ideaClarifyA, setIdeaClarifyA] = useState("");
-  const [ideaMessages, setIdeaMessages] = useState<ChatMsg[]>([]);
+  const [ideaMessages, setIdeaMessages] = useState<StoredMessage[]>([]);
   const [ideaChatInput, setIdeaChatInput] = useState("");
   const [ideaChatLoading, setIdeaChatLoading] = useState(false);
   const [suggestedLinks, setSuggestedLinks] = useState<Array<{
@@ -90,15 +52,14 @@ export default function TasksPage() {
   const [customLabel, setCustomLabel] = useState("");
   const [planPhase, setPlanPhase] = useState<PlanPhase>("idle");
   const [planAnalysis, setPlanAnalysis] = useState<PlanAnalysisResult | null>(null);
-  const [planScope, setPlanScope] = useState<"all" | "today" | "week" | "month">("all");
+  const [planScope, setPlanScope] = useState<"all" | PlanPeriod>("all");
   const [planScopeOpen, setPlanScopeOpen] = useState(false);
-  const [planMessages, setPlanMessages] = useState<ChatMsg[]>([]);
+  const [planMessages, setPlanMessages] = useState<StoredMessage[]>([]);
   const [planChatInput, setPlanChatInput] = useState("");
   const [planChatLoading, setPlanChatLoading] = useState(false);
   const planChatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setEvalProfile(getEvaluationProfile());
     setGroups(getObjGroups());
     setPlanItems(getPlanItems());
   }, []);
@@ -118,6 +79,10 @@ export default function TasksPage() {
   const isQuickIdea = !ideaNotes.trim();
   const periodLabel = language === "zh-TW" ? PERIOD_LABELS_ZH : PERIOD_LABELS_EN;
   const statusLabel = language === "zh-TW" ? STATUS_LABELS_ZH : STATUS_LABELS_EN;
+
+  function getScopeItems(scope: "all" | PlanPeriod) {
+    return scope === "all" ? planItems : planItems.filter((i) => i.period === scope);
+  }
 
   // ── Idea handlers ─────────────────────────────────────────────────────────
 
@@ -194,7 +159,7 @@ export default function TasksPage() {
     const text = ideaChatInput.trim();
     if (!text || ideaChatLoading) return;
     setIdeaChatInput("");
-    const nextMessages: ChatMsg[] = [...ideaMessages, { role: "user", content: text }];
+    const nextMessages: StoredMessage[] = [...ideaMessages, { role: "user", content: text }];
     setIdeaMessages(nextMessages);
     setIdeaChatLoading(true);
     try {
@@ -233,15 +198,12 @@ export default function TasksPage() {
     setPlanItems(next); savePlanItems(next);
   }
 
-  async function handlePlanAnalyze(scope: "all" | "today" | "week" | "month") {
+  async function handlePlanAnalyze(scope: "all" | PlanPeriod) {
     if (!user) { requireAuth(); return; }
     if (objectives.length === 0) return;
     setPlanScope(scope); setPlanScopeOpen(false); setPlanPhase("analyzing");
 
-    const scopeItems = scope === "all"
-      ? planItems
-      : planItems.filter((i) => i.period === (scope === "today" ? "today" : scope === "week" ? "week" : "month"));
-
+    const scopeItems = getScopeItems(scope);
     if (scopeItems.length === 0) { setPlanPhase("idle"); return; }
 
     try {
@@ -254,11 +216,9 @@ export default function TasksPage() {
       setPlanAnalysis(result); setPlanPhase("result");
       setPlanMessages([{
         role: "assistant",
-        content: language === "zh-TW"
-          ? `${result.overallAssessment} ${result.suggestions || ""}`
-          : `${result.overallAssessment} ${result.suggestions || ""}`,
+        content: `${result.overallAssessment} ${result.suggestions || ""}`,
       }]);
-    } catch (e) {
+    } catch {
       setPlanPhase("idle");
     }
   }
@@ -267,10 +227,8 @@ export default function TasksPage() {
     const text = planChatInput.trim();
     if (!text || planChatLoading) return;
     setPlanChatInput("");
-    const scopeItems = planScope === "all"
-      ? planItems
-      : planItems.filter((i) => i.period === (planScope === "today" ? "today" : planScope === "week" ? "week" : "month"));
-    const nextMessages: ChatMsg[] = [...planMessages, { role: "user", content: text }];
+    const scopeItems = getScopeItems(planScope);
+    const nextMessages: StoredMessage[] = [...planMessages, { role: "user", content: text }];
     setPlanMessages(nextMessages); setPlanChatLoading(true);
     try {
       const { content } = await callAI<{ content: string }>("chatPlanCoach", {
@@ -288,9 +246,7 @@ export default function TasksPage() {
     } finally { setPlanChatLoading(false); }
   }
 
-  const periodItems = activePeriod === "all" as PlanPeriod
-    ? planItems
-    : planItems.filter((i) => i.period === activePeriod);
+  const periodItems = planItems.filter((i) => i.period === activePeriod);
 
   function scoreChip(score: number | undefined) {
     if (score === undefined) return null;
@@ -299,10 +255,6 @@ export default function TasksPage() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-
-  const wScore = ideaAnalysis
-    ? computeWeightedScore({ analysis: ideaAnalysis }, objectives, evalProfile, groups)
-    : 0;
 
   return (
     <div className="max-w-xl mx-auto px-4 py-6 space-y-8">
@@ -401,123 +353,121 @@ export default function TasksPage() {
         )}
 
         {ideaPhase === "analyzing" && (
-          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-6 flex items-center justify-center gap-2">
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-6 flex items-center justify-center">
             <span className="text-xs text-gray-400 animate-pulse">
               {language === "zh-TW" ? "AI 分析中…" : "Analyzing…"}
             </span>
           </div>
         )}
 
-        {(ideaPhase === "result" || ideaPhase === "saving") && ideaAnalysis && (
-          <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-4">
-            {/* Score + title */}
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
-                <span className="text-xl font-bold font-mono text-indigo-600">{wScore.toFixed(1)}</span>
-                <span className="text-[10px] text-gray-400">{language === "zh-TW" ? "綜合" : "Score"}</span>
-              </div>
-              <p className="text-sm font-medium text-gray-800 leading-snug">{ideaTitle}</p>
-            </div>
-
-            {ideaAnalysis.summary && (
-              <p className="text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2 leading-relaxed">
-                {ideaAnalysis.summary}
-              </p>
-            )}
-
-            <div className="space-y-1.5">
-              {ideaAnalysis.objectiveScores.map((os) => (
-                <div key={os.objectiveId} className="bg-white rounded-lg border border-gray-100 px-3 py-2 flex items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-700 truncate">{os.objectiveTitle}</p>
-                    {os.reasoning && <p className="text-[11px] text-gray-500 mt-0.5">{os.reasoning}</p>}
-                  </div>
-                  <span className={`text-xs font-bold font-mono shrink-0 mt-0.5 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"}`}>
-                    {os.overallScore.toFixed(1)}
-                  </span>
+        {(ideaPhase === "result" || ideaPhase === "saving") && ideaAnalysis && (() => {
+          const wScore = computeWeightedScore({ analysis: ideaAnalysis }, objectives, evalProfile, groups);
+          return (
+            <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-center bg-indigo-50 rounded-xl px-3 py-2 shrink-0">
+                  <span className="text-xl font-bold font-mono text-indigo-600">{wScore.toFixed(1)}</span>
+                  <span className="text-[10px] text-gray-400">{language === "zh-TW" ? "綜合" : "Score"}</span>
                 </div>
-              ))}
-            </div>
+                <p className="text-sm font-medium text-gray-800 leading-snug">{ideaTitle}</p>
+              </div>
 
-            {ideaAnalysis.risks.length > 0 && (
-              <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                <span className="font-medium">{language === "zh-TW" ? "風險：" : "Risks: "}</span>
-                {ideaAnalysis.risks.join("；")}
-              </p>
-            )}
-
-            {/* KR link selection */}
-            {suggestedLinks.length > 0 && (
-              <div className="border border-gray-100 rounded-lg px-3 py-2.5 space-y-1.5">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                  {language === "zh-TW" ? "連結至目標" : "Link to goals"}
+              {ideaAnalysis.summary && (
+                <p className="text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2 leading-relaxed">
+                  {ideaAnalysis.summary}
                 </p>
-                {suggestedLinks.map((l) => (
-                  <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={selectedLinkIds.has(l.krId)} onChange={() => {
-                      const n = new Set(selectedLinkIds);
-                      n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId);
-                      setSelectedLinkIds(n);
-                    }} className="accent-indigo-600 shrink-0" />
+              )}
+
+              <div className="space-y-1.5">
+                {ideaAnalysis.objectiveScores.map((os) => (
+                  <div key={os.objectiveId} className="bg-white rounded-lg border border-gray-100 px-3 py-2 flex items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
-                      <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
+                      <p className="text-xs font-medium text-gray-700 truncate">{os.objectiveTitle}</p>
+                      {os.reasoning && <p className="text-[11px] text-gray-500 mt-0.5">{os.reasoning}</p>}
                     </div>
-                    <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {/* Save buttons */}
-            <div className="flex gap-2">
-              <button onClick={() => handleIdeaSave("shelved")} disabled={ideaPhase === "saving"}
-                className="flex-1 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-                {language === "zh-TW" ? "暫存想法" : "Save to Backlog"}
-              </button>
-              <button onClick={() => handleIdeaSave("active")} disabled={ideaPhase === "saving"}
-                className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50">
-                {ideaPhase === "saving"
-                  ? (language === "zh-TW" ? "儲存中…" : "Saving…")
-                  : (language === "zh-TW" ? "加入任務清單" : "Add to Tasks")}
-              </button>
-            </div>
-
-            {/* Chat discussion */}
-            <div className="border-t border-gray-100 pt-3 space-y-2">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-                {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
-              </p>
-              <div ref={ideaChatRef} className="max-h-40 overflow-y-auto space-y-1.5">
-                {ideaMessages.map((m, i) => (
-                  <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto max-w-[85%]"}`}>
-                    {m.content}
+                    <span className={`text-xs font-bold font-mono shrink-0 mt-0.5 ${os.overallScore >= 7 ? "text-indigo-600" : os.overallScore >= 4 ? "text-amber-500" : "text-red-400"}`}>
+                      {os.overallScore.toFixed(1)}
+                    </span>
                   </div>
                 ))}
-                {ideaChatLoading && (
-                  <div className="text-xs text-indigo-400 animate-pulse px-3">
-                    {language === "zh-TW" ? "思考中…" : "Thinking…"}
-                  </div>
-                )}
               </div>
+
+              {ideaAnalysis.risks.length > 0 && (
+                <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                  <span className="font-medium">{language === "zh-TW" ? "風險：" : "Risks: "}</span>
+                  {ideaAnalysis.risks.join("；")}
+                </p>
+              )}
+
+              {suggestedLinks.length > 0 && (
+                <div className="border border-gray-100 rounded-lg px-3 py-2.5 space-y-1.5">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                    {language === "zh-TW" ? "連結至目標" : "Link to goals"}
+                  </p>
+                  {suggestedLinks.map((l) => (
+                    <label key={l.krId} className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={selectedLinkIds.has(l.krId)} onChange={() => {
+                        const n = new Set(selectedLinkIds);
+                        n.has(l.krId) ? n.delete(l.krId) : n.add(l.krId);
+                        setSelectedLinkIds(n);
+                      }} className="accent-indigo-600 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-700 truncate">{l.krTitle}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{l.objectiveTitle}</p>
+                      </div>
+                      <span className={`text-xs font-semibold shrink-0 ${l.score >= 7 ? "text-indigo-600" : "text-amber-500"}`}>{l.score.toFixed(1)}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
               <div className="flex gap-2">
-                <input value={ideaChatInput} onChange={(e) => setIdeaChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleIdeaChat()}
-                  placeholder={language === "zh-TW" ? "輸入問題或想法…" : "Ask a question…"}
-                  className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-                <button onClick={handleIdeaChat} disabled={ideaChatLoading || !ideaChatInput.trim()}
-                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40">↑</button>
+                <button onClick={() => handleIdeaSave("shelved")} disabled={ideaPhase === "saving"}
+                  className="flex-1 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                  {language === "zh-TW" ? "暫存想法" : "Save to Backlog"}
+                </button>
+                <button onClick={() => handleIdeaSave("active")} disabled={ideaPhase === "saving"}
+                  className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50">
+                  {ideaPhase === "saving"
+                    ? (language === "zh-TW" ? "儲存中…" : "Saving…")
+                    : (language === "zh-TW" ? "加入任務清單" : "Add to Tasks")}
+                </button>
               </div>
-            </div>
 
-            <button onClick={resetIdeaValidator} className="text-xs text-gray-300 hover:text-gray-500 w-full text-center">
-              {language === "zh-TW" ? "清除，分析下一個" : "Clear and analyze next"}
-            </button>
-          </div>
-        )}
+              <div className="border-t border-gray-100 pt-3 space-y-2">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                  {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
+                </p>
+                <div ref={ideaChatRef} className="max-h-40 overflow-y-auto space-y-1.5">
+                  {ideaMessages.map((m, i) => (
+                    <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto max-w-[85%]"}`}>
+                      {m.content}
+                    </div>
+                  ))}
+                  {ideaChatLoading && (
+                    <div className="text-xs text-indigo-400 animate-pulse px-3">
+                      {language === "zh-TW" ? "思考中…" : "Thinking…"}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input value={ideaChatInput} onChange={(e) => setIdeaChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleIdeaChat()}
+                    placeholder={language === "zh-TW" ? "輸入問題或想法…" : "Ask a question…"}
+                    className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                  <button onClick={handleIdeaChat} disabled={ideaChatLoading || !ideaChatInput.trim()}
+                    className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40">↑</button>
+                </div>
+              </div>
+
+              <button onClick={resetIdeaValidator} className="text-xs text-gray-300 hover:text-gray-500 w-full text-center">
+                {language === "zh-TW" ? "清除，分析下一個" : "Clear and analyze next"}
+              </button>
+            </div>
+          );
+        })()}
       </section>
 
-      {/* Divider */}
       <div className="border-t border-gray-100" />
 
       {/* ── Section 2: Todo Planner ───────────────────────────────────── */}
@@ -534,7 +484,6 @@ export default function TasksPage() {
             </p>
           </div>
 
-          {/* AI Analyze dropdown */}
           <div className="relative shrink-0">
             <button
               onClick={() => setPlanScopeOpen((v) => !v)}
@@ -564,7 +513,6 @@ export default function TasksPage() {
           </div>
         </div>
 
-        {/* Period tabs */}
         <div className="flex rounded-xl bg-gray-100 p-0.5 gap-0.5">
           {(["today", "week", "month", "custom"] as PlanPeriod[]).map((p) => (
             <button key={p} onClick={() => setActivePeriod(p)}
@@ -580,7 +528,6 @@ export default function TasksPage() {
             className="w-full text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
         )}
 
-        {/* Add task input */}
         <div className="flex gap-2">
           <input
             value={newTodoText}
@@ -595,7 +542,6 @@ export default function TasksPage() {
           </button>
         </div>
 
-        {/* Task list */}
         {periodItems.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-6">
             {language === "zh-TW" ? `${periodLabel[activePeriod]}還沒有任務，輸入上方新增` : `No ${periodLabel[activePeriod].toLowerCase()} tasks yet`}
@@ -624,7 +570,6 @@ export default function TasksPage() {
           </div>
         )}
 
-        {/* Plan Analysis result */}
         {(planPhase === "analyzing" || planPhase === "result") && (
           <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-4 space-y-3 mt-2">
             {planPhase === "analyzing" && !planAnalysis && (
@@ -633,22 +578,20 @@ export default function TasksPage() {
               </p>
             )}
 
-            {planAnalysis && (
-              <>
-                <div className="bg-indigo-50 rounded-lg px-3 py-2.5">
-                  <p className="text-xs font-semibold text-indigo-700 mb-1">
-                    {language === "zh-TW" ? "整體評估" : "Overall Assessment"}
-                  </p>
-                  <p className="text-xs text-indigo-700 leading-relaxed">{planAnalysis.overallAssessment}</p>
-                </div>
+            {planAnalysis && (() => {
+              const scopeItems = getScopeItems(planScope);
+              const scoreMap = new Map(planAnalysis.items.map((i) => [i.id, i]));
+              return (
+                <>
+                  <div className="bg-indigo-50 rounded-lg px-3 py-2.5">
+                    <p className="text-xs font-semibold text-indigo-700 mb-1">
+                      {language === "zh-TW" ? "整體評估" : "Overall Assessment"}
+                    </p>
+                    <p className="text-xs text-indigo-700 leading-relaxed">{planAnalysis.overallAssessment}</p>
+                  </div>
 
-                <div className="space-y-1.5">
-                  {(() => {
-                    const scopeItems = planScope === "all"
-                      ? planItems
-                      : planItems.filter((i) => i.period === (planScope === "today" ? "today" : planScope === "week" ? "week" : "month"));
-                    const scoreMap = new Map(planAnalysis.items.map((i) => [i.id, i]));
-                    return scopeItems.map((item) => {
+                  <div className="space-y-1.5">
+                    {scopeItems.map((item) => {
                       const scored = scoreMap.get(item.id);
                       return (
                         <div key={item.id} className="bg-white rounded-lg border border-gray-100 px-3 py-2">
@@ -668,52 +611,51 @@ export default function TasksPage() {
                           )}
                         </div>
                       );
-                    });
-                  })()}
-                </div>
+                    })}
+                  </div>
 
-                {planAnalysis.suggestions && (
-                  <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
-                    <p className="text-xs font-semibold text-gray-600 mb-1">
-                      {language === "zh-TW" ? "AI 建議" : "Suggestions"}
+                  {planAnalysis.suggestions && (
+                    <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
+                      <p className="text-xs font-semibold text-gray-600 mb-1">
+                        {language === "zh-TW" ? "AI 建議" : "Suggestions"}
+                      </p>
+                      <p className="text-xs text-gray-600 leading-relaxed">{planAnalysis.suggestions}</p>
+                    </div>
+                  )}
+
+                  <div className="border-t border-gray-100 pt-3 space-y-2">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                      {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
                     </p>
-                    <p className="text-xs text-gray-600 leading-relaxed">{planAnalysis.suggestions}</p>
+                    <div ref={planChatRef} className="max-h-40 overflow-y-auto space-y-1.5">
+                      {planMessages.map((m, i) => (
+                        <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto max-w-[85%]"}`}>
+                          {m.content}
+                        </div>
+                      ))}
+                      {planChatLoading && (
+                        <div className="text-xs text-indigo-400 animate-pulse px-3">
+                          {language === "zh-TW" ? "思考中…" : "Thinking…"}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <input value={planChatInput} onChange={(e) => setPlanChatInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handlePlanChat()}
+                        placeholder={language === "zh-TW" ? "輸入問題或調整建議…" : "Ask or suggest changes…"}
+                        className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                      <button onClick={handlePlanChat} disabled={planChatLoading || !planChatInput.trim()}
+                        className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40">↑</button>
+                    </div>
                   </div>
-                )}
 
-                {/* Chat discussion */}
-                <div className="border-t border-gray-100 pt-3 space-y-2">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-                    {language === "zh-TW" ? "與 AI 討論" : "Discuss with AI"}
-                  </p>
-                  <div ref={planChatRef} className="max-h-40 overflow-y-auto space-y-1.5">
-                    {planMessages.map((m, i) => (
-                      <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-xl ${m.role === "assistant" ? "bg-indigo-50 text-indigo-800" : "bg-gray-100 text-gray-700 ml-auto max-w-[85%]"}`}>
-                        {m.content}
-                      </div>
-                    ))}
-                    {planChatLoading && (
-                      <div className="text-xs text-indigo-400 animate-pulse px-3">
-                        {language === "zh-TW" ? "思考中…" : "Thinking…"}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <input value={planChatInput} onChange={(e) => setPlanChatInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handlePlanChat()}
-                      placeholder={language === "zh-TW" ? "輸入問題或調整建議…" : "Ask or suggest changes…"}
-                      className="flex-1 text-xs rounded-lg border border-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-                    <button onClick={handlePlanChat} disabled={planChatLoading || !planChatInput.trim()}
-                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs disabled:opacity-40">↑</button>
-                  </div>
-                </div>
-
-                <button onClick={() => { setPlanPhase("idle"); setPlanAnalysis(null); setPlanMessages([]); }}
-                  className="text-xs text-gray-300 hover:text-gray-500 w-full text-center">
-                  {language === "zh-TW" ? "清除分析結果" : "Clear analysis"}
-                </button>
-              </>
-            )}
+                  <button onClick={() => { setPlanPhase("idle"); setPlanAnalysis(null); setPlanMessages([]); }}
+                    className="text-xs text-gray-300 hover:text-gray-500 w-full text-center">
+                    {language === "zh-TW" ? "清除分析結果" : "Clear analysis"}
+                  </button>
+                </>
+              );
+            })()}
           </div>
         )}
       </section>

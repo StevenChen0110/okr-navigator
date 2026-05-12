@@ -22,6 +22,8 @@ import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems } from 
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import RichTextArea from "@/components/RichTextArea";
+import { computeWeightedScore } from "@/lib/scoring";
+import { PERIOD_LABELS_ZH, PERIOD_LABELS_EN, STATUS_LABELS_ZH, STATUS_LABELS_EN, STATUS_STYLE } from "@/lib/plan-constants";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,67 +33,6 @@ type ActivePanel = "idea" | "plan" | null;
 
 interface ChatMsg { role: "user" | "assistant"; content: string; }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function computeWeightedScore(
-  idea: Idea,
-  objectives: Objective[],
-  profile: EvaluationProfile,
-  groups: ObjGroup[],
-): number {
-  if (!idea.analysis) return 0;
-  const w = profile.priorityWeights;
-  const gw = profile.groupPriorityWeights;
-  const groupMap = new Map(groups.map((g) => [g.id, g]));
-  let sumScores = 0;
-  let sumWeights = 0;
-  for (const os of idea.analysis.objectiveScores) {
-    const obj = objectives.find((o) => o.id === os.objectiveId);
-    if (!obj) continue;
-    const objPriority = obj.meta?.priority ?? 2;
-    const objWeight = profile.considerPriority ? (w[objPriority] ?? 1) : 1;
-    let groupWeight = 1;
-    if (profile.considerGroupPriority && obj.meta?.groupId) {
-      const g = groupMap.get(obj.meta.groupId);
-      if (g) groupWeight = gw[g.priority] ?? 1;
-    }
-    const weight = objWeight * groupWeight;
-    sumScores += os.overallScore * weight;
-    sumWeights += weight;
-  }
-  return sumWeights > 0 ? sumScores / sumWeights : (idea.analysis.finalScore ?? 0);
-}
-
-const PERIOD_LABELS_ZH: Record<PlanPeriod, string> = {
-  today: "今日",
-  week: "本週",
-  month: "本月",
-  custom: "自訂",
-};
-const PERIOD_LABELS_EN: Record<PlanPeriod, string> = {
-  today: "Today",
-  week: "This Week",
-  month: "This Month",
-  custom: "Custom",
-};
-const STATUS_LABELS_ZH: Record<PlanStatus, string> = {
-  active: "待辦",
-  "in-progress": "進行中",
-  shelved: "擱置",
-  completed: "已完成",
-};
-const STATUS_LABELS_EN: Record<PlanStatus, string> = {
-  active: "Active",
-  "in-progress": "In Progress",
-  shelved: "Shelved",
-  completed: "Completed",
-};
-const STATUS_STYLE: Record<PlanStatus, string> = {
-  active: "bg-gray-100 text-gray-500",
-  "in-progress": "bg-amber-50 text-amber-600",
-  shelved: "bg-orange-50 text-orange-500",
-  completed: "bg-green-50 text-green-600",
-};
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -422,9 +363,7 @@ export default function HomePage() {
     }
   }
 
-  const periodItems = activePeriod === "all" as PlanPeriod
-    ? planItems
-    : planItems.filter((i) => i.period === activePeriod);
+  const periodItems = planItems.filter((i) => i.period === activePeriod);
 
   // Score display helper
   function scoreChip(score: number | undefined) {
@@ -441,10 +380,7 @@ export default function HomePage() {
 
   function IdeaPanel() {
     if (!ideaAnalysis) return null;
-    const wScore = computeWeightedScore(
-      { id: "", title: ideaTitle, description: ideaNotes, analysis: ideaAnalysis, createdAt: "" },
-      objectives, evalProfile, groups,
-    );
+    const wScore = computeWeightedScore({ analysis: ideaAnalysis }, objectives, evalProfile, groups);
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3">
@@ -753,10 +689,7 @@ export default function HomePage() {
               <div className="flex items-center gap-3 bg-white rounded-xl border border-indigo-100 px-4 py-3">
                 <div className="flex flex-col items-center bg-indigo-50 rounded-lg px-2.5 py-1.5 shrink-0">
                   <span className="text-lg font-bold font-mono text-indigo-600">
-                    {computeWeightedScore(
-                      { id: "", title: ideaTitle, description: ideaNotes, analysis: ideaAnalysis, createdAt: "" },
-                      objectives, evalProfile, groups,
-                    ).toFixed(1)}
+                    {computeWeightedScore({ analysis: ideaAnalysis }, objectives, evalProfile, groups).toFixed(1)}
                   </span>
                   <span className="text-[10px] text-gray-400">{language === "zh-TW" ? "分" : "pts"}</span>
                 </div>
