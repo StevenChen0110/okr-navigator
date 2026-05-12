@@ -635,6 +635,19 @@ export default function HomePage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 md:px-6 md:py-8">
+
+      {/* ── Page Header ─────────────────────────────────────────────── */}
+      <div className="mb-8">
+        <h1 className="text-xl font-semibold text-gray-900">
+          {language === "zh-TW" ? "任務" : "Tasks"}
+        </h1>
+        <p className="text-sm text-gray-400 mt-0.5">
+          {language === "zh-TW"
+            ? "規劃待辦清單，驗證想法對目標的幫助"
+            : "Plan your todos and validate ideas against your goals"}
+        </p>
+      </div>
+
       <div className={`flex gap-6 ${hasRightPanel ? "items-start" : ""}`}>
 
         {/* ── Left Column ────────────────────────────────────────────── */}
