@@ -6,7 +6,6 @@ import { v4 as uuid } from "uuid";
 import { Objective, KeyResult, WeeklyLog, LogItem, AlignmentReport } from "@/lib/types";
 import { saveObjective, saveWeeklyLog, saveLogItems, saveReport } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
-import { useAuth } from "@/components/AuthProvider";
 import { useLanguage } from "@/components/LanguageProvider";
 import { getSettings, saveSettings } from "@/lib/storage";
 import ScoreRing from "@/components/ScoreRing";
@@ -23,8 +22,8 @@ function getWeekStart(): string {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user } = useAuth();
   const { language } = useLanguage();
+  const zh = language === "zh-TW";
 
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
@@ -39,12 +38,13 @@ export default function OnboardingPage() {
   const [krInputs, setKrInputs] = useState(["", "", ""]);
   const [savedObjective, setSavedObjective] = useState<Objective | null>(null);
 
-  // Step 4 state
-  const [weekInput, setWeekInput] = useState("");
+  // Step 4 state — structured item list instead of free-text
+  const [weekItems, setWeekItems] = useState<string[]>([]);
+  const [newWeekItem, setNewWeekItem] = useState("");
 
   // Step 5 state
   const [firstReport, setFirstReport] = useState<AlignmentReport | null>(null);
-  const [logItems, setLogItems] = useState<LogItem[]>([]);
+  const [savedLogId, setSavedLogId] = useState<string | null>(null);
 
   async function handleIntentSubmit() {
     if (!intentInput.trim()) return;
@@ -92,9 +92,7 @@ export default function OnboardingPage() {
         krTitles = suggested.slice(0, 3);
       }
 
-      const keyResults: KeyResult[] = krTitles.map((title) => ({
-        id: uuid(), title,
-      }));
+      const keyResults: KeyResult[] = krTitles.map((title) => ({ id: uuid(), title }));
       const obj: Objective = {
         id: uuid(), title: confirmedTitle, keyResults,
         createdAt: new Date().toISOString(), status: "active",
@@ -110,28 +108,43 @@ export default function OnboardingPage() {
     }
   }
 
+  function addWeekItem() {
+    const item = newWeekItem.trim();
+    if (!item) return;
+    setWeekItems((prev) => [...prev, item]);
+    setNewWeekItem("");
+  }
+
+  function removeWeekItem(i: number) {
+    setWeekItems((prev) => prev.filter((_, j) => j !== i));
+  }
+
   async function handleWeekSubmit() {
-    if (!weekInput.trim() || !savedObjective) return;
+    if (!weekItems.length || !savedObjective) return;
     setLoading(true);
     setError("");
     try {
       const ws = getWeekStart();
       const logId = uuid();
-      const log: WeeklyLog = { id: logId, weekStart: ws, rawInput: weekInput, createdAt: new Date().toISOString() };
+      const rawInput = weekItems.join("\n");
+      const log: WeeklyLog = { id: logId, weekStart: ws, rawInput, createdAt: new Date().toISOString() };
       await saveWeeklyLog(log);
+      setSavedLogId(logId);
 
       const raw = await callAI<Array<{ content: string; krId: string | null; krTitle: string | null; isPlanned: boolean }>>(
-        "classifyLogItems", { rawInput: weekInput, objectives: [savedObjective] }
+        "classifyLogItems", { rawInput, objectives: [savedObjective] }
       );
       const items: LogItem[] = raw.map((r) => ({
         id: uuid(), logId, content: r.content, krId: r.krId, krTitle: r.krTitle,
         isPlanned: r.isPlanned, createdAt: new Date().toISOString(),
       }));
       await saveLogItems(items);
-      setLogItems(items);
 
       const reportData = await callAI<{ alignmentScore: number; aiInsight: string; suggestions: string[] }>(
-        "generateAlignmentReport", { objectives: [savedObjective], logItems: items }
+        "generateAlignmentReport", {
+          objectives: [savedObjective],
+          items: items.map((i) => ({ content: i.content, isPlanned: i.isPlanned, krTitle: i.krTitle })),
+        }
       );
       const report: AlignmentReport = {
         id: uuid(), weekStart: ws, alignmentScore: reportData.alignmentScore,
@@ -148,12 +161,50 @@ export default function OnboardingPage() {
     }
   }
 
+  // Regenerate report with updated items
+  async function handleRegenerate() {
+    if (!weekItems.length || !savedObjective || !savedLogId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const ws = getWeekStart();
+      const rawInput = weekItems.join("\n");
+      const log: WeeklyLog = { id: savedLogId, weekStart: ws, rawInput, createdAt: new Date().toISOString() };
+      await saveWeeklyLog(log);
+
+      const raw = await callAI<Array<{ content: string; krId: string | null; krTitle: string | null; isPlanned: boolean }>>(
+        "classifyLogItems", { rawInput, objectives: [savedObjective] }
+      );
+      const items: LogItem[] = raw.map((r) => ({
+        id: uuid(), logId: savedLogId, content: r.content, krId: r.krId, krTitle: r.krTitle,
+        isPlanned: r.isPlanned, createdAt: new Date().toISOString(),
+      }));
+      await saveLogItems(items);
+
+      const reportData = await callAI<{ alignmentScore: number; aiInsight: string; suggestions: string[] }>(
+        "generateAlignmentReport", {
+          objectives: [savedObjective],
+          items: items.map((i) => ({ content: i.content, isPlanned: i.isPlanned, krTitle: i.krTitle })),
+        }
+      );
+      const report: AlignmentReport = {
+        id: uuid(), weekStart: ws, alignmentScore: reportData.alignmentScore,
+        aiInsight: reportData.aiInsight, suggestions: reportData.suggestions,
+        logId: savedLogId, createdAt: new Date().toISOString(),
+      };
+      await saveReport(report);
+      setFirstReport(report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleComplete() {
     saveSettings({ ...getSettings(), onboardingCompleted: true });
     router.push("/tasks");
   }
-
-  const zh = language === "zh-TW";
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-10">
@@ -180,8 +231,8 @@ export default function OnboardingPage() {
               </h1>
               <p className="text-sm text-gray-500 leading-relaxed">
                 {zh
-                  ? "每週一份對齊報告，讓你知道行動和目標差多遠。"
-                  : "A weekly alignment report to show how close your actions are to your goals."}
+                  ? "設定目標、記錄行動、每週對齊一次——讓方向清晰可見。"
+                  : "Set goals, log actions, align weekly — so your direction is always clear."}
               </p>
             </div>
             <button
@@ -197,12 +248,12 @@ export default function OnboardingPage() {
         {step === 2 && (
           <div className="space-y-6">
             <div className="space-y-2">
-              <p className="text-xs text-gray-400">{zh ? "1 / 3" : "1 / 3"}</p>
+              <p className="text-xs text-gray-400">1 / 3</p>
               <h2 className="text-xl font-semibold text-gray-900">
                 {zh ? "最近最想完成什麼？" : "What do you most want to accomplish recently?"}
               </h2>
               <p className="text-sm text-gray-400">
-                {zh ? "用一句話描述，AI 會幫你整理成可追蹤的目標" : "Describe in one sentence — AI will structure it into a trackable goal"}
+                {zh ? "一句話描述，AI 會整理成可追蹤的目標和關鍵結果" : "One sentence — AI will structure it into trackable goals"}
               </p>
             </div>
             <textarea
@@ -229,12 +280,12 @@ export default function OnboardingPage() {
         {step === 3 && (
           <div className="space-y-6">
             <div className="space-y-2">
-              <p className="text-xs text-gray-400">{zh ? "2 / 3" : "2 / 3"}</p>
+              <p className="text-xs text-gray-400">2 / 3</p>
               <h2 className="text-xl font-semibold text-gray-900">
                 {zh ? "確認你的目標" : "Confirm your goal"}
               </h2>
               <p className="text-sm text-gray-400">
-                {zh ? "AI 整理了你的意圖，可以直接修改" : "AI structured your intent — feel free to edit"}
+                {zh ? "AI 已幫你整理，直接修改成你的版本" : "AI structured your intent — edit as you like"}
               </p>
             </div>
             <div className="space-y-4">
@@ -251,14 +302,14 @@ export default function OnboardingPage() {
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-medium text-gray-500">
-                  {zh ? "關鍵結果（AI 已建議，可自行修改或留空）" : "Key Results (AI-suggested — edit freely or leave blank)"}
+                  {zh ? "關鍵結果（AI 已建議，可修改或留空）" : "Key Results (AI-suggested — edit freely or leave blank)"}
                 </label>
                 {krInputs.map((kr, i) => (
                   <input
                     key={i}
                     value={kr}
                     onChange={(e) => setKrInputs((prev) => prev.map((v, j) => j === i ? e.target.value : v))}
-                    placeholder={zh ? `信號 ${i + 1}（選填）` : `Signal ${i + 1} (optional)`}
+                    placeholder={zh ? `關鍵結果 ${i + 1}（選填）` : `Key Result ${i + 1} (optional)`}
                     className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
                   />
                 ))}
@@ -275,51 +326,78 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* Step 4: This week's reality */}
+        {/* Step 4: This week's actions — structured list */}
         {step === 4 && (
           <div className="space-y-6">
             <div className="space-y-2">
-              <p className="text-xs text-gray-400">{zh ? "3 / 3" : "3 / 3"}</p>
+              <p className="text-xs text-gray-400">3 / 3</p>
               <h2 className="text-xl font-semibold text-gray-900">
                 {zh ? "這週你做了什麼？" : "What did you do this week?"}
               </h2>
               <p className="text-sm text-gray-400">
                 {zh
-                  ? "自由輸入，AI 會對照你的目標分析對齊程度，當天就能看到第一份報告"
-                  : "Free-form input — AI will analyze alignment against your goal and you'll see your first report today"}
+                  ? "加入這週做的事，AI 會對照你的目標分析，你會馬上看到第一份報告"
+                  : "Add things you did this week — AI will analyze alignment with your goal and you'll see your first report"}
               </p>
             </div>
-            <textarea
-              value={weekInput}
-              onChange={(e) => setWeekInput(e.target.value)}
-              placeholder={zh
-                ? "例如：寫了三篇文章草稿、開了兩個客戶會議、準備了一份提案…"
-                : "e.g. Wrote 3 article drafts, had 2 client meetings, prepared a proposal…"}
-              rows={6}
-              className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-            />
+
+            <div className="space-y-2">
+              {weekItems.map((item, i) => (
+                <div key={i} className="flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2.5">
+                  <span className="text-gray-300 text-sm shrink-0">○</span>
+                  <span className="text-sm text-gray-700 flex-1">{item}</span>
+                  <button
+                    onClick={() => removeWeekItem(i)}
+                    className="text-gray-300 hover:text-red-400 text-lg leading-none shrink-0"
+                  >×</button>
+                </div>
+              ))}
+
+              <div className="flex gap-2">
+                <input
+                  value={newWeekItem}
+                  onChange={(e) => setNewWeekItem(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && addWeekItem()}
+                  placeholder={zh ? "加一條這週做的事…" : "Add something you did this week…"}
+                  className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                <button
+                  onClick={addWeekItem}
+                  disabled={!newWeekItem.trim()}
+                  className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-500 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-30 text-xl leading-none transition-colors"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
             {error && <p className="text-xs text-red-500">{error}</p>}
+
             <button
               onClick={handleWeekSubmit}
-              disabled={!weekInput.trim() || loading}
+              disabled={!weekItems.length || loading}
               className="w-full py-3 rounded-xl bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition-colors"
             >
               {loading
                 ? (zh ? "AI 分析中，稍等一下…" : "AI analyzing, just a moment…")
-                : (zh ? "產出本週報告 →" : "Generate my report →")}
+                : (zh ? "產出本週報告 →" : "Generate my first report →")}
             </button>
           </div>
         )}
 
         {/* Step 5: Aha Moment */}
         {step === 5 && firstReport && (
-          <div className="space-y-6">
-            <div className="space-y-2">
+          <div className="space-y-5">
+            <div className="space-y-1">
               <h2 className="text-xl font-semibold text-gray-900">
-                {zh ? "你的第一份方向對齊報告" : "Your first alignment report"}
+                {zh ? "你的第一份方向報告" : "Your first alignment report"}
               </h2>
+              <p className="text-sm text-gray-400">
+                {zh ? "這是你的行動和目標的距離" : "Here's how aligned your actions are with your goals"}
+              </p>
             </div>
 
+            {/* Score */}
             <div className="flex flex-col items-center py-6 bg-white rounded-2xl border border-gray-100">
               <ScoreRing score={firstReport.alignmentScore} scale="0-100" size={96} />
               <p className="text-sm font-medium text-gray-600 mt-3">
@@ -327,28 +405,92 @@ export default function OnboardingPage() {
               </p>
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                {zh ? "觀察" : "Insight"}
-              </h3>
+            {/* Insight */}
+            <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-2">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest">
+                {zh ? "AI 觀察" : "Insight"}
+              </p>
               <p className="text-sm text-gray-700 leading-relaxed">{firstReport.aiInsight}</p>
             </div>
 
             {firstReport.suggestions.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                  {zh ? "可以考慮的方向" : "Directions to consider"}
-                </h3>
-                <ul className="space-y-1.5">
-                  {firstReport.suggestions.map((s, i) => (
-                    <li key={i} className="flex gap-2 text-sm text-gray-700">
-                      <span className="text-indigo-400">•</span>
-                      <span>{s}</span>
-                    </li>
-                  ))}
-                </ul>
+                {firstReport.suggestions.map((s, i) => (
+                  <div key={i} className="bg-indigo-50 rounded-xl border border-indigo-100 p-3.5 flex gap-3">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center mt-0.5">
+                      {i + 1}
+                    </span>
+                    <p className="text-sm text-indigo-900 leading-relaxed">{s}</p>
+                  </div>
+                ))}
               </div>
             )}
+
+            {/* Regenerate option */}
+            <div className="rounded-xl border border-dashed border-gray-200 p-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                {zh
+                  ? "覺得這週記錄不完整？補充更多行動再重新生成"
+                  : "Recorded incomplete? Add more actions and regenerate"}
+              </p>
+              <div className="flex gap-2">
+                <div className="flex gap-2 flex-1">
+                  <input
+                    value={newWeekItem}
+                    onChange={(e) => setNewWeekItem(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && addWeekItem()}
+                    placeholder={zh ? "補充一條…" : "Add more…"}
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                  />
+                  <button
+                    onClick={addWeekItem}
+                    disabled={!newWeekItem.trim()}
+                    className="px-2.5 rounded-lg border border-gray-200 text-gray-400 hover:text-indigo-600 disabled:opacity-30 text-base leading-none"
+                  >+</button>
+                </div>
+                <button
+                  onClick={handleRegenerate}
+                  disabled={loading || weekItems.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-gray-100 text-xs text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors whitespace-nowrap"
+                >
+                  {loading ? "…" : (zh ? "重新生成" : "Regenerate")}
+                </button>
+              </div>
+              {weekItems.length > 0 && (
+                <div className="space-y-1">
+                  {weekItems.map((item, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-gray-500">
+                      <span className="text-gray-300">○</span>
+                      <span className="flex-1">{item}</span>
+                      <button onClick={() => removeWeekItem(i)} className="text-gray-300 hover:text-red-400">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Feature highlights */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                {zh ? "工具箱裡還有" : "More in the toolkit"}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-gray-50 rounded-xl p-3 space-y-1 border border-gray-100">
+                  <p className="text-xs font-semibold text-gray-700">{zh ? "想法驗證" : "Idea Validation"}</p>
+                  <p className="text-[11px] text-gray-500 leading-snug">
+                    {zh ? "輸入任何想法，AI 幫你評估對目標的幫助度" : "Enter any idea, AI scores how much it helps your goals"}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3 space-y-1 border border-gray-100">
+                  <p className="text-xs font-semibold text-gray-700">{zh ? "隨時跟 AI 討論" : "AI Discussion"}</p>
+                  <p className="text-[11px] text-gray-500 leading-snug">
+                    {zh ? "每個分析後都可以直接跟 AI 對話，深入討論" : "Chat with AI directly after every analysis"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {error && <p className="text-xs text-red-500">{error}</p>}
 
             <button
               onClick={() => setStep(6)}
@@ -375,7 +517,7 @@ export default function OnboardingPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-700">{zh ? "復盤時間" : "Review time"}</p>
-                  <p className="text-xs text-gray-400">{zh ? "AI 提醒你產出報告" : "AI reminds you to generate your report"}</p>
+                  <p className="text-xs text-gray-400">{zh ? "每週提醒你產出報告" : "Weekly reminder to generate your report"}</p>
                 </div>
                 <span className="text-sm text-indigo-600 font-medium">{zh ? "週日晚上" : "Sunday evening"}</span>
               </div>
@@ -385,8 +527,8 @@ export default function OnboardingPage() {
               <p className="text-sm font-medium text-gray-500">{zh ? "外部數據連接（選填，之後設定）" : "External data sources (optional, set up later)"}</p>
               <p className="text-xs text-gray-400">
                 {zh
-                  ? "Google Calendar、GitHub Commits 可以自動補充你的週記錄"
-                  : "Google Calendar, GitHub Commits can auto-populate your weekly log"}
+                  ? "Google Calendar、GitHub 可以自動補充你的週記錄"
+                  : "Google Calendar, GitHub can auto-populate your weekly log"}
               </p>
             </div>
 

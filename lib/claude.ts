@@ -1,6 +1,14 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, LogItem } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult } from "./types";
+
+export interface ReportItem {
+  content: string;
+  isPlanned: boolean;
+  krTitle: string | null;
+  status?: string;  // "active" | "in-progress" | "shelved" | "completed"
+  score?: number;   // 0-10 alignment score from prior AI analysis
+}
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -763,31 +771,41 @@ const OBSERVER_TONE = `Observer tone rules (MANDATORY):
 
 export async function generateAlignmentReport(
   apiKey: string, model: string, language: "zh-TW" | "en",
-  objectives: Objective[], logItems: LogItem[],
+  objectives: Objective[], items: ReportItem[],
   provider: AIProvider = "anthropic",
 ): Promise<{ alignmentScore: number; aiInsight: string; suggestions: string[] }> {
-  const planned = logItems.filter((i) => i.isPlanned);
-  const unplanned = logItems.filter((i) => !i.isPlanned);
+  const planned = items.filter((i) => i.isPlanned);
+  const completed = items.filter((i) => i.status === "completed");
 
-  const krCoverage = new Set(planned.map((i) => i.krId).filter(Boolean));
-  const totalKRs = objectives.filter((o) => !o.status || o.status === "active")
-    .reduce((n, o) => n + o.keyResults.length, 0);
-
-  const plannedRatio = logItems.length > 0 ? planned.length / logItems.length : 0;
-  const coverageRatio = totalKRs > 0 ? krCoverage.size / totalKRs : 0;
-  const rawScore = Math.round((plannedRatio * 0.6 + coverageRatio * 0.4) * 100);
+  // Score: planned ratio (60%) + completion ratio (40% when status available)
+  const hasStatus = items.some((i) => i.status !== undefined);
+  const plannedRatio = items.length > 0 ? planned.length / items.length : 0;
+  const completionRatio = hasStatus && items.length > 0
+    ? (completed.length + items.filter((i) => i.status === "in-progress").length * 0.5) / items.length
+    : plannedRatio;
+  const rawScore = Math.round((plannedRatio * 0.5 + completionRatio * 0.5) * 100);
 
   const okrContext = objectives
     .filter((o) => !o.status || o.status === "active")
     .map((o) => `目標：${o.title}\n  KRs: ${o.keyResults.map((kr) => kr.title).join("；")}`)
     .join("\n\n");
 
-  const itemsText = [
-    ...planned.map((i) => `✓ [對應 ${i.krTitle ?? "KR"}] ${i.content}`),
-    ...unplanned.map((i) => `○ [計劃外] ${i.content}`),
-  ].join("\n");
+  const statusLabel: Record<string, string> = {
+    completed: "已完成", "in-progress": "進行中", shelved: "暫存", active: "待辦",
+  };
 
-  const text = await complete(provider, apiKey, model, `You are a direction alignment coach. Analyze the user's weekly log vs their goals and produce a report.
+  const itemsText = items.map((i) => {
+    const parts = [
+      i.isPlanned ? "✓" : "○",
+      i.status ? `[${statusLabel[i.status] ?? i.status}]` : "",
+      i.score !== undefined ? `[分數:${i.score.toFixed(1)}]` : "",
+      i.krTitle ? `[對應: ${i.krTitle}]` : "[計劃外]",
+      i.content,
+    ];
+    return parts.filter(Boolean).join(" ");
+  }).join("\n");
+
+  const text = await complete(provider, apiKey, model, `You are a direction alignment coach. Analyze the user's weekly actions vs their goals and produce a report.
 
 ${OBSERVER_TONE}
 
@@ -796,11 +814,11 @@ ${langInstruction(language)}
 Output ONLY valid JSON:
 {
   "alignmentScore": ${rawScore},
-  "aiInsight": "2-3 sentences using observer tone. Mention what the user spent time on, contrast with goal focus area, note the gap without judging.",
-  "suggestions": ["1-2 items. Each is an option for the user to consider, not a command. Use 有一個方向可以考慮 pattern."]
+  "aiInsight": "2-3 sentences using observer tone. Mention what the user spent most time on and how it relates to their goals. Note patterns without judging.",
+  "suggestions": ["1-2 items. Each offers an option, not a command. Use 有一個方向可以考慮 / One direction to consider pattern."]
 }
 No markdown fences.`,
-    `用戶的目標：\n${okrContext}\n\n本週行動記錄：\n${itemsText}`, 512);
+    `用戶的目標：\n${okrContext}\n\n本週行動（含完成狀態）：\n${itemsText}`, 512);
 
   const parsed = JSON.parse(extractJSON(stripFences(text)));
   return {

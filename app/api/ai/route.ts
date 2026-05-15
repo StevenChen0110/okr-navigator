@@ -21,7 +21,7 @@ import {
   classifyLogItems,
   generateAlignmentReport,
 } from "@/lib/claude";
-import type { LogItem } from "@/lib/types";
+import type { ReportItem } from "@/lib/claude";
 
 function getEnvKey(provider: AIProvider): string | undefined {
   const keys: Record<AIProvider, string> = {
@@ -229,7 +229,7 @@ export async function POST(req: NextRequest) {
         const result = await generateAlignmentReport(
           apiKey, model, language,
           payload.objectives as Objective[],
-          payload.logItems as LogItem[],
+          payload.items as ReportItem[],
           provider,
         );
         return NextResponse.json(result);

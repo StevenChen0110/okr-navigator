@@ -8,7 +8,7 @@ import {
   EvaluationProfile, ObjGroup, PlanItem, PlanPeriod, PlanStatus, PlanAnalysisResult,
   StoredMessage, WeeklyLog, LogItem,
 } from "@/lib/types";
-import { fetchObjectives, saveIdea, fetchWeeklyLog, saveWeeklyLog, fetchLogItems, saveLogItems, saveReport } from "@/lib/db";
+import { fetchObjectives, saveIdea, saveWeeklyLog, saveLogItems, saveReport } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
 import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, saveSettings } from "@/lib/storage";
@@ -29,13 +29,6 @@ function getWeekStart(): string {
   return d.toISOString().slice(0, 10);
 }
 
-function formatWeekRange(weekStart: string): string {
-  const start = new Date(weekStart);
-  const end = new Date(weekStart);
-  end.setDate(end.getDate() + 6);
-  const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
-  return `${fmt(start)} – ${fmt(end)}`;
-}
 
 export default function TasksPage() {
   const { user, requireAuth } = useAuth();
@@ -49,13 +42,9 @@ export default function TasksPage() {
   // Guided tour state
   const [tourStep, setTourStep] = useState<number>(-1);
 
-  // Weekly log state
-  const [weekLog, setWeekLog] = useState<WeeklyLog | null>(null);
-  const [logInput, setLogInput] = useState("");
-  const [logItems, setLogItems] = useState<LogItem[]>([]);
-  const [logPhase, setLogPhase] = useState<"idle" | "classifying" | "classified">("idle");
+  // Report generation
   const [isGenerating, setIsGenerating] = useState(false);
-  const [logError, setLogError] = useState("");
+  const [reportError, setReportError] = useState("");
 
   // Idea validator state
   const [ideaTitle, setIdeaTitle] = useState("");
@@ -105,64 +94,50 @@ export default function TasksPage() {
       }
       if (!settings.tourCompleted) setTourStep(0);
     }).catch(console.error);
-
-    // Load this week's log
-    const ws = getWeekStart();
-    fetchWeeklyLog(ws).then(async (log) => {
-      if (!log) return;
-      setWeekLog(log);
-      setLogInput(log.rawInput);
-      const items = await fetchLogItems(log.id);
-      if (items.length) { setLogItems(items); setLogPhase("classified"); }
-    }).catch(console.error);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleClassifyLog() {
-    if (!logInput.trim()) return;
-    if (!user) { requireAuth(); return; }
-    setLogError("");
-    setLogPhase("classifying");
-    try {
-      const ws = getWeekStart();
-      const logId = weekLog?.id ?? uuid();
-      const log: WeeklyLog = { id: logId, weekStart: ws, rawInput: logInput, createdAt: new Date().toISOString() };
-      await saveWeeklyLog(log);
-      setWeekLog(log);
-
-      const raw = await callAI<Array<{ content: string; krId: string | null; krTitle: string | null; isPlanned: boolean }>>(
-        "classifyLogItems", { rawInput: logInput, objectives }
-      );
-      const items: LogItem[] = raw.map((r) => ({
-        id: uuid(), logId, content: r.content, krId: r.krId, krTitle: r.krTitle,
-        isPlanned: r.isPlanned, createdAt: new Date().toISOString(),
-      }));
-      await saveLogItems(items);
-      setLogItems(items);
-      setLogPhase("classified");
-    } catch (e) {
-      setLogError(e instanceof Error ? e.message : String(e));
-      setLogPhase("idle");
-    }
-  }
-
   async function handleGenerateReport() {
-    if (!weekLog || !logItems.length) return;
+    if (!planItems.length) return;
     if (!user) { requireAuth(); return; }
     setIsGenerating(true);
-    setLogError("");
+    setReportError("");
     try {
+      const ws = getWeekStart();
+      const logId = uuid();
+
+      // Convert plan items to report items format (use analysis score/objective when available)
+      const reportItems = planItems.map((p) => {
+        const topContrib = p.analysis?.objectiveContributions?.sort((a, b) => b.score - a.score)[0];
+        return {
+          content: p.title,
+          isPlanned: p.analysis ? p.analysis.score >= 5 : p.status === "completed",
+          krTitle: topContrib?.objectiveTitle ?? null,
+          status: p.status,
+          score: p.analysis?.score,
+        };
+      });
+
+      // Save log snapshot to Supabase for report page to display
+      const log: WeeklyLog = { id: logId, weekStart: ws, rawInput: "", createdAt: new Date().toISOString() };
+      await saveWeeklyLog(log);
+      const logItems: LogItem[] = reportItems.map((r) => ({
+        id: uuid(), logId,
+        content: r.content, krId: null, krTitle: r.krTitle,
+        isPlanned: r.isPlanned, createdAt: new Date().toISOString(),
+      }));
+      await saveLogItems(logItems);
+
       const result = await callAI<{ alignmentScore: number; aiInsight: string; suggestions: string[] }>(
-        "generateAlignmentReport", { objectives, logItems }
+        "generateAlignmentReport", { objectives, items: reportItems }
       );
-      const report = {
-        id: uuid(), weekStart: weekLog.weekStart,
+      await saveReport({
+        id: uuid(), weekStart: ws,
         alignmentScore: result.alignmentScore, aiInsight: result.aiInsight,
-        suggestions: result.suggestions, logId: weekLog.id, createdAt: new Date().toISOString(),
-      };
-      await saveReport(report);
-      router.push(`/report/${weekLog.weekStart}`);
+        suggestions: result.suggestions, logId, createdAt: new Date().toISOString(),
+      });
+      router.push(`/report/${ws}`);
     } catch (e) {
-      setLogError(e instanceof Error ? e.message : String(e));
+      setReportError(e instanceof Error ? e.message : String(e));
       setIsGenerating(false);
     }
   }
@@ -373,96 +348,10 @@ export default function TasksPage() {
         </h1>
         <p className="text-sm text-gray-400 mt-0.5">
           {language === "zh-TW"
-            ? "記錄這週做了什麼，產出方向對齊報告"
-            : "Log what you did this week and generate your alignment report"}
+            ? "規劃行動、驗證想法，週末產出對齊報告"
+            : "Plan actions, validate ideas, generate your weekly alignment report"}
         </p>
       </div>
-
-      {/* ── Section 0: Weekly Log ─────────────────────────────────────── */}
-      <section id="tour-weekly-log" className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700">
-              {language === "zh-TW" ? "本週記錄" : "Weekly Log"}
-            </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {formatWeekRange(getWeekStart())}
-            </p>
-          </div>
-          {logPhase === "classified" && logItems.length > 0 && (
-            <span className="text-xs text-indigo-500 font-medium">
-              {logItems.filter((i) => i.isPlanned).length}/{logItems.length} {language === "zh-TW" ? "對應目標" : "on-goal"}
-            </span>
-          )}
-        </div>
-
-        {(logPhase === "idle" || logPhase === "classifying") && (
-          <div className="space-y-2">
-            <textarea
-              value={logInput}
-              onChange={(e) => setLogInput(e.target.value)}
-              placeholder={language === "zh-TW"
-                ? "這週你做了什麼？自由輸入，不需要格式…\n例如：完成了設計稿、開了兩個客戶會議、跑步三次…"
-                : "What did you do this week? Free-form, no format needed…"}
-              rows={5}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-            />
-            <button
-              onClick={handleClassifyLog}
-              disabled={!logInput.trim() || logPhase === "classifying"}
-              className="w-full py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-            >
-              {logPhase === "classifying"
-                ? (language === "zh-TW" ? "AI 整理中…" : "AI organizing…")
-                : (language === "zh-TW" ? "AI 整理 →" : "Organize with AI →")}
-            </button>
-          </div>
-        )}
-
-        {logPhase === "classified" && logItems.length > 0 && (
-          <div className="space-y-2">
-            <div className="rounded-lg border border-gray-100 divide-y divide-gray-50">
-              {logItems.map((item) => (
-                <div key={item.id} className="flex items-start gap-2 px-3 py-2">
-                  <span className={`mt-0.5 text-sm ${item.isPlanned ? "text-indigo-500" : "text-gray-300"}`}>
-                    {item.isPlanned ? "✓" : "○"}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-700">{item.content}</p>
-                    {item.krTitle && (
-                      <p className="text-xs text-indigo-400 mt-0.5 truncate">→ {item.krTitle}</p>
-                    )}
-                    {!item.isPlanned && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {language === "zh-TW" ? "計劃外" : "Off-goal"}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setLogPhase("idle"); }}
-                className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
-              >
-                {language === "zh-TW" ? "重新輸入" : "Re-enter"}
-              </button>
-              <button
-                onClick={handleGenerateReport}
-                disabled={isGenerating}
-                className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-              >
-                {isGenerating
-                  ? (language === "zh-TW" ? "生成中…" : "Generating…")
-                  : (language === "zh-TW" ? "產出本週報告 →" : "Generate Report →")}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {logError && <p className="text-xs text-red-500">{logError}</p>}
-      </section>
 
       {/* ── Section 1: Idea Validator ─────────────────────────────────── */}
       <section id="tour-idea-validator" className="space-y-3">
@@ -664,7 +553,7 @@ export default function TasksPage() {
       <div className="border-t border-gray-100" />
 
       {/* ── Section 2: Todo Planner ───────────────────────────────────── */}
-      <section className="space-y-3">
+      <section id="tour-todo-planner" className="space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-gray-700">
@@ -851,6 +740,22 @@ export default function TasksPage() {
             })()}
           </div>
         )}
+
+        {/* Generate weekly report CTA */}
+        {planItems.length > 0 && (
+          <div id="tour-generate-report">
+            {reportError && <p className="text-xs text-red-500 mb-1">{reportError}</p>}
+            <button
+              onClick={handleGenerateReport}
+              disabled={isGenerating}
+              className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+            >
+              {isGenerating
+                ? (language === "zh-TW" ? "生成中…" : "Generating…")
+                : (language === "zh-TW" ? "產出本週對齊報告 →" : "Generate Weekly Report →")}
+            </button>
+          </div>
+        )}
       </section>
 
       {tourStep >= 0 && (
@@ -859,6 +764,12 @@ export default function TasksPage() {
           language={language as "zh-TW" | "en"}
           onAdvance={advanceTour}
           onComplete={completeTour}
+          canAdvance={tourStep !== 0 || planItems.length > 0}
+          canAdvanceHint={
+            tourStep === 0
+              ? (language === "zh-TW" ? "先新增一條任務" : "Add at least one task first")
+              : undefined
+          }
         />
       )}
     </div>
