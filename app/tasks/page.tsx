@@ -344,29 +344,22 @@ export default function TasksPage() {
       {/* Page Header */}
       <div>
         <h1 className="text-xl font-semibold text-gray-900">
-          {language === "zh-TW" ? "記錄" : "Log"}
+          {language === "zh-TW" ? "AI 驗證想法" : "Validate Ideas with AI"}
         </h1>
         <p className="text-sm text-gray-400 mt-0.5">
           {language === "zh-TW"
-            ? "規劃行動、驗證想法，週末產出對齊報告"
-            : "Plan actions, validate ideas, generate your weekly alignment report"}
+            ? "在行動前，先知道這件事值不值得做"
+            : "Know if it's worth doing before you start"}
         </p>
       </div>
 
-      {/* ── Section 1: Idea Validator ─────────────────────────────────── */}
+      {/* ── Section 1: Idea Validator (Hero) ─────────────────────────── */}
       <section id="tour-idea-validator" className="space-y-3">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700">
-            {language === "zh-TW" ? "想法驗證" : "Idea Validator"}
-          </h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {language === "zh-TW"
-              ? "輸入一個想法，看它對你的目標幫助有多大"
-              : "Enter an idea and see how much it helps your goals"}
-          </p>
-        </div>
-
         {(ideaPhase === "idle" || ideaPhase === "clarifying") && (
+          <div className="rounded-2xl border-2 border-indigo-100 bg-indigo-50/20 px-4 py-3 space-y-3">
+            <p className="text-[11px] font-semibold text-indigo-400 uppercase tracking-widest">
+              {language === "zh-TW" ? "輸入任何你在考慮的事" : "Enter anything you're considering"}
+            </p>
           <div className="space-y-2">
             <div className="flex gap-2">
               <input
@@ -431,6 +424,7 @@ export default function TasksPage() {
             )}
 
             {ideaError && <p className="text-xs text-red-500">{ideaError}</p>}
+          </div>
           </div>
         )}
 
@@ -550,19 +544,31 @@ export default function TasksPage() {
         })()}
       </section>
 
-      <div className="border-t border-gray-100" />
+      {/* Labeled divider */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-gray-100" />
+        <span className="text-[10px] font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">
+          {language === "zh-TW" ? "驗證值得做後 → 加入行動計畫" : "Once verified → add to your action plan"}
+        </span>
+        <div className="flex-1 h-px bg-gray-100" />
+      </div>
 
-      {/* ── Section 2: Todo Planner ───────────────────────────────────── */}
+      {/* ── Section 2: Todo Planner (Co-pilot) ───────────────────────── */}
       <section id="tour-todo-planner" className="space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold text-gray-700">
-              {language === "zh-TW" ? "待辦規劃" : "Todo Planner"}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-gray-700">
+                {language === "zh-TW" ? "待辦規劃" : "Todo Planner"}
+              </h2>
+              <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                {language === "zh-TW" ? "副駕" : "Co-pilot"}
+              </span>
+            </div>
             <p className="text-xs text-gray-400 mt-0.5">
               {language === "zh-TW"
-                ? "按時間段規劃任務，AI 協助評估優先序"
-                : "Plan by timeframe, AI helps evaluate priority"}
+                ? "追蹤驗證過的想法，週末產出對齊報告"
+                : "Track verified actions and generate your weekly report"}
             </p>
           </div>
 
@@ -764,9 +770,15 @@ export default function TasksPage() {
           language={language as "zh-TW" | "en"}
           onAdvance={advanceTour}
           onComplete={completeTour}
-          canAdvance={tourStep !== 0 || planItems.length > 0}
+          canAdvance={
+            tourStep === 0 ? ideaAnalysis !== null :
+            tourStep === 1 ? planItems.length > 0 :
+            true
+          }
           canAdvanceHint={
             tourStep === 0
+              ? (language === "zh-TW" ? "先分析一個想法，再繼續" : "Analyze an idea first")
+              : tourStep === 1
               ? (language === "zh-TW" ? "先新增一條任務" : "Add at least one task first")
               : undefined
           }

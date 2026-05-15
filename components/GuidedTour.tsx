@@ -10,14 +10,14 @@ interface TourStepDef {
 
 const STEPS_ZH: TourStepDef[] = [
   {
-    title: "規劃你的行動",
-    body: "在這裡新增今天或這週要做的事。先加一條任務，然後用「AI 分析」看看它對你目標的幫助有多大。",
-    targetId: "tour-todo-planner",
+    title: "驗證一個想法",
+    body: "輸入任何你最近在考慮的事，按「分析」，AI 會對照你的目標打分數。試著分析一個再繼續——這是這個工具最核心的功能。",
+    targetId: "tour-idea-validator",
   },
   {
-    title: "驗證新想法",
-    body: "有新想法嗎？在這裡輸入，AI 評估它對你目標的幫助度，讓你做更好的決定。不用每個想法都做，先驗證值不值得。",
-    targetId: "tour-idea-validator",
+    title: "加入行動計畫",
+    body: "驗證值得做的想法，可以在這裡排進待辦清單追蹤進度。先加一條任務，週末就能產出對齊報告。",
+    targetId: "tour-todo-planner",
   },
   {
     title: "產出本週報告",
@@ -33,14 +33,14 @@ const STEPS_ZH: TourStepDef[] = [
 
 const STEPS_EN: TourStepDef[] = [
   {
-    title: "Plan Your Actions",
-    body: "Add tasks for today or this week here. Try adding one task, then use \"AI Analyze\" to see how much it helps your goals.",
-    targetId: "tour-todo-planner",
+    title: "Validate an Idea",
+    body: "Enter anything you've been thinking about and hit \"Analyze\". AI scores it against your goals. Try one before moving on — this is the core feature.",
+    targetId: "tour-idea-validator",
   },
   {
-    title: "Validate New Ideas",
-    body: "Have a new idea? Enter it here. AI scores how well it aligns with your goals so you can make better decisions about what to pursue.",
-    targetId: "tour-idea-validator",
+    title: "Plan Your Actions",
+    body: "Verified ideas worth pursuing can go here as tasks. Add one task to start tracking your week and unlock the weekly report.",
+    targetId: "tour-todo-planner",
   },
   {
     title: "Generate Weekly Report",
