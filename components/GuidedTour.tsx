@@ -186,7 +186,7 @@ export default function GuidedTour({
               <h3 className="text-sm font-semibold text-gray-900 mt-0.5">{current.title}</h3>
             </div>
             <button
-              onClick={onComplete}
+              onClick={isLast ? onComplete : onAdvance}
               className="text-xs text-gray-300 hover:text-gray-500 transition-colors shrink-0"
             >
               {zh ? "跳過" : "Skip"}
