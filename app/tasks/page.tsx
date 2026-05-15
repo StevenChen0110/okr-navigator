@@ -11,7 +11,7 @@ import {
 import { fetchObjectives, saveIdea, fetchWeeklyLog, saveWeeklyLog, fetchLogItems, saveLogItems, saveReport } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, getObjectives } from "@/lib/storage";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import { computeWeightedScore } from "@/lib/scoring";
@@ -92,14 +92,13 @@ export default function TasksPage() {
 
   useEffect(() => {
     if (!user) { setObjectives([]); return; }
-    fetchObjectives().then(setObjectives).catch(console.error);
-
-    // Check onboarding
-    const settings = getSettings();
-    const localObjs = getObjectives();
-    if (!settings.onboardingCompleted && localObjs.length === 0) {
-      router.push("/onboarding");
-    }
+    fetchObjectives().then((objs) => {
+      setObjectives(objs);
+      const settings = getSettings();
+      if (!settings.onboardingCompleted && objs.length === 0) {
+        router.push("/onboarding");
+      }
+    }).catch(console.error);
 
     // Load this week's log
     const ws = getWeekStart();

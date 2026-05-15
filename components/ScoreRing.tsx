@@ -18,7 +18,7 @@ export default function ScoreRing({ score, scale = "0-10", size = 64, label }: P
     : { high: 7, mid: 4 };
   const color = score >= threshold.high ? "#6366f1" : score >= threshold.mid ? "#f59e0b" : "#ef4444";
 
-  const displayText = scale === "0-100" ? `${score}%` : score.toFixed(1);
+  const displayText = scale === "0-100" ? `${Math.round(score)}%` : score.toFixed(1);
 
   return (
     <div className="flex flex-col items-center gap-1">
