@@ -56,7 +56,18 @@ export default function OnboardingPage() {
       });
       setDraftObjective(result);
       setConfirmedTitle(result.title);
-      setKrInputs(["", "", ""]);
+
+      // Auto-generate KRs for user to review
+      try {
+        const suggested = await callAI<string[]>("suggestKeyResults", {
+          objectiveTitle: result.title,
+          existingKRs: [],
+        });
+        setKrInputs([...suggested.slice(0, 3), "", "", ""].slice(0, 3));
+      } catch {
+        setKrInputs(["", "", ""]);
+      }
+
       setStep(3);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -73,12 +84,12 @@ export default function OnboardingPage() {
       const filledKRs = krInputs.filter((k) => k.trim());
       let krTitles = filledKRs;
 
-      if (krTitles.length < 3) {
+      if (krTitles.length === 0) {
         const suggested = await callAI<string[]>("suggestKeyResults", {
           objectiveTitle: confirmedTitle,
-          existingKRs: krTitles,
+          existingKRs: [],
         });
-        krTitles = [...krTitles, ...suggested].slice(0, 3);
+        krTitles = suggested.slice(0, 3);
       }
 
       const keyResults: KeyResult[] = krTitles.map((title) => ({
@@ -240,7 +251,7 @@ export default function OnboardingPage() {
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-medium text-gray-500">
-                  {zh ? "進度信號（最多 3 個，留空由 AI 補全）" : "Progress signals (up to 3, leave blank for AI to fill)"}
+                  {zh ? "關鍵結果（AI 已建議，可自行修改或留空）" : "Key Results (AI-suggested — edit freely or leave blank)"}
                 </label>
                 {krInputs.map((kr, i) => (
                   <input

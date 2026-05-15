@@ -73,6 +73,7 @@ export default function BottomNav() {
           <Link
             key={item.href}
             href={item.href}
+            id={item.href === "/okr" ? "tour-okr-nav" : undefined}
             onClick={
               item.requireAuth && !user
                 ? (e) => { e.preventDefault(); openLogin(); }

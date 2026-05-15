@@ -160,6 +160,7 @@ export interface AppSettings {
   apiKeys: Partial<Record<AIProvider, string>>;
   claudeModel?: string; // legacy
   onboardingCompleted?: boolean;
+  tourCompleted?: boolean;
 }
 
 // ── Weekly Alignment Loop ─────────────────────────────────────────────────────

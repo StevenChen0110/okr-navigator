@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+.tour-highlight {
+  outline: 2px solid #6366f1;
+  outline-offset: 4px;
+  border-radius: 10px;
+  animation: tour-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes tour-pulse {
+  0%, 100% { outline-color: #6366f1; }
+  50% { outline-color: rgba(99, 102, 241, 0.3); }
+}

@@ -11,11 +11,12 @@ import {
 import { fetchObjectives, saveIdea, fetchWeeklyLog, saveWeeklyLog, fetchLogItems, saveLogItems, saveReport } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings } from "@/lib/storage";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, saveSettings } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import { computeWeightedScore } from "@/lib/scoring";
 import { PERIOD_LABELS_ZH, PERIOD_LABELS_EN, STATUS_LABELS_ZH, STATUS_LABELS_EN, STATUS_STYLE } from "@/lib/plan-constants";
+import GuidedTour from "@/components/GuidedTour";
 
 type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
 type PlanPhase = "idle" | "analyzing" | "result";
@@ -44,6 +45,9 @@ export default function TasksPage() {
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [evalProfile] = useState<EvaluationProfile>(getEvaluationProfile());
   const [groups, setGroups] = useState<ObjGroup[]>([]);
+
+  // Guided tour state
+  const [tourStep, setTourStep] = useState<number>(-1);
 
   // Weekly log state
   const [weekLog, setWeekLog] = useState<WeeklyLog | null>(null);
@@ -97,7 +101,9 @@ export default function TasksPage() {
       const settings = getSettings();
       if (!settings.onboardingCompleted && objs.length === 0) {
         router.push("/onboarding");
+        return;
       }
+      if (!settings.tourCompleted) setTourStep(0);
     }).catch(console.error);
 
     // Load this week's log
@@ -338,6 +344,15 @@ export default function TasksPage() {
     } finally { setPlanChatLoading(false); }
   }
 
+  function advanceTour() {
+    setTourStep((s) => s + 1);
+  }
+
+  function completeTour() {
+    saveSettings({ ...getSettings(), tourCompleted: true });
+    setTourStep(-1);
+  }
+
   const periodItems = planItems.filter((i) => i.period === activePeriod);
 
   function scoreChip(score: number | undefined) {
@@ -364,7 +379,7 @@ export default function TasksPage() {
       </div>
 
       {/* ── Section 0: Weekly Log ─────────────────────────────────────── */}
-      <section className="space-y-3">
+      <section id="tour-weekly-log" className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-gray-700">
@@ -450,7 +465,7 @@ export default function TasksPage() {
       </section>
 
       {/* ── Section 1: Idea Validator ─────────────────────────────────── */}
-      <section className="space-y-3">
+      <section id="tour-idea-validator" className="space-y-3">
         <div>
           <h2 className="text-sm font-semibold text-gray-700">
             {language === "zh-TW" ? "想法驗證" : "Idea Validator"}
@@ -837,6 +852,15 @@ export default function TasksPage() {
           </div>
         )}
       </section>
+
+      {tourStep >= 0 && (
+        <GuidedTour
+          step={tourStep}
+          language={language as "zh-TW" | "en"}
+          onAdvance={advanceTour}
+          onComplete={completeTour}
+        />
+      )}
     </div>
   );
 }
