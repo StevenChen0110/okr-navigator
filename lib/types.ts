@@ -159,6 +159,36 @@ export interface AppSettings {
   model: string;
   apiKeys: Partial<Record<AIProvider, string>>;
   claudeModel?: string; // legacy
+  onboardingCompleted?: boolean;
+}
+
+// ── Weekly Alignment Loop ─────────────────────────────────────────────────────
+
+export interface WeeklyLog {
+  id: string;
+  weekStart: string; // YYYY-MM-DD（該週一）
+  rawInput: string;
+  createdAt: string;
+}
+
+export interface LogItem {
+  id: string;
+  logId: string;
+  content: string;
+  krId: string | null;
+  krTitle: string | null;
+  isPlanned: boolean;
+  createdAt: string;
+}
+
+export interface AlignmentReport {
+  id: string;
+  weekStart: string;      // YYYY-MM-DD
+  alignmentScore: number; // 0-100
+  aiInsight: string;
+  suggestions: string[];
+  logId: string;
+  createdAt: string;
 }
 
 // ── Evaluation Profile ────────────────────────────────────────────────────────

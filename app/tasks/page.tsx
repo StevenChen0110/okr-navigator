@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import {
   Idea, Objective, IdeaAnalysis, IdeaKRLink, IdeaStatus,
   EvaluationProfile, ObjGroup, PlanItem, PlanPeriod, PlanStatus, PlanAnalysisResult,
-  StoredMessage,
+  StoredMessage, WeeklyLog, LogItem,
 } from "@/lib/types";
-import { fetchObjectives, saveIdea } from "@/lib/db";
+import { fetchObjectives, saveIdea, fetchWeeklyLog, saveWeeklyLog, fetchLogItems, saveLogItems, saveReport } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems } from "@/lib/storage";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, getObjectives } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import { computeWeightedScore } from "@/lib/scoring";
@@ -19,13 +20,38 @@ import { PERIOD_LABELS_ZH, PERIOD_LABELS_EN, STATUS_LABELS_ZH, STATUS_LABELS_EN,
 type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
 type PlanPhase = "idle" | "analyzing" | "result";
 
+function getWeekStart(): string {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatWeekRange(weekStart: string): string {
+  const start = new Date(weekStart);
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
 export default function TasksPage() {
   const { user, requireAuth } = useAuth();
   const { t, language } = useLanguage();
+  const router = useRouter();
 
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [evalProfile] = useState<EvaluationProfile>(getEvaluationProfile());
   const [groups, setGroups] = useState<ObjGroup[]>([]);
+
+  // Weekly log state
+  const [weekLog, setWeekLog] = useState<WeeklyLog | null>(null);
+  const [logInput, setLogInput] = useState("");
+  const [logItems, setLogItems] = useState<LogItem[]>([]);
+  const [logPhase, setLogPhase] = useState<"idle" | "classifying" | "classified">("idle");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [logError, setLogError] = useState("");
 
   // Idea validator state
   const [ideaTitle, setIdeaTitle] = useState("");
@@ -67,7 +93,74 @@ export default function TasksPage() {
   useEffect(() => {
     if (!user) { setObjectives([]); return; }
     fetchObjectives().then(setObjectives).catch(console.error);
+
+    // Check onboarding
+    const settings = getSettings();
+    const localObjs = getObjectives();
+    if (!settings.onboardingCompleted && localObjs.length === 0) {
+      router.push("/onboarding");
+    }
+
+    // Load this week's log
+    const ws = getWeekStart();
+    fetchWeeklyLog(ws).then(async (log) => {
+      if (!log) return;
+      setWeekLog(log);
+      setLogInput(log.rawInput);
+      const items = await fetchLogItems(log.id);
+      if (items.length) { setLogItems(items); setLogPhase("classified"); }
+    }).catch(console.error);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleClassifyLog() {
+    if (!logInput.trim()) return;
+    if (!user) { requireAuth(); return; }
+    setLogError("");
+    setLogPhase("classifying");
+    try {
+      const ws = getWeekStart();
+      const logId = weekLog?.id ?? uuid();
+      const log: WeeklyLog = { id: logId, weekStart: ws, rawInput: logInput, createdAt: new Date().toISOString() };
+      await saveWeeklyLog(log);
+      setWeekLog(log);
+
+      const raw = await callAI<Array<{ content: string; krId: string | null; krTitle: string | null; isPlanned: boolean }>>(
+        "classifyLogItems", { rawInput: logInput, objectives }
+      );
+      const items: LogItem[] = raw.map((r) => ({
+        id: uuid(), logId, content: r.content, krId: r.krId, krTitle: r.krTitle,
+        isPlanned: r.isPlanned, createdAt: new Date().toISOString(),
+      }));
+      await saveLogItems(items);
+      setLogItems(items);
+      setLogPhase("classified");
+    } catch (e) {
+      setLogError(e instanceof Error ? e.message : String(e));
+      setLogPhase("idle");
+    }
+  }
+
+  async function handleGenerateReport() {
+    if (!weekLog || !logItems.length) return;
+    if (!user) { requireAuth(); return; }
+    setIsGenerating(true);
+    setLogError("");
+    try {
+      const result = await callAI<{ alignmentScore: number; aiInsight: string; suggestions: string[] }>(
+        "generateAlignmentReport", { objectives, logItems }
+      );
+      const report = {
+        id: uuid(), weekStart: weekLog.weekStart,
+        alignmentScore: result.alignmentScore, aiInsight: result.aiInsight,
+        suggestions: result.suggestions, logId: weekLog.id, createdAt: new Date().toISOString(),
+      };
+      await saveReport(report);
+      router.push(`/report/${weekLog.weekStart}`);
+    } catch (e) {
+      setLogError(e instanceof Error ? e.message : String(e));
+      setIsGenerating(false);
+    }
+  }
 
   useEffect(() => {
     ideaChatRef.current?.scrollTo({ top: ideaChatRef.current.scrollHeight, behavior: "smooth" });
@@ -262,14 +355,100 @@ export default function TasksPage() {
       {/* Page Header */}
       <div>
         <h1 className="text-xl font-semibold text-gray-900">
-          {language === "zh-TW" ? "任務" : "Tasks"}
+          {language === "zh-TW" ? "記錄" : "Log"}
         </h1>
         <p className="text-sm text-gray-400 mt-0.5">
           {language === "zh-TW"
-            ? "規劃待辦清單，驗證想法對目標的幫助"
-            : "Plan your todos and validate ideas against your goals"}
+            ? "記錄這週做了什麼，產出方向對齊報告"
+            : "Log what you did this week and generate your alignment report"}
         </p>
       </div>
+
+      {/* ── Section 0: Weekly Log ─────────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">
+              {language === "zh-TW" ? "本週記錄" : "Weekly Log"}
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {formatWeekRange(getWeekStart())}
+            </p>
+          </div>
+          {logPhase === "classified" && logItems.length > 0 && (
+            <span className="text-xs text-indigo-500 font-medium">
+              {logItems.filter((i) => i.isPlanned).length}/{logItems.length} {language === "zh-TW" ? "對應目標" : "on-goal"}
+            </span>
+          )}
+        </div>
+
+        {(logPhase === "idle" || logPhase === "classifying") && (
+          <div className="space-y-2">
+            <textarea
+              value={logInput}
+              onChange={(e) => setLogInput(e.target.value)}
+              placeholder={language === "zh-TW"
+                ? "這週你做了什麼？自由輸入，不需要格式…\n例如：完成了設計稿、開了兩個客戶會議、跑步三次…"
+                : "What did you do this week? Free-form, no format needed…"}
+              rows={5}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+            />
+            <button
+              onClick={handleClassifyLog}
+              disabled={!logInput.trim() || logPhase === "classifying"}
+              className="w-full py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+            >
+              {logPhase === "classifying"
+                ? (language === "zh-TW" ? "AI 整理中…" : "AI organizing…")
+                : (language === "zh-TW" ? "AI 整理 →" : "Organize with AI →")}
+            </button>
+          </div>
+        )}
+
+        {logPhase === "classified" && logItems.length > 0 && (
+          <div className="space-y-2">
+            <div className="rounded-lg border border-gray-100 divide-y divide-gray-50">
+              {logItems.map((item) => (
+                <div key={item.id} className="flex items-start gap-2 px-3 py-2">
+                  <span className={`mt-0.5 text-sm ${item.isPlanned ? "text-indigo-500" : "text-gray-300"}`}>
+                    {item.isPlanned ? "✓" : "○"}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-700">{item.content}</p>
+                    {item.krTitle && (
+                      <p className="text-xs text-indigo-400 mt-0.5 truncate">→ {item.krTitle}</p>
+                    )}
+                    {!item.isPlanned && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {language === "zh-TW" ? "計劃外" : "Off-goal"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setLogPhase("idle"); }}
+                className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+              >
+                {language === "zh-TW" ? "重新輸入" : "Re-enter"}
+              </button>
+              <button
+                onClick={handleGenerateReport}
+                disabled={isGenerating}
+                className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+              >
+                {isGenerating
+                  ? (language === "zh-TW" ? "生成中…" : "Generating…")
+                  : (language === "zh-TW" ? "產出本週報告 →" : "Generate Report →")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {logError && <p className="text-xs text-red-500">{logError}</p>}
+      </section>
 
       {/* ── Section 1: Idea Validator ─────────────────────────────────── */}
       <section className="space-y-3">

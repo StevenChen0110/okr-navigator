@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { Objective, Idea, TaskStatus, IdeaStatus, Habit, HabitLog } from "./types";
+import { Objective, Idea, TaskStatus, IdeaStatus, Habit, HabitLog, WeeklyLog, LogItem, AlignmentReport } from "./types";
 import { v4 as uuid } from "uuid";
 
 async function uid(): Promise<string> {
@@ -235,4 +235,120 @@ export async function undoHabitLog(habitId: string, habit: Habit): Promise<Habit
   };
   await saveHabit(updatedHabit);
   return updatedHabit;
+}
+
+// ── Weekly Logs ───────────────────────────────────────────────────────────────
+
+export async function fetchWeeklyLog(weekStart: string): Promise<WeeklyLog | null> {
+  const { data, error } = await supabase
+    .from("weekly_logs")
+    .select("*")
+    .eq("week_start", weekStart)
+    .maybeSingle();
+  if (error) { console.warn("weekly_logs not ready:", error.message); return null; }
+  if (!data) return null;
+  return { id: data.id, weekStart: data.week_start, rawInput: data.raw_input, createdAt: data.created_at };
+}
+
+export async function saveWeeklyLog(log: WeeklyLog): Promise<void> {
+  const userId = await uid();
+  const { error } = await supabase.from("weekly_logs").upsert({
+    id: log.id,
+    user_id: userId,
+    week_start: log.weekStart,
+    raw_input: log.rawInput,
+    created_at: log.createdAt,
+  });
+  if (error) throw error;
+}
+
+// ── Log Items ─────────────────────────────────────────────────────────────────
+
+export async function fetchLogItems(logId: string): Promise<LogItem[]> {
+  const { data, error } = await supabase
+    .from("log_items")
+    .select("*")
+    .eq("log_id", logId)
+    .order("created_at", { ascending: true });
+  if (error) { console.warn("log_items not ready:", error.message); return []; }
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    logId: r.log_id,
+    content: r.content,
+    krId: r.kr_id ?? null,
+    krTitle: r.kr_title ?? null,
+    isPlanned: r.is_planned ?? false,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function saveLogItems(items: LogItem[]): Promise<void> {
+  if (!items.length) return;
+  const userId = await uid();
+  const { error } = await supabase.from("log_items").upsert(
+    items.map((i) => ({
+      id: i.id,
+      log_id: i.logId,
+      user_id: userId,
+      content: i.content,
+      kr_id: i.krId ?? null,
+      kr_title: i.krTitle ?? null,
+      is_planned: i.isPlanned,
+      created_at: i.createdAt,
+    }))
+  );
+  if (error) throw error;
+}
+
+// ── Alignment Reports ─────────────────────────────────────────────────────────
+
+export async function fetchReport(weekStart: string): Promise<AlignmentReport | null> {
+  const { data, error } = await supabase
+    .from("alignment_reports")
+    .select("*")
+    .eq("week_start", weekStart)
+    .maybeSingle();
+  if (error) { console.warn("alignment_reports not ready:", error.message); return null; }
+  if (!data) return null;
+  return {
+    id: data.id,
+    weekStart: data.week_start,
+    alignmentScore: data.alignment_score,
+    aiInsight: data.ai_insight,
+    suggestions: data.suggestions ?? [],
+    logId: data.log_id,
+    createdAt: data.created_at,
+  };
+}
+
+export async function fetchReports(): Promise<AlignmentReport[]> {
+  const { data, error } = await supabase
+    .from("alignment_reports")
+    .select("*")
+    .order("week_start", { ascending: false });
+  if (error) { console.warn("alignment_reports not ready:", error.message); return []; }
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    weekStart: r.week_start,
+    alignmentScore: r.alignment_score,
+    aiInsight: r.ai_insight,
+    suggestions: r.suggestions ?? [],
+    logId: r.log_id,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function saveReport(report: AlignmentReport): Promise<void> {
+  const userId = await uid();
+  const { error } = await supabase.from("alignment_reports").upsert({
+    id: report.id,
+    user_id: userId,
+    week_start: report.weekStart,
+    alignment_score: report.alignmentScore,
+    ai_insight: report.aiInsight,
+    suggestions: report.suggestions,
+    log_id: report.logId,
+    created_at: report.createdAt,
+  });
+  if (error) throw error;
 }

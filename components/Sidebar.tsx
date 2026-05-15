@@ -11,9 +11,19 @@ const NAV_ITEMS = [
     exact: false,
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="3" width="12" height="2" rx="1" fill="currentColor" />
-        <rect x="2" y="7" width="9" height="2" rx="1" fill="currentColor" />
-        <rect x="2" y="11" width="6" height="2" rx="1" fill="currentColor" />
+        <path d="M3 4h10M3 8h7M3 12h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    href: "/report",
+    labelKey: "nav.report",
+    exact: false,
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="2" y="9" width="2.5" height="5" rx="1" fill="currentColor" />
+        <rect x="6.5" y="6" width="2.5" height="8" rx="1" fill="currentColor" />
+        <rect x="11" y="3" width="2.5" height="11" rx="1" fill="currentColor" />
       </svg>
     ),
   },

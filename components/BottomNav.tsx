@@ -10,11 +10,23 @@ const NAV_ITEMS = [
     href: "/tasks",
     labelKey: "nav.tasks",
     exact: false,
+    requireAuth: false,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <rect x="3" y="4" width="14" height="2" rx="1" fill="currentColor" />
-        <rect x="3" y="9" width="10" height="2" rx="1" fill="currentColor" />
-        <rect x="3" y="14" width="7" height="2" rx="1" fill="currentColor" />
+        <path d="M4 5h12M4 10h8M4 15h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    href: "/report",
+    labelKey: "nav.report",
+    exact: false,
+    requireAuth: false,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <rect x="2.5" y="11" width="3" height="6" rx="1" fill="currentColor" />
+        <rect x="8.5" y="7" width="3" height="10" rx="1" fill="currentColor" />
+        <rect x="14.5" y="3" width="3" height="14" rx="1" fill="currentColor" />
       </svg>
     ),
   },
@@ -22,6 +34,7 @@ const NAV_ITEMS = [
     href: "/okr",
     labelKey: "nav.goals",
     exact: false,
+    requireAuth: true,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.5" />
@@ -34,6 +47,7 @@ const NAV_ITEMS = [
     href: "/settings",
     labelKey: "nav.settings",
     exact: false,
+    requireAuth: true,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <circle cx="10" cy="10" r="3" stroke="currentColor" strokeWidth="1.5" />
@@ -60,7 +74,7 @@ export default function BottomNav() {
             key={item.href}
             href={item.href}
             onClick={
-              (item.href === "/settings" || item.href === "/okr") && !user
+              item.requireAuth && !user
                 ? (e) => { e.preventDefault(); openLogin(); }
                 : undefined
             }

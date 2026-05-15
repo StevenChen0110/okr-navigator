@@ -18,7 +18,10 @@ import {
   chatTaskCoach,
   analyzePlanItems,
   chatPlanCoach,
+  classifyLogItems,
+  generateAlignmentReport,
 } from "@/lib/claude";
+import type { LogItem } from "@/lib/types";
 
 function getEnvKey(provider: AIProvider): string | undefined {
   const keys: Record<AIProvider, string> = {
@@ -209,6 +212,24 @@ export async function POST(req: NextRequest) {
           payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
           payload.context as Parameters<typeof chatPlanCoach>[4],
           payload.objectives as Objective[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "classifyLogItems": {
+        const result = await classifyLogItems(
+          apiKey, model, language,
+          payload.rawInput as string,
+          payload.objectives as Objective[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "generateAlignmentReport": {
+        const result = await generateAlignmentReport(
+          apiKey, model, language,
+          payload.objectives as Objective[],
+          payload.logItems as LogItem[],
           provider,
         );
         return NextResponse.json(result);

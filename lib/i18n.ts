@@ -3,7 +3,8 @@ export type Vars = Record<string, string | number>;
 
 const zh: Record<string, string> = {
   brand: "記錄指針",
-  "nav.tasks": "任務",
+  "nav.tasks": "記錄",
+  "nav.report": "報告",
   "nav.goals": "目標",
   "nav.settings": "設定",
 
@@ -190,7 +191,8 @@ const zh: Record<string, string> = {
 
 const en: Record<string, string> = {
   brand: "OKR Navigator",
-  "nav.tasks": "Tasks",
+  "nav.tasks": "Log",
+  "nav.report": "Report",
   "nav.goals": "Goals",
   "nav.settings": "Settings",
 

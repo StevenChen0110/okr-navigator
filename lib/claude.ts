@@ -1,6 +1,6 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, LogItem } from "./types";
 
 function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -267,6 +267,8 @@ If what they want is clear enough, propose the goal right away without asking mo
 
 When writing KRs, each one should describe an observable end state (e.g. "從 A 提升到 B"), not a task or process. Keep each KR to one concrete sentence.
 
+Observer tone rules (MANDATORY): offer options ("有一個方向可以考慮"), never commands ("你應該"); NEVER say "太棒了" "做得很好" "加油".
+
 When you have a proposal ready, place the suggestion block at the very end of your message (the user will not see this part — it is parsed separately):
 ${suggestionFormat}
 
@@ -279,7 +281,9 @@ ${langInstruction(language)} Do not use any markdown formatting in your reply.`;
 
 Write in plain conversational prose — no bullet points, no markdown symbols, no bold text, no headers. Just natural sentences.
 
-Look for things like goals that overlap and could be merged, KRs that are too vague to measure, KRs so big they deserve their own goal, or goals that are no longer relevant. Share your observations in a direct but warm tone, then propose concrete changes.
+Look for things like goals that overlap and could be merged, KRs that are too vague to measure, KRs so big they deserve their own goal, or goals that are no longer relevant. Describe what you observe ("這個目標在X上著力較多") rather than what's missing ("你沒有Y"). Offer options, not commands.
+
+Observer tone rules (MANDATORY): offer options ("有一個方向可以考慮"), never commands ("你應該"); NEVER say "太棒了" "做得很好" "加油".
 
 After your message, append the suggestion block (the user will not see this part):
 ${suggestionFormat}
@@ -561,7 +565,7 @@ Reply in natural conversational prose, no markdown.`;
 
 // ── Plan Items Analysis ───────────────────────────────────────────────────────
 
-const PLAN_SYSTEM_PROMPT = `You are a task planning coach. Analyze a list of todo items and evaluate their contribution to the user's OKRs.
+const PLAN_SYSTEM_PROMPT = `You are a task planning observer. Analyze a list of todo items and evaluate their contribution to the user's OKRs.
 
 IMPORTANT SCORING PHILOSOPHY — time scope changes what a "good" score means:
 - "today" items are TACTICAL single actions completable in one day. Score 7-9 if it is clearly the right action for today. Score 4-6 if acceptable but not ideal. Score 1-3 if it is too vague/large for a single day (mis-scoped).
@@ -570,6 +574,11 @@ IMPORTANT SCORING PHILOSOPHY — time scope changes what a "good" score means:
 - "custom" items: evaluate based on their apparent scope relative to stated timeframe.
 
 Key insight: a today task like "制定三年計畫" is TOO BIG for today → penalize. A monthly task like "發一封郵件" is TOO SMALL for monthly planning → penalize.
+
+Observer tone rules (MANDATORY):
+- overallAssessment: describe what you observe ("這份計畫在X上投入較多"), not what's missing ("你沒有做Y")
+- suggestions: always offer options ("有一個方向可以考慮：..."), never commands ("你應該...")
+- NEVER say "太棒了" "做得很好" "加油" in any field
 
 Output ONLY valid JSON:
 {
@@ -659,7 +668,8 @@ export async function chatPlanCoach(
   let systemPrompt: string;
   if (context.type === "idea") {
     systemPrompt = language === "zh-TW"
-      ? `你是一位 OKR 顧問，正在和用戶討論一個想法的 AI 評估結果，協助他們決定是否推進或如何調整。用自然對話語氣，不使用 markdown。
+      ? `你是一位方向觀察者，正在和用戶討論一個想法的評估結果，協助他們決定是否推進或如何調整。用自然對話語氣，不使用 markdown。
+語氣規則：描述行為而非評判；給建議時提供選項而非命令；不說空洞稱讚。
 
 想法：${context.ideaTitle ?? ""}
 AI 分析分數：${context.ideaScore?.toFixed(1) ?? "─"}/10
@@ -669,7 +679,7 @@ AI 分析分數：${context.ideaScore?.toFixed(1) ?? "─"}/10
 ${objList}
 
 請用繁體中文回應，不使用任何 markdown 格式。`
-      : `You are an OKR consultant discussing an idea evaluation. Help the user decide whether to proceed or how to adapt the idea to better serve their goals. No markdown.
+      : `You are a direction observer, not a judge. Help the user decide whether to proceed with an idea or how to adapt it. No markdown. Offer options, don't command.
 
 Idea: ${context.ideaTitle ?? ""}
 AI score: ${context.ideaScore?.toFixed(1) ?? "─"}/10
@@ -682,7 +692,8 @@ ${objList}`;
       .map((i) => `- [${i.period}] ${i.title}${i.score !== undefined ? ` (${i.score.toFixed(1)}/10)` : ""}`)
       .join("\n");
     systemPrompt = language === "zh-TW"
-      ? `你是一位任務規劃顧問，正在和用戶討論他們的待辦計畫 AI 分析結果，協助調整優先序、移除低價值任務或識別計畫缺口。用自然對話語氣，不使用 markdown。
+      ? `你是一位任務規劃觀察者，正在和用戶討論他們的待辦計畫，協助調整優先序或識別計畫缺口。用自然對話語氣，不使用 markdown。
+語氣規則：說「你在X上花了最多時間」不說「你沒完成Y」；給建議時說「有一個方向可以考慮」不說「你應該」；不說「加油」「太棒了」。
 
 整體評估：${context.overallAssessment ?? ""}
 AI 建議：${context.suggestions ?? ""}
@@ -694,7 +705,7 @@ ${itemsText}
 ${objList}
 
 請用繁體中文回應，不使用任何 markdown 格式。`
-      : `You are a task planning consultant discussing a todo plan analysis. Help the user adjust priorities, remove low-value tasks, or identify planning gaps. No markdown.
+      : `You are a task planning observer, not a judge. Help adjust priorities or identify planning gaps. No markdown. Offer options, don't command.
 
 Overall assessment: ${context.overallAssessment ?? ""}
 Suggestions: ${context.suggestions ?? ""}
@@ -708,4 +719,93 @@ ${objList}`;
 
   const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 512);
   return { content: text };
+}
+
+// ── Weekly Log Classification ─────────────────────────────────────────────────
+
+export async function classifyLogItems(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  rawInput: string, objectives: Objective[],
+  provider: AIProvider = "anthropic",
+): Promise<Array<{ content: string; krId: string | null; krTitle: string | null; isPlanned: boolean }>> {
+  const krList = objectives
+    .filter((o) => !o.status || o.status === "active")
+    .flatMap((o) => o.keyResults.map((kr) => `KR ID: ${kr.id} | KR: ${kr.title} | Objective: ${o.title}`))
+    .join("\n");
+
+  const text = await complete(provider, apiKey, model, `You are a task classifier. The user wrote a free-form weekly log. Split it into individual action items and match each one to the most relevant Key Result from the user's goals. Be lenient — partial or thematic matches count.
+
+User's Key Results:
+${krList || "(none defined yet)"}
+
+Rules:
+- Split by sentences, line breaks, or natural action boundaries
+- For each item: if it matches a KR (even loosely), set isPlanned=true and include that KR's id and title
+- If no KR matches, set isPlanned=false, krId=null, krTitle=null
+- Keep content as the user wrote it (minimal editing)
+- Return 1-15 items max; merge trivial fragments
+
+${langInstruction(language)}
+Output ONLY a valid JSON array. No markdown fences.
+[{"content":"...","krId":"...or null","krTitle":"...or null","isPlanned":true|false}]`,
+    `Weekly log:\n${rawInput}`, 1024);
+  return JSON.parse(extractJSON(stripFences(text)));
+}
+
+// ── Alignment Report Generation ───────────────────────────────────────────────
+
+const OBSERVER_TONE = `Observer tone rules (MANDATORY):
+- Describe what you see: "你這週在X上投入最多時間" NOT "你沒完成Y"
+- Offer options: "有一個方向可以考慮：A。你也可以繼續B" NOT "你應該做A"
+- No hollow praise: NEVER say "太棒了" "你做得很好" "加油" "繼續努力"
+- Share insight as observation: "從這週的記錄，我注意到..." then return choice to user
+- Tone: curious observer, not judge or cheerleader`;
+
+export async function generateAlignmentReport(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  objectives: Objective[], logItems: LogItem[],
+  provider: AIProvider = "anthropic",
+): Promise<{ alignmentScore: number; aiInsight: string; suggestions: string[] }> {
+  const planned = logItems.filter((i) => i.isPlanned);
+  const unplanned = logItems.filter((i) => !i.isPlanned);
+
+  const krCoverage = new Set(planned.map((i) => i.krId).filter(Boolean));
+  const totalKRs = objectives.filter((o) => !o.status || o.status === "active")
+    .reduce((n, o) => n + o.keyResults.length, 0);
+
+  const plannedRatio = logItems.length > 0 ? planned.length / logItems.length : 0;
+  const coverageRatio = totalKRs > 0 ? krCoverage.size / totalKRs : 0;
+  const rawScore = Math.round((plannedRatio * 0.6 + coverageRatio * 0.4) * 100);
+
+  const okrContext = objectives
+    .filter((o) => !o.status || o.status === "active")
+    .map((o) => `目標：${o.title}\n  KRs: ${o.keyResults.map((kr) => kr.title).join("；")}`)
+    .join("\n\n");
+
+  const itemsText = [
+    ...planned.map((i) => `✓ [對應 ${i.krTitle ?? "KR"}] ${i.content}`),
+    ...unplanned.map((i) => `○ [計劃外] ${i.content}`),
+  ].join("\n");
+
+  const text = await complete(provider, apiKey, model, `You are a direction alignment coach. Analyze the user's weekly log vs their goals and produce a report.
+
+${OBSERVER_TONE}
+
+${langInstruction(language)}
+
+Output ONLY valid JSON:
+{
+  "alignmentScore": ${rawScore},
+  "aiInsight": "2-3 sentences using observer tone. Mention what the user spent time on, contrast with goal focus area, note the gap without judging.",
+  "suggestions": ["1-2 items. Each is an option for the user to consider, not a command. Use 有一個方向可以考慮 pattern."]
+}
+No markdown fences.`,
+    `用戶的目標：\n${okrContext}\n\n本週行動記錄：\n${itemsText}`, 512);
+
+  const parsed = JSON.parse(extractJSON(stripFences(text)));
+  return {
+    alignmentScore: Math.max(0, Math.min(100, parsed.alignmentScore ?? rawScore)),
+    aiInsight: parsed.aiInsight ?? "",
+    suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+  };
 }
