@@ -210,52 +210,60 @@ export default function OnboardingPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-10">
       <div className="w-full max-w-md space-y-8">
 
-        {/* Progress dots */}
+        {/* Progress bar */}
         {step < 6 && (
-          <div className="flex justify-center gap-1.5">
-            {([1, 2, 3, 4, 5] as Step[]).map((s) => (
-              <div key={s} className={`h-1.5 rounded-full transition-all ${
-                s === step ? "w-6 bg-indigo-600" : s < step ? "w-1.5 bg-indigo-300" : "w-1.5 bg-gray-200"
-              }`} />
-            ))}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-[10px] text-gray-400">
+              <span>{zh ? `步驟 ${Math.min(step, 5)} / 5` : `Step ${Math.min(step, 5)} of 5`}</span>
+              <span>{Math.round(((step - 1) / 4) * 100)}%</span>
+            </div>
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                style={{ width: `${((step - 1) / 4) * 100}%` }}
+              />
+            </div>
           </div>
         )}
 
         {/* Step 1: Welcome */}
         {step === 1 && (
-          <div className="text-center space-y-6">
+          <div className="step-enter text-center space-y-6">
             <div className="space-y-3">
               <p className="text-xs font-semibold text-indigo-500 uppercase tracking-widest">記錄指針</p>
               <h1 className="text-3xl font-bold text-gray-900 leading-tight">
-                {zh ? "你做了很多事。\n但方向對嗎？" : "You did a lot.\nBut is it in the right direction?"}
+                {zh ? "30 秒知道哪個想法\n最值得做" : "Know in 30 seconds\nwhich idea matters most"}
               </h1>
               <p className="text-sm text-gray-500 leading-relaxed">
                 {zh
-                  ? "設定目標、記錄行動、每週對齊一次——讓方向清晰可見。"
-                  : "Set goals, log actions, align weekly — so your direction is always clear."}
+                  ? "不是 OKR 工具——是決策加速器。連結你的目標，AI 秒算每件事的貢獻度。"
+                  : "Not an OKR tool — a decision accelerator. Link your goals, AI instantly scores each idea."}
               </p>
             </div>
             <button
               onClick={() => setStep(2)}
               className="w-full py-3 rounded-xl bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 transition-colors"
             >
-              {zh ? "開始設定目標 →" : "Set up my goals →"}
+              {zh ? "開始，只要 3 步驟 →" : "Get started, just 3 steps →"}
             </button>
           </div>
         )}
 
         {/* Step 2: Intent input */}
         {step === 2 && (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <p className="text-xs text-gray-400">1 / 3</p>
-              <h2 className="text-xl font-semibold text-gray-900">
-                {zh ? "最近最想完成什麼？" : "What do you most want to accomplish recently?"}
-              </h2>
-              <p className="text-sm text-gray-400">
-                {zh ? "一句話描述，AI 會整理成可追蹤的目標和關鍵結果" : "One sentence — AI will structure it into trackable goals"}
-              </p>
+          <div className="step-enter space-y-5">
+            <div className="flex items-start gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
+              <span className="text-xl mt-0.5">✍️</span>
+              <div>
+                <p className="text-xs font-semibold text-indigo-700">{zh ? "不用想太多" : "Don't overthink it"}</p>
+                <p className="text-[11px] text-indigo-500 mt-0.5 leading-snug">
+                  {zh ? "一句話就夠，AI 會幫你整理成可追蹤的格式" : "One sentence is enough — AI will structure it for you"}
+                </p>
+              </div>
             </div>
+            <h2 className="text-xl font-semibold text-gray-900">
+              {zh ? "最近最想完成什麼？" : "What do you most want to accomplish recently?"}
+            </h2>
             <textarea
               value={intentInput}
               onChange={(e) => setIntentInput(e.target.value)}
@@ -263,7 +271,8 @@ export default function OnboardingPage() {
                 ? "例如：我想在三個月內把副業收入提升到每月一萬"
                 : "e.g. I want to grow my side income to $1k/month in 3 months"}
               rows={3}
-              className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+              autoFocus
+              className="w-full rounded-xl border border-indigo-200 bg-indigo-50/20 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white resize-none transition-colors"
             />
             {error && <p className="text-xs text-red-500">{error}</p>}
             <button
@@ -278,23 +287,27 @@ export default function OnboardingPage() {
 
         {/* Step 3: OKR confirmation */}
         {step === 3 && (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <p className="text-xs text-gray-400">2 / 3</p>
-              <h2 className="text-xl font-semibold text-gray-900">
-                {zh ? "確認你的目標" : "Confirm your goal"}
-              </h2>
-              <p className="text-sm text-gray-400">
-                {zh ? "AI 已幫你整理，直接修改成你的版本" : "AI structured your intent — edit as you like"}
-              </p>
+          <div className="step-enter space-y-5">
+            <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+              <span className="text-xl mt-0.5">✅</span>
+              <div>
+                <p className="text-xs font-semibold text-green-700">{zh ? "AI 幫你整理好了" : "AI structured your goal"}</p>
+                <p className="text-[11px] text-green-600 mt-0.5 leading-snug">
+                  {zh ? "直接修改成你的版本，或照樣接受都可以" : "Edit freely — or just accept as-is"}
+                </p>
+              </div>
             </div>
+            <h2 className="text-xl font-semibold text-gray-900">
+              {zh ? "確認你的目標" : "Confirm your goal"}
+            </h2>
             <div className="space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-gray-500">{zh ? "目標方向" : "Goal"}</label>
                 <input
                   value={confirmedTitle}
                   onChange={(e) => setConfirmedTitle(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  autoFocus
+                  className="w-full rounded-xl border border-indigo-200 bg-indigo-50/20 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-colors"
                 />
                 {draftObjective?.timeframe && (
                   <p className="text-xs text-gray-400">{zh ? "時程：" : "Timeframe: "}{draftObjective.timeframe}</p>
@@ -328,18 +341,19 @@ export default function OnboardingPage() {
 
         {/* Step 4: This week's actions — structured list */}
         {step === 4 && (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <p className="text-xs text-gray-400">3 / 3</p>
-              <h2 className="text-xl font-semibold text-gray-900">
-                {zh ? "這週你做了什麼？" : "What did you do this week?"}
-              </h2>
-              <p className="text-sm text-gray-400">
-                {zh
-                  ? "加入這週做的事，AI 會對照你的目標分析，你會馬上看到第一份報告"
-                  : "Add things you did this week — AI will analyze alignment with your goal and you'll see your first report"}
-              </p>
+          <div className="step-enter space-y-5">
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+              <span className="text-xl mt-0.5">📋</span>
+              <div>
+                <p className="text-xs font-semibold text-amber-700">{zh ? "任何事都算" : "Everything counts"}</p>
+                <p className="text-[11px] text-amber-600 mt-0.5 leading-snug">
+                  {zh ? "大事小事都可以記，AI 會自動對照你的目標分類" : "Big or small — AI automatically maps each item to your goals"}
+                </p>
+              </div>
             </div>
+            <h2 className="text-xl font-semibold text-gray-900">
+              {zh ? "這週你做了什麼？" : "What did you do this week?"}
+            </h2>
 
             <div className="space-y-2">
               {weekItems.map((item, i) => (
@@ -387,7 +401,7 @@ export default function OnboardingPage() {
 
         {/* Step 5: Aha Moment */}
         {step === 5 && firstReport && (
-          <div className="space-y-5">
+          <div className="step-enter space-y-5">
             <div className="space-y-1">
               <h2 className="text-xl font-semibold text-gray-900">
                 {zh ? "你的第一份方向報告" : "Your first alignment report"}
@@ -503,7 +517,7 @@ export default function OnboardingPage() {
 
         {/* Step 6: Preferences */}
         {step === 6 && (
-          <div className="space-y-6">
+          <div className="step-enter space-y-6">
             <div className="space-y-2">
               <h2 className="text-xl font-semibold text-gray-900">
                 {zh ? "偏好設定" : "Preferences"}

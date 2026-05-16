@@ -339,4 +339,143 @@ export async function clarifyIdea(
 
 ---
 
-*Ticket 清單對應 PRD v2.0，2026-04-18*
+## 🔴 Phase 0 補充 — Bug 修復
+
+---
+
+### [BUG-01] Google OAuth 回調失敗
+
+**問題**：用戶點擊 Google 登入後回調失敗，無法完成登入流程。
+
+**已完成的程式碼修復**（`app/auth/callback/page.tsx`）：
+1. 新增 `?error=` / `?error_description=` 參數處理，Google 拒絕授權時顯示明確錯誤訊息
+2. 隱式/PKCE 無 `?code=` 路徑改為等待 supabase-js 處理 session 後再 redirect，而非立即跳轉
+
+**仍需手動設定（Supabase Dashboard）**：
+1. Authentication → URL Configuration → **Site URL**：設為正式網域（或 `http://localhost:3000` 開發環境）
+2. Authentication → URL Configuration → **Redirect URLs**：加入 `[domain]/auth/callback`（含 Vercel preview URL wildcard：`https://*-[team].vercel.app/auth/callback`）
+3. Google Cloud Console → OAuth 2.0 憑證 → **授權重新導向 URI**：加入 `https://[supabase-project-ref].supabase.co/auth/v1/callback`
+
+**驗收**：Google 登入完整流程走通；Google 拒絕授權時頁面顯示可讀錯誤訊息而非白屏。
+
+---
+
+## 🟠 Phase 1 補充 — 新功能
+
+---
+
+### [FEAT-A] Onboarding 步驟說明卡 + 過場動畫
+
+**優先**：P0（新用戶第一印象）  
+**工程量**：S（1–2 天）
+
+**問題**：Onboarding wizard（`app/onboarding/page.tsx`，6 步驟）缺乏步驟引導，用戶不清楚每一步要做什麼。
+
+**範圍**：
+- 每個步驟頂部加入步驟說明卡（圖示 + 一句說明 + 小提示）
+- 步驟切換加淡入動畫（`opacity` + `translateY` CSS transition）
+- Step 2（intent input）與 Step 3（OKR confirm）的主輸入框加 `ring-2 ring-indigo-400` focus glow
+- Progress bar 改為有百分比填色的橫條（替換現有進度點）
+
+**影響檔案**：`app/onboarding/page.tsx`、`lib/i18n.ts`
+
+**驗收**：每個步驟有明確說明；步驟切換有動畫；輸入框有視覺焦點提示。
+
+---
+
+### [FEAT-B] AI 工作區正式化（AIWorkspaceDrawer）
+
+**優先**：P1  
+**工程量**：M（3–4 天）
+
+**問題**：AI 功能分散在各頁面（tasks 的 Idea Validator、OKR 頁的 OKRChat），用戶無法在任意頁面快速召喚 AI。
+
+**範圍**：
+- 新建 `components/AIWorkspaceDrawer.tsx`（右側滑入 drawer，含 OKR Coach / Idea quick-validate / Plan analyzer）
+- `components/Sidebar.tsx` 加 AI Workspace 觸發按鈕
+- `components/BottomNav.tsx` 加手機版 AI 入口
+- 各頁現有 AI 功能原位保留（Drawer 是補充入口）
+
+**影響檔案**：新建 `components/AIWorkspaceDrawer.tsx`、`components/Sidebar.tsx`、`components/BottomNav.tsx`
+
+**驗收**：任何頁面可開啟 Drawer；Drawer 內 OKR Coach 可正常對話；不影響各頁現有 AI 功能。
+
+---
+
+### [FEAT-C] 產品定位凸顯（未登入 Hero + Guest 試用）
+
+**優先**：P1  
+**工程量**：S（1–2 天）
+
+**問題**：未登入訪客看不到產品核心價值；首頁直接顯示空白 dashboard，失去轉換機會。
+
+**範圍**：
+- `app/page.tsx` 未登入狀態顯示 hero section：主標題「30 秒知道哪個想法最值得做」、副標題、Guest 試用 CTA
+- Guest 試用：允許一次 idea validation，不儲存結果，完成後提示登入以保存
+- Onboarding Step 1 文案更新：強調「不是 OKR 工具，是決策加速器」
+
+**影響檔案**：`app/page.tsx`、`app/onboarding/page.tsx`、`lib/i18n.ts`
+
+**驗收**：未登入訪客可試用 idea validation；登入後首頁正常顯示 dashboard。
+
+---
+
+### [FEAT-D] AI 理解用戶（User Profile + 輸入重述）
+
+**優先**：P1  
+**工程量**：M（3–5 天）
+
+**問題**：AI 對用戶背景一無所知，分析缺乏個人化；用戶輸入模糊時（如「我想變得更好」）AI 無法有效引導。
+
+**範圍**：
+1. **User Profile 建立**（Onboarding Step 6 擴充）：加入「用一句話形容你的狀態」輸入，存至 `user_backgrounds` 表（schema 已存在）
+2. **AI 輸入重述**：Idea Validator 輸入後，若字數 < 20 字且語意模糊，AI 先輸出「你的意思是：[重述]，對嗎？」供用戶確認或修改，確認版本作為分析輸入
+3. **AI 上下文注入**：`lib/evaluation-prompt.ts` 的系統 prompt 加入 user background
+
+**新增函數**：`lib/claude.ts` → `rephraseInput()`  
+**新增 API action**：`app/api/ai/route.ts` → `rephraseInput`  
+**影響檔案**：`app/onboarding/page.tsx`、`lib/evaluation-prompt.ts`、`lib/claude.ts`、`app/api/ai/route.ts`
+
+**驗收**：新用戶完成 onboarding 有 profile；模糊輸入觸發 AI 重述；AI 分析有個人化語氣（人工 QA）。
+
+---
+
+## 🟡 Phase 2 補充 — 外部整合
+
+---
+
+### [FEAT-E] 外部文字批次匯入
+
+**優先**：P2  
+**工程量**：M（3–5 天）
+
+**問題**：用戶的靈感、任務清單散落在外部文件（Notion、Google Docs、會議記錄），目前只能手動逐一輸入，摩擦高。
+
+**範圍（MVP）**：
+- Idea Validator 旁加「批次匯入」入口
+- 用戶貼入純文字（≤ 500 字），AI 解析成多個 ideas，每個可勾選後加入 Inbox
+- 不做 OAuth 整合，純 copy-paste
+
+**新增函數**：`lib/claude.ts` → `parseDocumentToIdeas(text, objectives)`  
+**新增 API action**：`app/api/ai/route.ts` → `parseDocument`  
+**影響檔案**：`app/tasks/page.tsx`、`lib/claude.ts`、`app/api/ai/route.ts`
+
+**驗收**：貼入 500 字以內文字可解析出 3+ ideas；解析結果可勾選加入 Inbox；解析失敗有友善提示。
+
+---
+
+## 設計討論區（尚未入 ticket）
+
+### 更多人生管理概念
+
+**前提問題**（需先討論才能立 ticket）：
+1. Life Domain 如何定義？（健康 / 工作 / 關係 / 學習？還是用戶自定義？）
+2. 與現有 Objective 的關係：是 tag 還是獨立層？
+3. 跨 domain 的 idea 如何做加權計算？
+4. 與 TICKETS.md T02 Identity 層的關係？
+
+**建議**：等 T02（Identity 層）完成後，觀察用戶行為再反推需求。
+
+---
+
+*Ticket 清單對應 PRD v2.0，最後更新 2026-05-16*

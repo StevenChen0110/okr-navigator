@@ -25,6 +25,32 @@ import RichTextArea from "@/components/RichTextArea";
 import { computeWeightedScore } from "@/lib/scoring";
 import { PERIOD_LABELS_ZH, PERIOD_LABELS_EN, STATUS_LABELS_ZH, STATUS_LABELS_EN, STATUS_STYLE } from "@/lib/plan-constants";
 
+// ── Guest Trial ───────────────────────────────────────────────────────────────
+
+const GUEST_OBJECTIVES: Objective[] = [
+  {
+    id: "guest-1", title: "提升職業競爭力與技能", status: "active", createdAt: "",
+    keyResults: [
+      { id: "gkr-1", title: "完成線上課程或認證" },
+      { id: "gkr-2", title: "建立個人作品集或公開專案" },
+    ],
+  },
+  {
+    id: "guest-2", title: "改善身心健康", status: "active", createdAt: "",
+    keyResults: [
+      { id: "gkr-3", title: "每週固定運動 3 次" },
+      { id: "gkr-4", title: "維持充足睡眠與飲食習慣" },
+    ],
+  },
+  {
+    id: "guest-3", title: "拓展額外收入來源", status: "active", createdAt: "",
+    keyResults: [
+      { id: "gkr-5", title: "啟動副業或接案項目" },
+      { id: "gkr-6", title: "每月副業收入達設定目標" },
+    ],
+  },
+];
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
@@ -37,8 +63,13 @@ interface ChatMsg { role: "user" | "assistant"; content: string; }
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const { user, requireAuth } = useAuth();
+  const { user, requireAuth, openLogin } = useAuth();
   const { t, language } = useLanguage();
+
+  // Guest trial
+  const [guestTrialActive, setGuestTrialActive] = useState(() =>
+    typeof window !== "undefined" && localStorage.getItem("guestTrialActive") === "1"
+  );
 
   // Shared
   const [objectives, setObjectives] = useState<Objective[]>([]);
@@ -101,6 +132,7 @@ export default function HomePage() {
   }, [planMessages]);
 
   const isQuickIdea = !ideaNotes.trim();
+  const activeObjectives = user ? objectives : (guestTrialActive ? GUEST_OBJECTIVES : []);
   const periodLabel = language === "zh-TW" ? PERIOD_LABELS_ZH : PERIOD_LABELS_EN;
   const statusLabel = language === "zh-TW" ? STATUS_LABELS_ZH : STATUS_LABELS_EN;
 
@@ -108,15 +140,15 @@ export default function HomePage() {
 
   async function handleIdeaAnalyze() {
     if (!ideaTitle.trim()) return;
-    if (!user) { requireAuth(); return; }
-    if (objectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
+    if (!user && !guestTrialActive) { requireAuth(); return; }
+    if (activeObjectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
     setIdeaError("");
 
     if (isQuickIdea) {
       setIdeaPhase("clarifying");
       try {
         const { shouldClarify, question } = await callAI<{ shouldClarify: boolean; question: string }>(
-          "clarifyIdea", { ideaTitle, objectives }
+          "clarifyIdea", { ideaTitle, objectives: activeObjectives }
         );
         if (shouldClarify && question) {
           setIdeaClarifyQ(question);
@@ -136,7 +168,7 @@ export default function HomePage() {
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
         ideaTitle,
         ideaNotes: combined,
-        objectives,
+        objectives: activeObjectives,
         evaluationContext: buildEvaluationPrompt(evalProfile),
         groups,
       });
@@ -419,24 +451,43 @@ export default function HomePage() {
         )}
 
         {/* Save actions */}
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleIdeaSave("shelved")}
-            disabled={ideaPhase === "saving"}
-            className="flex-1 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {language === "zh-TW" ? "暫存想法" : "Save to Backlog"}
-          </button>
-          <button
-            onClick={() => handleIdeaSave("active")}
-            disabled={ideaPhase === "saving"}
-            className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {ideaPhase === "saving"
-              ? (language === "zh-TW" ? "儲存中…" : "Saving…")
-              : (language === "zh-TW" ? "加入任務清單" : "Add to Tasks")}
-          </button>
-        </div>
+        {user ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleIdeaSave("shelved")}
+              disabled={ideaPhase === "saving"}
+              className="flex-1 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {language === "zh-TW" ? "暫存想法" : "Save to Backlog"}
+            </button>
+            <button
+              onClick={() => handleIdeaSave("active")}
+              disabled={ideaPhase === "saving"}
+              className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {ideaPhase === "saving"
+                ? (language === "zh-TW" ? "儲存中…" : "Saving…")
+                : (language === "zh-TW" ? "加入任務清單" : "Add to Tasks")}
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4 space-y-2">
+            <p className="text-xs font-semibold text-indigo-800">
+              {language === "zh-TW" ? "這是以範例目標為基準的試用分析" : "This is a demo analysis based on sample goals"}
+            </p>
+            <p className="text-[11px] text-indigo-600 leading-snug">
+              {language === "zh-TW"
+                ? "建立帳號，輸入你真實的目標，讓 AI 給你個人化的決策分析。"
+                : "Sign up to set your real goals and get a personalized analysis."}
+            </p>
+            <button
+              onClick={openLogin}
+              className="text-xs text-indigo-700 font-semibold hover:underline"
+            >
+              {language === "zh-TW" ? "免費註冊，保存你的目標 →" : "Sign up free to save your goals →"}
+            </button>
+          </div>
+        )}
 
         {/* Discussion */}
         <div className="border-t border-gray-100 pt-3 space-y-3">
@@ -572,17 +623,52 @@ export default function HomePage() {
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 md:px-6 md:py-8">
 
+      {/* ── Guest Hero ──────────────────────────────────────────────── */}
+      {!user && !guestTrialActive && (
+        <div className="step-enter mb-8 rounded-2xl bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 p-6 space-y-4">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-indigo-500 uppercase tracking-widest">記錄指針</p>
+            <h1 className="text-2xl font-bold text-gray-900 leading-snug">
+              {language === "zh-TW"
+                ? "30 秒知道哪個想法最值得做"
+                : "Know in 30 seconds which idea matters most"}
+            </h1>
+            <p className="text-sm text-gray-500 leading-relaxed">
+              {language === "zh-TW"
+                ? "不是 OKR 工具——是決策加速器。連結你的目標，AI 秒算每件事的貢獻度。"
+                : "Not an OKR tool — a decision accelerator. Link your goals, AI instantly scores each idea."}
+            </p>
+          </div>
+          <div className="flex gap-3 flex-wrap">
+            <button
+              onClick={() => { localStorage.setItem("guestTrialActive", "1"); setGuestTrialActive(true); }}
+              className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+            >
+              {language === "zh-TW" ? "立刻試試，不用帳號 →" : "Try without an account →"}
+            </button>
+            <button
+              onClick={openLogin}
+              className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              {language === "zh-TW" ? "登入 / 註冊" : "Sign in / Sign up"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Page Header ─────────────────────────────────────────────── */}
-      <div className="mb-8">
-        <h1 className="text-xl font-semibold text-gray-900">
-          {language === "zh-TW" ? "任務" : "Tasks"}
-        </h1>
-        <p className="text-sm text-gray-400 mt-0.5">
-          {language === "zh-TW"
-            ? "規劃待辦清單，驗證想法對目標的幫助"
-            : "Plan your todos and validate ideas against your goals"}
-        </p>
-      </div>
+      {(user || guestTrialActive) && (
+        <div className="mb-8">
+          <h1 className="text-xl font-semibold text-gray-900">
+            {language === "zh-TW" ? "任務" : "Tasks"}
+          </h1>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {language === "zh-TW"
+              ? "規劃待辦清單，驗證想法對目標的幫助"
+              : "Plan your todos and validate ideas against your goals"}
+          </p>
+        </div>
+      )}
 
       <div className={`flex gap-6 ${hasRightPanel ? "items-start" : ""}`}>
 

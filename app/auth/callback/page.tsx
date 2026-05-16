@@ -9,10 +9,33 @@ export default function AuthCallbackPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get("code");
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const oauthError = params.get("error");
+    const oauthErrorDescription = params.get("error_description");
+
+    if (oauthError) {
+      setError(oauthErrorDescription ?? oauthError);
+      return;
+    }
+
     if (!code) {
-      // Implicit flow: supabase-js picks up the token from the URL hash automatically
-      router.replace("/");
+      // PKCE/implicit: supabase-js processes the URL hash automatically.
+      // Wait for the session to be set before redirecting.
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          router.replace("/");
+        } else {
+          // Give supabase-js up to 2s to process the hash token
+          const unsub = supabase.auth.onAuthStateChange((_event, s) => {
+            if (s) { unsub.data.subscription.unsubscribe(); router.replace("/"); }
+          });
+          setTimeout(() => {
+            unsub.data.subscription.unsubscribe();
+            router.replace("/");
+          }, 2000);
+        }
+      });
       return;
     }
 
