@@ -80,7 +80,7 @@ export default function BottomNav() {
                 : undefined
             }
             className={`flex-1 flex flex-col items-center gap-1 pt-3 pb-2 text-[11px] font-medium transition-colors ${
-              active ? "text-indigo-600" : "text-gray-400 hover:text-gray-600"
+              active ? "text-indigo-600" : "text-gray-500 hover:text-gray-700"
             }`}
           >
             {item.icon}

@@ -28,6 +28,7 @@ export default function ScoreRing({ score, scale = "0-10", size = 64, label }: P
           cx={size / 2} cy={size / 2} r={r} fill="none"
           stroke={color} strokeWidth={6}
           strokeDasharray={`${dash} ${circ - dash}`} strokeLinecap="round"
+          style={{ transition: "stroke-dasharray 0.4s ease, stroke 0.3s ease" }}
         />
       </svg>
       <div className="flex flex-col items-center" style={{ marginTop: -(size / 2 + 16) }}>

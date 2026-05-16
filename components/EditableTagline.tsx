@@ -39,7 +39,7 @@ export default function EditableTagline({ storageKey, defaultText, className = "
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") { setEditing(false); } }}
-        className={`text-xs text-gray-400 bg-transparent border-b border-gray-300 focus:outline-none focus:border-indigo-400 min-w-0 w-full max-w-xs ${className}`}
+        className={`text-xs text-gray-400 bg-transparent border-b border-gray-300 focus:outline-none focus:border-indigo-400 transition-colors min-w-0 w-full max-w-xs ${className}`}
         placeholder={defaultText}
       />
     );

@@ -23,7 +23,7 @@ export default function ScoreBar({ score, label, showValue = true }: Props) {
       )}
       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all ${color}`}
+          className={`h-full rounded-full transition-all duration-300 ${color}`}
           style={{ width: `${pct}%` }}
         />
       </div>

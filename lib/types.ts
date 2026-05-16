@@ -207,27 +207,6 @@ export interface EvaluationProfile {
   activeGroupIds: string[] | null; // null = all groups; [] = no filter
 }
 
-// ── Habit ─────────────────────────────────────────────────────────────────────
-
-export type HabitFrequency = "daily" | "weekly";
-
-export interface Habit {
-  id: string;
-  name: string;
-  cue?: string;
-  frequency: HabitFrequency;
-  streakCount: number;
-  lastDoneAt?: string; // YYYY-MM-DD
-  createdAt: string;
-  archivedAt?: string;
-}
-
-export interface HabitLog {
-  id: string;
-  habitId: string;
-  loggedAt: string; // YYYY-MM-DD
-  skipped: boolean;
-}
 
 export interface GoalSuggestionItem {
   action: "add" | "update" | "remove";

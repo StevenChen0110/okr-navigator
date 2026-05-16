@@ -29,6 +29,11 @@ function getWeekStart(): string {
   return d.toISOString().slice(0, 10);
 }
 
+function ScoreChip({ score }: { score: number | undefined }) {
+  if (score === undefined) return null;
+  const color = score >= 7 ? "bg-indigo-50 text-indigo-600" : score >= 4 ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-400";
+  return <span className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${color}`}>{score.toFixed(1)}</span>;
+}
 
 export default function TasksPage() {
   const { user, requireAuth } = useAuth();
@@ -330,12 +335,6 @@ export default function TasksPage() {
 
   const periodItems = planItems.filter((i) => i.period === activePeriod);
 
-  function scoreChip(score: number | undefined) {
-    if (score === undefined) return null;
-    const color = score >= 7 ? "bg-indigo-50 text-indigo-600" : score >= 4 ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-400";
-    return <span className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${color}`}>{score.toFixed(1)}</span>;
-  }
-
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const tourCanAdvance =
@@ -349,14 +348,14 @@ export default function TasksPage() {
       {/* Page Header */}
       <div>
         <h1 className="text-xl font-semibold text-gray-900">{t("tasks.page.title")}</h1>
-        <p className="text-sm text-gray-400 mt-0.5">{t("tasks.page.subtitle")}</p>
+        <p className="text-xs text-gray-400 mt-0.5">{t("tasks.page.subtitle")}</p>
       </div>
 
       {/* ── Section 1: Idea Validator (Hero) ─────────────────────────── */}
       <section id="tour-idea-validator" className="space-y-3">
         {(ideaPhase === "idle" || ideaPhase === "clarifying") && (
           <div className="rounded-2xl border-2 border-indigo-100 bg-indigo-50/20 px-4 py-3 space-y-3">
-            <p className="text-[11px] font-semibold text-indigo-400 uppercase tracking-widest">{t("tasks.hero.label")}</p>
+            <p className="text-xs font-semibold text-indigo-600 uppercase tracking-widest">{t("tasks.hero.label")}</p>
           <div className="space-y-2">
             <div className="flex gap-2">
               <input
@@ -636,7 +635,7 @@ export default function TasksPage() {
                 <p className={`flex-1 text-sm min-w-0 truncate ${item.status === "completed" ? "line-through text-gray-400" : "text-gray-700"}`}>
                   {item.title}
                 </p>
-                {item.analysis && scoreChip(item.analysis.score)}
+                {item.analysis && <ScoreChip score={item.analysis.score} />}
                 <select
                   value={item.status}
                   onChange={(e) => updateTodoStatus(item.id, e.target.value as PlanStatus)}
@@ -680,7 +679,7 @@ export default function TasksPage() {
                         <div key={item.id} className="bg-white rounded-lg border border-gray-100 px-3 py-2">
                           <div className="flex items-center gap-2">
                             <p className="text-xs text-gray-700 flex-1 truncate">{item.title}</p>
-                            {scored && scoreChip(scored.score)}
+                            {scored && <ScoreChip score={scored.score} />}
                           </div>
                           {scored && (
                             <div className="mt-0.5 space-y-0.5">
