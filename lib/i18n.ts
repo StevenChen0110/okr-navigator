@@ -187,6 +187,13 @@ const zh: Record<string, string> = {
   "groupRoadmap.parallel": "可並行",
   "groupRoadmap.sequential": "循序",
   "groupRoadmap.empty": "此群組沒有目標",
+
+  "tasks.page.title": "AI 驗證想法",
+  "tasks.page.subtitle": "在行動前，先知道這件事值不值得做",
+  "tasks.hero.label": "輸入任何你在考慮的事",
+  "tasks.planner.badge": "副駕",
+  "tasks.divider": "驗證值得做後 → 加入行動計畫",
+  "tasks.tour.hintStep0": "先分析一個想法，再繼續",
 };
 
 const en: Record<string, string> = {
@@ -375,6 +382,13 @@ const en: Record<string, string> = {
   "groupRoadmap.parallel": "Parallel",
   "groupRoadmap.sequential": "Sequential",
   "groupRoadmap.empty": "No goals in this group",
+
+  "tasks.page.title": "Validate Ideas with AI",
+  "tasks.page.subtitle": "Know if it's worth doing before you start",
+  "tasks.hero.label": "Enter anything you're considering",
+  "tasks.planner.badge": "Co-pilot",
+  "tasks.divider": "Once verified → add to your action plan",
+  "tasks.tour.hintStep0": "Analyze an idea first",
 };
 
 const translations: Record<Lang, Record<string, string>> = { "zh-TW": zh, en };

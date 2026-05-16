@@ -338,28 +338,25 @@ export default function TasksPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const tourCanAdvance =
+    tourStep === 0 ? ideaAnalysis !== null :
+    tourStep === 1 ? planItems.length > 0 :
+    true;
+
   return (
     <div className="max-w-xl mx-auto px-4 py-6 space-y-8">
 
       {/* Page Header */}
       <div>
-        <h1 className="text-xl font-semibold text-gray-900">
-          {language === "zh-TW" ? "AI 驗證想法" : "Validate Ideas with AI"}
-        </h1>
-        <p className="text-sm text-gray-400 mt-0.5">
-          {language === "zh-TW"
-            ? "在行動前，先知道這件事值不值得做"
-            : "Know if it's worth doing before you start"}
-        </p>
+        <h1 className="text-xl font-semibold text-gray-900">{t("tasks.page.title")}</h1>
+        <p className="text-sm text-gray-400 mt-0.5">{t("tasks.page.subtitle")}</p>
       </div>
 
       {/* ── Section 1: Idea Validator (Hero) ─────────────────────────── */}
       <section id="tour-idea-validator" className="space-y-3">
         {(ideaPhase === "idle" || ideaPhase === "clarifying") && (
           <div className="rounded-2xl border-2 border-indigo-100 bg-indigo-50/20 px-4 py-3 space-y-3">
-            <p className="text-[11px] font-semibold text-indigo-400 uppercase tracking-widest">
-              {language === "zh-TW" ? "輸入任何你在考慮的事" : "Enter anything you're considering"}
-            </p>
+            <p className="text-[11px] font-semibold text-indigo-400 uppercase tracking-widest">{t("tasks.hero.label")}</p>
           <div className="space-y-2">
             <div className="flex gap-2">
               <input
@@ -548,7 +545,7 @@ export default function TasksPage() {
       <div className="flex items-center gap-3">
         <div className="flex-1 h-px bg-gray-100" />
         <span className="text-[10px] font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">
-          {language === "zh-TW" ? "驗證值得做後 → 加入行動計畫" : "Once verified → add to your action plan"}
+          {t("tasks.divider")}
         </span>
         <div className="flex-1 h-px bg-gray-100" />
       </div>
@@ -561,9 +558,7 @@ export default function TasksPage() {
               <h2 className="text-sm font-semibold text-gray-700">
                 {language === "zh-TW" ? "待辦規劃" : "Todo Planner"}
               </h2>
-              <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full uppercase tracking-wide">
-                {language === "zh-TW" ? "副駕" : "Co-pilot"}
-              </span>
+              <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full uppercase tracking-wide">{t("tasks.planner.badge")}</span>
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
               {language === "zh-TW"
@@ -770,16 +765,10 @@ export default function TasksPage() {
           language={language as "zh-TW" | "en"}
           onAdvance={advanceTour}
           onComplete={completeTour}
-          canAdvance={
-            tourStep === 0 ? ideaAnalysis !== null :
-            tourStep === 1 ? planItems.length > 0 :
-            true
-          }
+          canAdvance={tourCanAdvance}
           canAdvanceHint={
-            tourStep === 0
-              ? (language === "zh-TW" ? "先分析一個想法，再繼續" : "Analyze an idea first")
-              : tourStep === 1
-              ? (language === "zh-TW" ? "先新增一條任務" : "Add at least one task first")
+            tourStep === 0 ? t("tasks.tour.hintStep0")
+              : tourStep === 1 ? (language === "zh-TW" ? "先新增一條任務" : "Add at least one task first")
               : undefined
           }
         />
