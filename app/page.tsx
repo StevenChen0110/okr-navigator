@@ -18,7 +18,7 @@ import {
 import { fetchIdeas, fetchObjectives, saveIdea } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems } from "@/lib/storage";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getUserProfile } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import RichTextArea from "@/components/RichTextArea";
@@ -53,7 +53,7 @@ const GUEST_OBJECTIVES: Objective[] = [
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
+type IdeaPhase = "idle" | "rephrasing" | "clarifying" | "analyzing" | "result" | "saving";
 type PlanPhase = "idle" | "analyzing" | "result";
 type ActivePanel = "idea" | "plan" | null;
 
@@ -86,6 +86,7 @@ export default function HomePage() {
   const [ideaError, setIdeaError] = useState("");
   const [ideaClarifyQ, setIdeaClarifyQ] = useState("");
   const [ideaClarifyA, setIdeaClarifyA] = useState("");
+  const [ideaRephraseSuggestion, setIdeaRephraseSuggestion] = useState("");
   const [ideaMessages, setIdeaMessages] = useState<ChatMsg[]>([]);
   const [ideaChatInput, setIdeaChatInput] = useState("");
   const [ideaChatLoading, setIdeaChatLoading] = useState(false);
@@ -111,11 +112,15 @@ export default function HomePage() {
   const [planChatLoading, setPlanChatLoading] = useState(false);
   const planChatRef = useRef<HTMLDivElement>(null);
 
+  const [userBackground, setUserBackground] = useState<string | null>(null);
+
   // Load data
   useEffect(() => {
     setEvalProfile(getEvaluationProfile());
     setGroups(getObjGroups());
     setPlanItems(getPlanItems());
+    const profile = getUserProfile();
+    if (profile?.statement) setUserBackground(profile.statement);
   }, []);
 
   useEffect(() => {
@@ -144,6 +149,21 @@ export default function HomePage() {
     if (activeObjectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
     setIdeaError("");
 
+    // Rephrase short/vague input (< 20 chars)
+    if (ideaTitle.trim().length < 20 && isQuickIdea) {
+      setIdeaPhase("rephrasing");
+      try {
+        const { rephrased } = await callAI<{ rephrased: string | null }>(
+          "rephraseInput", { ideaTitle: ideaTitle.trim(), userBackground }
+        );
+        if (rephrased) {
+          setIdeaRephraseSuggestion(rephrased);
+          return; // wait for user confirmation in UI
+        }
+      } catch { /* fall through */ }
+      setIdeaPhase("idle");
+    }
+
     if (isQuickIdea) {
       setIdeaPhase("clarifying");
       try {
@@ -160,16 +180,17 @@ export default function HomePage() {
     await runIdeaAnalysis();
   }
 
-  async function runIdeaAnalysis(extraNotes?: string) {
+  async function runIdeaAnalysis(extraNotes?: string, titleOverride?: string) {
     setIdeaPhase("analyzing");
     setIdeaError("");
     try {
+      const effectiveTitle = titleOverride ?? ideaTitle;
       const combined = [ideaNotes, extraNotes].filter(Boolean).join("\n");
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
-        ideaTitle,
+        ideaTitle: effectiveTitle,
         ideaNotes: combined,
         objectives: activeObjectives,
-        evaluationContext: buildEvaluationPrompt(evalProfile),
+        evaluationContext: buildEvaluationPrompt(evalProfile, userBackground),
         groups,
       });
       setIdeaAnalysis(result);
@@ -240,6 +261,7 @@ export default function HomePage() {
     setIdeaError("");
     setIdeaClarifyQ("");
     setIdeaClarifyA("");
+    setIdeaRephraseSuggestion("");
     setIdeaMessages([]);
     setSuggestedLinks([]);
     setSelectedLinkIds(new Set());
@@ -687,6 +709,40 @@ export default function HomePage() {
                   : "Enter an idea and see how much it helps your goals"}
               </p>
             </div>
+
+            {ideaPhase === "rephrasing" && !ideaRephraseSuggestion && (
+              <div className="flex items-center gap-2 text-xs text-gray-400 px-1">
+                <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                {language === "zh-TW" ? "AI 理解中…" : "AI is interpreting…"}
+              </div>
+            )}
+
+            {ideaPhase === "rephrasing" && ideaRephraseSuggestion && (
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 space-y-2.5">
+                <p className="text-xs font-semibold text-indigo-600">
+                  {language === "zh-TW" ? "你的意思是：" : "Did you mean:"}
+                </p>
+                <input
+                  value={ideaRephraseSuggestion}
+                  onChange={(e) => setIdeaRephraseSuggestion(e.target.value)}
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { const t = ideaRephraseSuggestion; setIdeaTitle(t); setIdeaRephraseSuggestion(""); runIdeaAnalysis(undefined, t); }}
+                    className="flex-1 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700"
+                  >
+                    {language === "zh-TW" ? "對，用這個分析 →" : "Yes, analyze this →"}
+                  </button>
+                  <button
+                    onClick={() => { setIdeaRephraseSuggestion(""); setIdeaPhase("idle"); }}
+                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50"
+                  >
+                    {language === "zh-TW" ? "用原本的" : "Use original"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {(ideaPhase === "idle" || ideaPhase === "clarifying") && (
               <div className="space-y-2">

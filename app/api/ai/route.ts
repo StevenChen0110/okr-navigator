@@ -4,6 +4,7 @@ import { VALID_PROVIDERS } from "@/lib/llm";
 import {
   analyzeIdea,
   clarifyIdea,
+  rephraseInput,
   classifyKR,
   refineObjective,
   suggestKeyResults,
@@ -131,6 +132,15 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.currentTitle as string,
           payload.userInstruction as string,
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "rephraseInput": {
+        const result = await rephraseInput(
+          apiKey, model, language,
+          payload.ideaTitle as string,
+          (payload.userBackground as string | null) ?? null,
           provider,
         );
         return NextResponse.json(result);

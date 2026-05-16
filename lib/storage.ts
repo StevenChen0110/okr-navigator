@@ -8,7 +8,13 @@ const KEYS = {
   EVAL_PROFILE: "loco_eval_profile",
   OBJ_GROUPS: "loco_obj_groups",
   PLAN_ITEMS: "loco_plan_items",
+  USER_PROFILE: "loco_user_profile",
 } as const;
+
+export interface UserProfile {
+  statement: string;
+  createdAt: string;
+}
 
 function load<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -105,6 +111,14 @@ export function getPlanItems(): PlanItem[] {
 
 export function savePlanItems(items: PlanItem[]): void {
   save(KEYS.PLAN_ITEMS, items);
+}
+
+// User Profile
+export function getUserProfile(): UserProfile | null {
+  return load<UserProfile | null>(KEYS.USER_PROFILE, null);
+}
+export function saveUserProfile(profile: UserProfile): void {
+  save(KEYS.USER_PROFILE, profile);
 }
 
 // Chat history (key = "goalBuilder" | "optimize" | "roadmap_<id>" | "groupRoadmap_<id>")

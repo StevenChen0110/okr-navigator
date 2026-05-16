@@ -210,6 +210,23 @@ Output ONLY the revised KR title as plain text. No quotes, no markdown.`,
 
 // ── Idea Clarification Gate ──────────────────────────────────────────────────
 
+export async function rephraseInput(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  ideaTitle: string, userBackground: string | null,
+  provider: AIProvider = "anthropic",
+): Promise<{ rephrased: string | null }> {
+  const bgContext = userBackground ? `\nUser background: ${userBackground}` : "";
+  const text = await complete(provider, apiKey, model,
+    `You help users clarify vague idea titles before analysis.${bgContext}
+If the title is already clear and specific (≥3 meaningful words that describe a concrete action or goal), return null.
+If the title is short or vague, rewrite it as one clear sentence that captures the most likely intent given the user's background.
+${langInstruction(language)}
+Output ONLY valid JSON: {"rephrased":"rewritten title as one sentence"} OR {"rephrased":null}
+No markdown fences.`,
+    `Idea title: ${ideaTitle}`, 80);
+  return JSON.parse(extractJSON(stripFences(text)));
+}
+
 export async function clarifyIdea(
   apiKey: string, model: string, language: "zh-TW" | "en",
   ideaTitle: string, objectives: Objective[],

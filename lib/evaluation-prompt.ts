@@ -38,8 +38,12 @@ const MODE_PROMPT: Record<EvalMode, string> = {
     "De-prioritize one-off tasks with no lasting effect.",
 };
 
-export function buildEvaluationPrompt(profile: EvaluationProfile): string {
+export function buildEvaluationPrompt(profile: EvaluationProfile, userBackground?: string | null): string {
   const lines: string[] = ["\n\nUSER EVALUATION CONTEXT:", MODE_PROMPT[profile.mode]];
+
+  if (userBackground?.trim()) {
+    lines.push(`\nUser background: "${userBackground.trim()}" — factor this into your reasoning tone and relevance judgments.`);
+  }
 
   const w = profile.priorityWeights ?? DEFAULT_EVALUATION_PROFILE.priorityWeights;
   const gw = profile.groupPriorityWeights ?? DEFAULT_EVALUATION_PROFILE.groupPriorityWeights;

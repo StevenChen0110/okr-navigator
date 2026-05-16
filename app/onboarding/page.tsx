@@ -7,7 +7,7 @@ import { Objective, KeyResult, WeeklyLog, LogItem, AlignmentReport } from "@/lib
 import { saveObjective, saveWeeklyLog, saveLogItems, saveReport } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useLanguage } from "@/components/LanguageProvider";
-import { getSettings, saveSettings } from "@/lib/storage";
+import { getSettings, saveSettings, saveUserProfile } from "@/lib/storage";
 import ScoreRing from "@/components/ScoreRing";
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
@@ -37,6 +37,9 @@ export default function OnboardingPage() {
   const [confirmedTitle, setConfirmedTitle] = useState("");
   const [krInputs, setKrInputs] = useState(["", "", ""]);
   const [savedObjective, setSavedObjective] = useState<Objective | null>(null);
+
+  // Step 6 state
+  const [profileStatement, setProfileStatement] = useState("");
 
   // Step 4 state — structured item list instead of free-text
   const [weekItems, setWeekItems] = useState<string[]>([]);
@@ -202,6 +205,9 @@ export default function OnboardingPage() {
   }
 
   function handleComplete() {
+    if (profileStatement.trim()) {
+      saveUserProfile({ statement: profileStatement.trim(), createdAt: new Date().toISOString() });
+    }
     saveSettings({ ...getSettings(), onboardingCompleted: true });
     router.push("/tasks");
   }
@@ -520,10 +526,29 @@ export default function OnboardingPage() {
           <div className="step-enter space-y-6">
             <div className="space-y-2">
               <h2 className="text-xl font-semibold text-gray-900">
-                {zh ? "偏好設定" : "Preferences"}
+                {zh ? "最後一步：告訴 AI 你是誰" : "Last step: tell AI who you are"}
               </h2>
               <p className="text-sm text-gray-400">
-                {zh ? "之後可以在設定頁修改" : "You can change these in settings later"}
+                {zh ? "讓 AI 給你更個人化的分析（選填，之後可修改）" : "Help AI give you more personalized analysis (optional)"}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-500">
+                {zh ? "用一句話形容你現在的狀態" : "Describe your current situation in one sentence"}
+              </label>
+              <textarea
+                value={profileStatement}
+                onChange={(e) => setProfileStatement(e.target.value)}
+                placeholder={zh
+                  ? "例如：在科技業工作 3 年，想轉型做自己的產品"
+                  : "e.g. 3 years in tech, trying to build my own product on the side"}
+                rows={2}
+                autoFocus
+                className="w-full rounded-xl border border-indigo-200 bg-indigo-50/20 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white resize-none transition-colors"
+              />
+              <p className="text-[11px] text-gray-400">
+                {zh ? "這句話會讓 AI 分析時帶入你的背景脈絡" : "AI will use this as context when analyzing your ideas"}
               </p>
             </div>
 
@@ -535,15 +560,6 @@ export default function OnboardingPage() {
                 </div>
                 <span className="text-sm text-indigo-600 font-medium">{zh ? "週日晚上" : "Sunday evening"}</span>
               </div>
-            </div>
-
-            <div className="rounded-xl border border-dashed border-gray-200 p-4 space-y-2">
-              <p className="text-sm font-medium text-gray-500">{zh ? "外部數據連接（選填，之後設定）" : "External data sources (optional, set up later)"}</p>
-              <p className="text-xs text-gray-400">
-                {zh
-                  ? "Google Calendar、GitHub 可以自動補充你的週記錄"
-                  : "Google Calendar, GitHub can auto-populate your weekly log"}
-              </p>
             </div>
 
             <button
