@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { useLanguage } from "./LanguageProvider";
+import { useAIWorkspace } from "./AIWorkspaceContext";
 
 const NAV_ITEMS = [
   {
@@ -61,6 +62,7 @@ export default function BottomNav() {
   const pathname = usePathname();
   const { user, openLogin } = useAuth();
   const { t } = useLanguage();
+  const { toggle, isOpen } = useAIWorkspace();
 
   return (
     <nav
@@ -88,6 +90,20 @@ export default function BottomNav() {
           </Link>
         );
       })}
+
+      {/* AI Workspace button */}
+      <button
+        onClick={toggle}
+        className={`flex-1 flex flex-col items-center gap-1 pt-3 pb-2 text-[11px] font-medium transition-colors ${
+          isOpen ? "text-indigo-600" : "text-gray-500 hover:text-gray-700"
+        }`}
+      >
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 5a1.5 1.5 0 0 1 1.5-1.5h11A1.5 1.5 0 0 1 17 5v8.5a1.5 1.5 0 0 1-1.5 1.5H11l-3.5 2.5v-2.5H4.5A1.5 1.5 0 0 1 3 13.5V5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M7 9h6M7 12h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+        AI
+      </button>
     </nav>
   );
 }

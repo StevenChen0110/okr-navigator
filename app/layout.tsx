@@ -5,6 +5,8 @@ import Sidebar from "@/components/Sidebar";
 import BottomNav from "@/components/BottomNav";
 import AuthProvider from "@/components/AuthProvider";
 import { LanguageProvider } from "@/components/LanguageProvider";
+import { AIWorkspaceProvider } from "@/components/AIWorkspaceContext";
+import AIWorkspaceDrawer from "@/components/AIWorkspaceDrawer";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 
@@ -23,11 +25,14 @@ export default function RootLayout({
       <body className="flex h-screen bg-gray-50 text-gray-900 antialiased">
         <AuthProvider>
           <LanguageProvider>
-            <Sidebar />
-            <main className="flex-1 overflow-y-auto pb-36 md:pb-10">
-              {children}
-            </main>
-            <BottomNav />
+            <AIWorkspaceProvider>
+              <Sidebar />
+              <main className="flex-1 overflow-y-auto pb-36 md:pb-10">
+                {children}
+              </main>
+              <BottomNav />
+              <AIWorkspaceDrawer />
+            </AIWorkspaceProvider>
           </LanguageProvider>
         </AuthProvider>
       </body>
