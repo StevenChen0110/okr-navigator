@@ -1,6 +1,6 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, Role } from "./types";
 
 export interface ReportItem {
   content: string;
@@ -865,4 +865,29 @@ No markdown fences.`,
     `Text to parse:\n${documentText.slice(0, 2000)}`, 512);
   const parsed = JSON.parse(extractJSON(stripFences(text)));
   return Array.isArray(parsed) ? parsed.filter((s) => typeof s === "string").slice(0, 10) : [];
+}
+
+// ── Monthly Action Suggestions (ROLE-002) ────────────────────────────────────
+
+export async function suggestMonthlyActions(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  roles: Pick<Role, "name" | "emoji">[],
+  objectives: Objective[],
+  provider: AIProvider = "anthropic",
+): Promise<Array<{ action: string; roleEmoji: string; objectiveTitle: string }>> {
+  const rolesText = roles.map((r) => `${r.emoji} ${r.name}`).join("、") || (language === "zh-TW" ? "未設定" : "not set");
+  const objText = objectives.slice(0, 3).map((o) => `- ${o.title}`).join("\n") || (language === "zh-TW" ? "尚無目標" : "none yet");
+  const text = await complete(
+    provider, apiKey, model,
+    `You are a monthly planning advisor. Suggest 3 specific, achievable focus actions for this month.
+Each action should be completable in 1–4 weeks and directly support one of the user's objectives.
+${langInstruction(language)}
+Output ONLY valid JSON array (3 items):
+[{"action":"one concrete sentence","roleEmoji":"one emoji matching a role","objectiveTitle":"related objective title or empty string"}]
+No markdown fences.`,
+    `Roles: ${rolesText}\nObjectives:\n${objText}`,
+    384,
+  );
+  const parsed = JSON.parse(extractJSON(stripFences(text)));
+  return Array.isArray(parsed) ? parsed.slice(0, 3) : [];
 }

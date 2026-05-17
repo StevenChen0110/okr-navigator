@@ -6,9 +6,9 @@ import { v4 as uuid } from "uuid";
 import {
   Idea, Objective, IdeaAnalysis, IdeaKRLink, IdeaStatus,
   EvaluationProfile, ObjGroup, PlanItem, PlanPeriod, PlanStatus, PlanAnalysisResult,
-  StoredMessage, WeeklyLog, LogItem,
+  StoredMessage, WeeklyLog, LogItem, Role,
 } from "@/lib/types";
-import { fetchObjectives, saveIdea, saveWeeklyLog, saveLogItems, saveReport } from "@/lib/db";
+import { fetchObjectives, saveIdea, saveWeeklyLog, saveLogItems, saveReport, fetchRoles } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
 import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, saveSettings } from "@/lib/storage";
@@ -75,6 +75,21 @@ export default function TasksPage() {
   }>>([]);
   const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
   const ideaChatRef = useRef<HTMLDivElement>(null);
+  const [ideaAutoStarted, setIdeaAutoStarted] = useState(false);
+
+  // Roles + monthly tips (ROLE-001/002)
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [monthlyTips, setMonthlyTips] = useState<Array<{ action: string; roleEmoji: string; objectiveTitle: string }>>([]);
+  const [monthlyTipsLoading, setMonthlyTipsLoading] = useState(false);
+  const [monthlyTipsDismissed, setMonthlyTipsDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const saved = localStorage.getItem("monthlyTipsDismissed");
+      if (!saved) return false;
+      const { month } = JSON.parse(saved);
+      return month === new Date().toISOString().slice(0, 7);
+    } catch { return false; }
+  });
 
   // Plan todos state
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
@@ -96,7 +111,7 @@ export default function TasksPage() {
   }, []);
 
   useEffect(() => {
-    if (!user) { setObjectives([]); return; }
+    if (!user) { setObjectives([]); setRoles([]); return; }
     fetchObjectives().then((objs) => {
       setObjectives(objs);
       const settings = getSettings();
@@ -105,6 +120,22 @@ export default function TasksPage() {
         return;
       }
       if (!settings.tourCompleted) setTourStep(0);
+
+      // Load roles, then generate monthly tips if not cached
+      fetchRoles().then((r) => {
+        setRoles(r);
+        if (monthlyTipsDismissed || objs.length === 0) return;
+        const cacheKey = `monthlyTips_${new Date().toISOString().slice(0, 7)}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) { try { setMonthlyTips(JSON.parse(cached)); } catch { /* ignore */ } return; }
+        setMonthlyTipsLoading(true);
+        callAI<Array<{ action: string; roleEmoji: string; objectiveTitle: string }>>(
+          "suggestMonthlyActions", { roles: r.map((x) => ({ name: x.name, emoji: x.emoji })), objectives: objs }
+        ).then((tips) => {
+          setMonthlyTips(tips);
+          localStorage.setItem(cacheKey, JSON.stringify(tips));
+        }).catch(() => { /* silently fail */ }).finally(() => setMonthlyTipsLoading(false));
+      }).catch(() => { /* roles table may not have data yet */ });
     }).catch(console.error);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -269,7 +300,22 @@ export default function TasksPage() {
     setIdeaPhase("idle"); setIdeaAnalysis(null); setIdeaError("");
     setIdeaClarifyQ(""); setIdeaClarifyA(""); setIdeaMessages([]);
     setSuggestedLinks([]); setSelectedLinkIds(new Set());
+    setIdeaAutoStarted(false);
   }
+
+  // IDEA-002: auto first message when analysis result appears
+  useEffect(() => {
+    if (ideaPhase !== "result" || ideaAutoStarted || !ideaAnalysis) return;
+    setIdeaAutoStarted(true);
+    setIdeaChatLoading(true);
+    callAI<{ content: string }>("chatPlanCoach", {
+      messages: [{ role: "user", content: "__auto_start__" }],
+      context: { type: "idea", ideaTitle, ideaScore: ideaAnalysis.finalScore, ideaSummary: ideaAnalysis.summary, autoStart: true },
+      objectives,
+    }).then(({ content }) => {
+      setIdeaMessages([{ role: "assistant", content }]);
+    }).catch(() => { /* silently ignore */ }).finally(() => setIdeaChatLoading(false));
+  }, [ideaPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleIdeaChat() {
     const text = ideaChatInput.trim();
@@ -388,6 +434,50 @@ export default function TasksPage() {
         <h1 className="text-xl font-semibold text-gray-900">{t("tasks.page.title")}</h1>
         <p className="text-xs text-gray-400 mt-0.5">{t("tasks.page.subtitle")}</p>
       </div>
+
+      {/* ROLE-002: Monthly AI suggestions */}
+      {user && !monthlyTipsDismissed && (monthlyTips.length > 0 || monthlyTipsLoading) && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+              {language === "zh-TW" ? "本月 AI 建議" : "Monthly AI Picks"}
+            </p>
+            <button
+              onClick={() => {
+                localStorage.setItem("monthlyTipsDismissed", JSON.stringify({ month: new Date().toISOString().slice(0, 7) }));
+                setMonthlyTipsDismissed(true);
+              }}
+              className="text-[10px] text-gray-300 hover:text-gray-400"
+            >
+              {language === "zh-TW" ? "本月不再顯示" : "Dismiss"}
+            </button>
+          </div>
+          {monthlyTipsLoading && !monthlyTips.length && (
+            <p className="text-xs text-gray-400 animate-pulse">{language === "zh-TW" ? "AI 生成建議中…" : "Generating suggestions…"}</p>
+          )}
+          {monthlyTips.map((tip, i) => (
+            <div key={i} className="flex items-start gap-3 bg-white rounded-xl border border-gray-100 px-3 py-3">
+              <span className="text-lg shrink-0">{tip.roleEmoji}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-gray-700 leading-relaxed">{tip.action}</p>
+                {tip.objectiveTitle && (
+                  <p className="text-[10px] text-indigo-400 mt-0.5 truncate">→ {tip.objectiveTitle}</p>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  const newItem: PlanItem = { id: uuid(), title: tip.action, period: "month", status: "active", createdAt: new Date().toISOString() };
+                  const next = [newItem, ...planItems];
+                  setPlanItems(next); savePlanItems(next);
+                }}
+                className="text-xs text-indigo-600 border border-indigo-200 rounded-lg px-2 py-1 hover:bg-indigo-50 shrink-0"
+              >
+                {language === "zh-TW" ? "+ 加入" : "+ Add"}
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
 
       {/* ── Section 1: Idea Validator (Hero) ─────────────────────────── */}
       <section id="tour-idea-validator" className="space-y-3">
@@ -568,6 +658,20 @@ export default function TasksPage() {
                     </div>
                   )}
                 </div>
+                {ideaMessages.length > 0 && ideaMessages[ideaMessages.length - 1].role === "assistant" && !ideaChatLoading && (
+                  <button
+                    onClick={() => {
+                      const lastMsg = ideaMessages[ideaMessages.length - 1].content;
+                      const title = lastMsg.replace(/^[•\-＊*]\s*/, "").slice(0, 60).trim() || ideaTitle;
+                      const newItem: PlanItem = { id: uuid(), title, period: activePeriod, status: "active", createdAt: new Date().toISOString() };
+                      const next = [newItem, ...planItems];
+                      setPlanItems(next); savePlanItems(next);
+                    }}
+                    className="text-xs text-indigo-600 border border-indigo-200 rounded-lg px-3 py-1.5 hover:bg-indigo-50 w-full text-left"
+                  >
+                    {language === "zh-TW" ? "+ 建立任務" : "+ Create task"}
+                  </button>
+                )}
                 <div className="flex gap-2">
                   <input value={ideaChatInput} onChange={(e) => setIdeaChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleIdeaChat()}

@@ -261,3 +261,18 @@ export interface StoredMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+// ── Roles ────────────────────────────────────────────────────────────────────
+
+export interface Role {
+  id: string;
+  name: string;
+  emoji: string;
+  layer: 0 | 1 | 2 | 3;
+  inferred: boolean;
+  userConfirmed: boolean;
+  weight: number;
+  color?: string;
+  description?: string;
+  createdAt: string;
+}

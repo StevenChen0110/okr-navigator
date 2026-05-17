@@ -7,7 +7,10 @@
       "Bash(git push *)",
       "mcp__claude_ai_Vercel__list_deployments",
       "mcp__claude_ai_Vercel__get_project",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__list_tables",
+      "mcp__claude_ai_Supabase__apply_migration"
     ]
   }
 }

@@ -22,6 +22,7 @@ import {
   chatPlanCoach,
   classifyLogItems,
   generateAlignmentReport,
+  suggestMonthlyActions,
 } from "@/lib/claude";
 import type { ReportItem } from "@/lib/claude";
 
@@ -250,6 +251,15 @@ export async function POST(req: NextRequest) {
           apiKey, model, language,
           payload.objectives as Objective[],
           payload.items as ReportItem[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "suggestMonthlyActions": {
+        const result = await suggestMonthlyActions(
+          apiKey, model, language,
+          payload.roles as Array<{ name: string; emoji: string }>,
+          payload.objectives as Objective[],
           provider,
         );
         return NextResponse.json(result);

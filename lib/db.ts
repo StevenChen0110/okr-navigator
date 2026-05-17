@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { Objective, Idea, TaskStatus, IdeaStatus, WeeklyLog, LogItem, AlignmentReport } from "./types";
+import { Objective, Idea, TaskStatus, IdeaStatus, WeeklyLog, LogItem, AlignmentReport, Role } from "./types";
 
 async function uid(): Promise<string> {
   const {
@@ -249,5 +249,50 @@ export async function saveReport(report: AlignmentReport): Promise<void> {
     log_id: report.logId,
     created_at: report.createdAt,
   });
+  if (error) throw error;
+}
+
+// ── Roles ─────────────────────────────────────────────────────────────────────
+
+export async function fetchRoles(): Promise<Role[]> {
+  const { data, error } = await supabase
+    .from("roles")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    emoji: r.emoji ?? "🎯",
+    layer: (r.layer ?? 0) as 0 | 1 | 2 | 3,
+    inferred: r.inferred ?? false,
+    userConfirmed: r.user_confirmed ?? true,
+    weight: r.weight ?? 1.0,
+    color: r.color ?? undefined,
+    description: r.description ?? undefined,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function saveRole(role: Role): Promise<void> {
+  const userId = await uid();
+  const { error } = await supabase.from("roles").upsert({
+    id: role.id,
+    user_id: userId,
+    name: role.name,
+    emoji: role.emoji,
+    layer: role.layer,
+    inferred: role.inferred,
+    user_confirmed: role.userConfirmed,
+    weight: role.weight,
+    color: role.color ?? null,
+    description: role.description ?? null,
+    created_at: role.createdAt,
+  });
+  if (error) throw error;
+}
+
+export async function deleteRole(id: string): Promise<void> {
+  const { error } = await supabase.from("roles").delete().eq("id", id);
   if (error) throw error;
 }
