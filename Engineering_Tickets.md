@@ -1,481 +1,523 @@
 # OKR Navigator — Engineering Ticket 清單
 
-**對應版本**：PRD v2.0 / Roadmap v2  
-**日期**：2026-04-18  
-**優先順序**：Phase 1（P0 阻塞）> Phase 1（核心功能）> Phase 2 > Phase 3
+**對應版本**：PRD v3.0  
+**日期**：2026-05-17  
+**優先順序**：MVP → Phase 2 → Phase 3 → Design Review
+
+標籤說明：
+- `MVP` — 核心功能，目前衝刺
+- `Phase 2` — 體驗深化，下一輪
+- `Phase 3` — 長期願景
+- `Design Review` — 需先討論設計才能立工程任務
 
 ---
 
-## 🔴 Phase 0 — 安全阻塞（上線前必須完成）
+## FIX — Bug 修復
 
 ---
 
-### [SEC-01] 將 Claude API Key 移至後端 Proxy
+### [FIX-001] 跨裝置登入回復性（手機 Google 登入失敗） `MVP`
 
-**問題**：`NEXT_PUBLIC_CLAUDE_API_KEY` 暴露於瀏覽器，任何人打開 DevTools 都能取得。
-
-**影響範圍**：
-- `lib/claude.ts` — 所有 `getClient(apiKey)` 呼叫
-- `lib/gemini.ts` — 同上
-- `app/okr/new/page.tsx` — 取用 `process.env.NEXT_PUBLIC_CLAUDE_API_KEY`
-- `app/idea/new/page.tsx` — 同上
-
-**做法**：
-1. 建立 `app/api/claude/route.ts`（Next.js Route Handler），在伺服器端持有 `CLAUDE_API_KEY`（非 NEXT_PUBLIC）
-2. `lib/claude.ts` 的所有函數改為呼叫 `/api/claude` endpoint，不再直接建立 Anthropic client
-3. 移除所有頁面中 `process.env.NEXT_PUBLIC_CLAUDE_API_KEY` 的引用
-4. `.env.local` 中將 `NEXT_PUBLIC_CLAUDE_API_KEY` 更名為 `CLAUDE_API_KEY`
-
-**驗收**：瀏覽器 Network tab 中看不到 API Key；伺服器 log 可見 API 呼叫成功。
-
----
-
-### [SEC-02] 確認 Supabase RLS 政策已啟用
-
-**問題**：`lib/db.ts` 的 `uid()` 只在 JS 層做 user_id 過濾，若 Supabase RLS 未啟用，任何已登入用戶可查詢他人資料。
-
-**影響範圍**：Supabase Dashboard（非程式碼）+ `lib/db.ts` 驗證
-
-**做法**：
-1. 在 Supabase Dashboard → Authentication → Policies，確認 `objectives`、`ideas`、`user_backgrounds` 三張表均已啟用 RLS
-2. 每張表加入 Policy：`SELECT/INSERT/UPDATE/DELETE` 只允許 `auth.uid() = user_id`
-3. 在 `lib/db.ts` 中移除冗餘的手動 user_id 過濾（RLS 啟用後 Supabase 自動處理）
-4. 寫一個測試：用 User A 的 token 嘗試查詢 User B 的資料，應回傳空陣列
-
-**驗收**：跨用戶資料隔離測試通過。
-
----
-
-## 🟠 Phase 1 — 核心功能（Dashboard 改版）
-
----
-
-### [FEAT-01] 新增 Objective 優先級欄位
-
-**PRD 對應**：5.2
-
-**影響範圍**：
-- `lib/types.ts` — `OKRMeta` 介面新增 `priority?: 1 | 2 | 3`
-- `lib/db.ts` — `saveObjective` / `fetchObjectives` 讀寫 `meta.priority`
-- `app/okr/new/page.tsx` — 建立 Objective 時加入優先級選擇 UI
-- `app/okr/[id]/page.tsx`（若存在）或 OKR 列表頁 — 顯示優先級並支援直接修改
-
-**具體修改**：
-
-```typescript
-// lib/types.ts
-export interface OKRMeta {
-  okrType?: "committed" | "aspirational";
-  timeframe?: string;
-  motivation?: string;
-  snapshot?: string;
-  priority?: 1 | 2 | 3; // 新增
-}
-```
-
-OKR 列表頁每個 Objective 旁加入優先級選擇器（三個按鈕：1 / 2 / 3），點擊後呼叫 `saveObjective` 更新，不需進入編輯頁。
-
-**驗收**：
-- 建立 Objective 時可選優先級，預設 2
-- OKR 列表頁可直接修改，儲存後資料庫確認更新
-- 修改優先級後 Dashboard 排序即時變化（需 FEAT-02 完成後驗收）
-
----
-
-### [FEAT-02] Dashboard 改版：Idea 加權貢獻排行榜
-
-**PRD 對應**：5.3
-
-**影響範圍**：
-- `app/page.tsx` — 大幅重構 Dashboard 區塊
-
-**核心計算邏輯**（前端，不需 API 呼叫）：
-
-```typescript
-function calcWeightedScore(idea: Idea, objectives: Objective[]): number {
-  if (!idea.analysis) return -1; // 未分析排最後
-
-  const objMap = Object.fromEntries(objectives.map(o => [o.id, o]));
-  let weightedSum = 0;
-  let weightSum = 0;
-
-  for (const objScore of idea.analysis.objectiveScores) {
-    const obj = objMap[objScore.objectiveId];
-    if (!obj) continue;
-    const priority = obj.meta?.priority ?? 2;
-    weightedSum += objScore.overallScore * priority;
-    weightSum += priority;
-  }
-
-  return weightSum > 0 ? weightedSum / weightSum : 0;
-}
-```
-
-**畫面結構**：
-- 移除現有的多 Tab 結構（優先順序 / 指派 / 進度）
-- 改為單一清單，每列顯示：Idea 標題、加權分數（一位小數）、展開鍵（`›`）
-- 展開後顯示：`analysis.reasoning` 或新版帶進度脈絡的理由（FEAT-04 完成後替換）
-- done 狀態的 Task Idea 排在最後，視覺灰階
-- 未分析的 Idea 排在 done 之前，顯示「待評估」badge
-
-**驗收**：
-- 所有已分析 Idea 依加權分數排序
-- 修改目標優先級後，排序 1 秒內更新（狀態 re-render，不需 API）
-- 展開/收合理由，頁面不跳動（高度動畫或 `min-height` 預留）
-- 完成 Task 後該 Idea 即時移至底部
-
----
-
-### [FEAT-03] Idea 輸入簡化：快速評估模式
-
-**PRD 對應**：5.4
-
-**影響範圍**：
-- `app/idea/new/page.tsx` — 重構輸入流程
-
-**修改邏輯**：
-1. 頁面進入時只顯示標題輸入框
-2. 標題輸入後出現「快速評估」按鈕
-3. 「為什麼要做」、「預期成效」、「備註」三個欄位移入可展開的「補充說明（選填）」區塊，預設收合
-4. 點擊「快速評估」→ 以純標題呼叫 `analyzeIdea`（why/outcome/notes 傳空字串）
-5. 若已填補充說明，按鈕文字改為「完整分析」
-
-在 `Idea` 型別或分析結果中標記是否為快速評估：
-
-```typescript
-// lib/types.ts，Idea 介面新增：
-quickAnalysis?: boolean; // true = 只用標題分析
-```
-
-**驗收**：
-- 只填標題可完成分析並儲存
-- 快速評估結果在 3 秒內顯示（從點擊到看到分數）
-- 補充說明區塊展開/收合流暢
-- 已儲存的快速評估 Idea，詳情頁顯示「此評估基於標題，補充說明可提升精準度」提示
-
----
-
-### [FEAT-04] Idea 分析理由帶入目標進度脈絡
-
-**PRD 對應**：5.5
-
-**影響範圍**：
-- `lib/claude.ts` — `analyzeIdea` 函數的 prompt 修改
-- `app/idea/new/page.tsx` — 傳入 objectives 時帶上 KR 進度資訊（已有）
-
-**修改 `analyzeIdea` 的 OKR context 組裝邏輯**：
-
-```typescript
-// 在 okrContext 組裝中加入進度資訊
-const okrContext = objectives.map((o) => {
-  const completion = calcOCompletion(o); // 複用現有計算邏輯
-  return `Objective ID: ${o.id}
-Objective: ${o.title}
-Priority: ${o.meta?.priority ?? 2} (scale 1-3, higher = more important now)
-Current completion: ${completion !== undefined ? `${completion}%` : 'no progress yet'}
-Key Results:
-${o.keyResults.map((kr) => {
-  const krCompletion = calcKRCompletion(kr);
-  return `  - KR ID: ${kr.id}
-    KR: ${kr.title}
-    Progress: ${krCompletion !== undefined ? `${krCompletion}%` : 'not started'}`;
-}).join('\n')}`;
-}).join('\n\n');
-```
-
-**修改 system prompt**，要求理由帶入進度脈絡：
-```
-When explaining your reasoning for each objective score, mention:
-1. The objective's current completion percentage if available
-2. Why this specific moment (given current progress) makes this idea high or low priority
-3. Be specific: "This objective is at 15% completion, making this idea high leverage right now" not "This idea is relevant to your goal"
-```
-
-**驗收**：
-- 理由中包含目標完成百分比（若有進度資料）
-- 目標完成度 0% 時，理由說明「尚未起步，此行動可開啟進展」
-- 目標完成度 ≥80% 時，理由說明「目標接近完成，此行動可衝刺收尾」
-- 目標無任何 KR 進度時，理由改為說明貢獻路徑，不出現百分比
-
----
-
-## 🟡 Phase 2 — 體驗深化
-
----
-
-### [FEAT-05] AI 教練：模糊 Idea 單問介入
-
-**PRD 對應**：5.9
-
-**影響範圍**：
-- `lib/claude.ts` — 新增 `clarifyIdea` 函數
-- `app/idea/new/page.tsx` — 新增「AI 問題」中間狀態
-
-**新增函數**：
-
-```typescript
-export async function clarifyIdea(
-  apiKey: string,
-  model: string,
-  language: "zh-TW" | "en",
-  ideaTitle: string,
-  objectives: Objective[]
-): Promise<{ shouldClarify: boolean; question?: string }> {
-  // 若 shouldClarify = true，顯示 question 給用戶回答
-  // 若 shouldClarify = false，直接進行分析
-}
-```
-
-**流程修改**：
-1. 快速評估送出後，先呼叫 `clarifyIdea`
-2. 若 `shouldClarify = true`，顯示問題文字 + 輸入框 + 「跳過，直接評估」按鈕
-3. 用戶回答後，將回答附加至 Idea 描述，呼叫 `analyzeIdea`
-4. 若跳過，直接以原標題呼叫 `analyzeIdea`
-
-**驗收**：
-- 輸入「提升自己」等模糊標題，觸發釐清問題
-- 輸入「每天跑步 30 分鐘」等具體標題，不觸發問題（直接分析）
-- 跳過功能正常，不阻擋儲存
-- 釐清後的分析理由比原始分析更具體（人工 QA）
-
----
-
-### [FEAT-06] KR 進度更新後觸發 Idea 重新評估提示
-
-**PRD 對應**：5.10
-
-**影響範圍**：
-- `app/page.tsx` — Dashboard Idea 卡片新增「需重新評估」狀態
-- `lib/types.ts` — `Idea` 新增 `needsReanalysis?: boolean`
-- `lib/db.ts` — `updateIdeaCompletion` 後觸發相關 Idea 標記
-
-**邏輯**：
-1. KR Check-In 或 Task 完成後，找出所有連結此 KR 的 Idea（透過 `linkedKRs`）
-2. 將這些 Idea 的 `needsReanalysis` 設為 true（本地 state 更新，不需 DB 欄位——或加 DB 欄位視跨裝置需求）
-3. Dashboard 中這些 Idea 卡片顯示「進度已更新，重新評估？」badge
-4. 點擊 badge 觸發重新分析，完成後清除 badge
-
-**驗收**：
-- 完成連結某 KR 的 Task 後，相關 Idea 出現「重新評估」提示
-- 點擊後觸發分析，新理由帶入最新進度
-- 未點擊時舊分數不變
-
----
-
-### [FEAT-07] AI 引導式 OKR 建立（Guided 流程）
-
-**PRD 對應**：5.11
-
-**影響範圍**：
-- `app/okr/new/page.tsx` — 新增「AI 幫我想」入口
-- `lib/claude.ts` — `refineObjective`、`suggestKeyResults`、`generateSnapshot` 已存在，串接為流程
-
-**三階段 UI 流程**：
-1. 用戶輸入一句話 → 呼叫 `refineObjective` → 顯示建議的 title / motivation / okrType / timeframe，用戶確認或修改
-2. 確認後 → 呼叫 `suggestKeyResults` → 顯示 3–5 個建議 KR，用戶勾選或修改
-3. 確認 KR → 呼叫 `generateSnapshot` → 顯示 snapshot，用戶確認後儲存
-
-**驗收**：
-- 三階段流程可完整走完
-- 每個階段用戶可修改 AI 建議再繼續
-- 最終儲存結果與手動建立的 Objective 資料結構相同
-
----
-
-### [FEAT-08] KR 信心度標記 UI
-
-**PRD 對應**：5.12
-
-**影響範圍**：
-- `app/okr/[id]/page.tsx` 或 KR 編輯元件 — 加入信心度選擇 UI
-- `lib/claude.ts` — `analyzeConfidenceDrop` 已存在，加入呼叫入口
-
-**修改**：
-- 每個 KR 旁加入信心度 badge：🟢 on-track / 🟡 at-risk / 🔴 needs-rethink
-- 點擊 badge 切換狀態，切換至 at-risk / needs-rethink 後顯示 AI 建議（呼叫 `analyzeConfidenceDrop`）
-- AI 建議以 popover 或展開區塊顯示，不跳頁
-
-**驗收**：
-- 信心度標記儲存至 Supabase（`key_results` JSONB 中 `confidence` 欄位已定義）
-- 標記 at-risk 後，AI 建議 2 秒內顯示
-- 建議文字包含「下一步具體行動」
-
----
-
-## 🟢 Phase 3 — 回顧功能
-
----
-
-### [FEAT-09] 季度評分 UI
-
-**PRD 對應**：5.13
-
-**影響範圍**：
-- 新增 `app/okr/[id]/quarter-review/page.tsx`
-- `lib/claude.ts` — `getQuarterRecommendation` 已存在
-
-**頁面內容**：
-- 列出 Objective 下所有 KR，每個 KR 有一個 0.0–1.0 的滑桿或數字輸入
-- 填完後點「獲得 AI 建議」→ 呼叫 `getQuarterRecommendation`
-- 顯示 verdict（continue / complete / reset）與 reasoning
-- 用戶確認後，Objective status 更新為 completed 或維持 active
-
-**驗收**：
-- 所有 KR 填分後才能點擊獲取建議
-- verdict 以視覺化方式呈現（顏色 / icon）
-- 選擇「complete」後 Objective 狀態更新，從 Dashboard 消失
-
----
-
-## 附錄：不做的技術工作（護欄）
-
-| 項目 | 原因 |
-|------|------|
-| Deadline 作為評分係數 | 用戶變化性太大，降低分數可信度 |
-| 目標優先級拖拉排序介面 | 1–3 三級制已足夠，拖拉在手機摩擦高 |
-| Dashboard 使用時長最大化功能 | 產品定位是 30 秒決策，不是滯留工具 |
-| AI 教練在 OKR 設定流程開頭出現 | 時機錯誤，用戶動機低、摩擦感最強 |
-| 離線模式 | 完全依賴 Supabase + Claude API，v3 前不考慮 |
-
----
-
-## 🔴 Phase 0 補充 — Bug 修復
-
----
-
-### [BUG-01] Google OAuth 回調失敗
-
-**問題**：用戶點擊 Google 登入後回調失敗，無法完成登入流程。
+手機瀏覽器限制問題 Google OAuth 登入（iOS Safari / Android Chrome）和其他登入方式（Apple / Google / 帳號密碼）和其他方式（Apple / Google）。
 
 **已完成的程式碼修復**（`app/auth/callback/page.tsx`）：
 1. 新增 `?error=` / `?error_description=` 參數處理，Google 拒絕授權時顯示明確錯誤訊息
-2. 隱式/PKCE 無 `?code=` 路徑改為等待 supabase-js 處理 session 後再 redirect，而非立即跳轉
+2. 隱式/PKCE 無 `?code=` 路徑改為等待 `onAuthStateChange` 接收 session 後再 redirect（加 2s fallback）
 
 **仍需手動設定（Supabase Dashboard）**：
-1. Authentication → URL Configuration → **Site URL**：設為正式網域（或 `http://localhost:3000` 開發環境）
-2. Authentication → URL Configuration → **Redirect URLs**：加入 `[domain]/auth/callback`（含 Vercel preview URL wildcard：`https://*-[team].vercel.app/auth/callback`）
-3. Google Cloud Console → OAuth 2.0 憑證 → **授權重新導向 URI**：加入 `https://[supabase-project-ref].supabase.co/auth/v1/callback`
+1. Authentication → URL Configuration → **Site URL**：設為正式網域（或 `http://localhost:3000`）
+2. Authentication → URL Configuration → **Redirect URLs**：加入 `[domain]/auth/callback`（Vercel preview：`https://*-[team].vercel.app/auth/callback`）
+3. Google Cloud Console → OAuth 2.0 → **授權重新導向 URI**：加入 `https://[project-ref].supabase.co/auth/v1/callback`
 
-**驗收**：Google 登入完整流程走通；Google 拒絕授權時頁面顯示可讀錯誤訊息而非白屏。
-
----
-
-## 🟠 Phase 1 補充 — 新功能
+**狀態**：程式碼已實作 ✅，Supabase Dashboard 需手動設定
 
 ---
 
-### [FEAT-A] Onboarding 步驟說明卡 + 過場動畫
+## DISC — 產品定位凸顯入口
 
-**優先**：P0（新用戶第一印象）  
-**工程量**：S（1–2 天）
+---
 
-**問題**：Onboarding wizard（`app/onboarding/page.tsx`，6 步驟）缺乏步驟引導，用戶不清楚每一步要做什麼。
+### [DISC-001] 連結到首頁入口，口號「驅動指針」為核心功能 `MVP`
+
+重新理解用戶需求：達到用戶目標，具體。主題：建立、監控、調整，CTA 驅動「把它記下來，再分析」的用戶。而非 entry point 讓隨意用戶進來就好，不靠 OKR 設定。
+
+**範圍**：
+- 未登入首頁顯示 hero section：主標題「30 秒知道哪個想法最值得做」
+- 副標題說明差異化（連結你的目標，AI 秒算貢獻度）
+- Guest 試用 CTA：允許一次 idea validation 不需帳號
+- 登入後首頁正常顯示 dashboard，不干擾主流程
+
+**影響檔案**：`app/page.tsx`、`app/onboarding/page.tsx`、`lib/i18n.ts`
+
+**狀態**：已實作 ✅（FEAT-C）
+
+---
+
+## OB — Onboarding 新手引導
+
+---
+
+### [OB-001] Onboarding 成功用戶故事 `MVP`
+
+用戶文字說明核心流程：驗證想法 → 輸入想法 → AI 分析 → 決策建立加入待辦 → 記錄進度 → 定期生成報告（下一步）知道什麼不重要了。
+
+Onboarding 每一步驟有明確的「成功用戶故事」指引，讓新用戶知道為什麼要做這一步。
 
 **範圍**：
 - 每個步驟頂部加入步驟說明卡（圖示 + 一句說明 + 小提示）
 - 步驟切換加淡入動畫（`opacity` + `translateY` CSS transition）
-- Step 2（intent input）與 Step 3（OKR confirm）的主輸入框加 `ring-2 ring-indigo-400` focus glow
+- Step 2（intent input）與 Step 3（OKR confirm）主輸入框加 `ring-2 ring-indigo-400` focus glow
 - Progress bar 改為有百分比填色的橫條（替換現有進度點）
 
 **影響檔案**：`app/onboarding/page.tsx`、`lib/i18n.ts`
 
-**驗收**：每個步驟有明確說明；步驟切換有動畫；輸入框有視覺焦點提示。
+**狀態**：已實作 ✅（FEAT-A）
 
 ---
 
-### [FEAT-B] AI 工作區正式化（AIWorkspaceDrawer）
+### [OB-002] Onboarding 況域分塊 `MVP`
 
-**優先**：P1  
-**工程量**：M（3–4 天）
-
-**問題**：AI 功能分散在各頁面（tasks 的 Idea Validator、OKR 頁的 OKRChat），用戶無法在任意頁面快速召喚 AI。
+一次完整可以交互的流程：清單 → 生成真實 OKR，不需要漫長 onboarding 評估，用戶自主試驗。讓用戶在進入 app 後盡快體驗核心循環，而非被卡在設定步驟。
 
 **範圍**：
-- 新建 `components/AIWorkspaceDrawer.tsx`（右側滑入 drawer，含 OKR Coach / Idea quick-validate / Plan analyzer）
-- `components/Sidebar.tsx` 加 AI Workspace 觸發按鈕
-- `components/BottomNav.tsx` 加手機版 AI 入口
-- 各頁現有 AI 功能原位保留（Drawer 是補充入口）
+- 檢視 Onboarding 各步驟是否可省略或重組
+- 確保每一步完成後都能感受到「我有產出東西」
+- Step 1 文案強調「不是 OKR 工具，是決策加速器」
 
-**影響檔案**：新建 `components/AIWorkspaceDrawer.tsx`、`components/Sidebar.tsx`、`components/BottomNav.tsx`
+**影響檔案**：`app/onboarding/page.tsx`、`lib/i18n.ts`
 
-**驗收**：任何頁面可開啟 Drawer；Drawer 內 OKR Coach 可正常對話；不影響各頁現有 AI 功能。
+**狀態**：部分實作（Step 1 文案已更新）
 
 ---
 
-### [FEAT-C] 產品定位凸顯（未登入 Hero + Guest 試用）
-
-**優先**：P1  
-**工程量**：S（1–2 天）
-
-**問題**：未登入訪客看不到產品核心價值；首頁直接顯示空白 dashboard，失去轉換機會。
-
-**範圍**：
-- `app/page.tsx` 未登入狀態顯示 hero section：主標題「30 秒知道哪個想法最值得做」、副標題、Guest 試用 CTA
-- Guest 試用：允許一次 idea validation，不儲存結果，完成後提示登入以保存
-- Onboarding Step 1 文案更新：強調「不是 OKR 工具，是決策加速器」
-
-**影響檔案**：`app/page.tsx`、`app/onboarding/page.tsx`、`lib/i18n.ts`
-
-**驗收**：未登入訪客可試用 idea validation；登入後首頁正常顯示 dashboard。
+## PHIL — 設計哲學 | 最小輸入、最大效率
 
 ---
 
-### [FEAT-D] AI 理解用戶（User Profile + 輸入重述）
+### [PHIL-001] "AI 先策略，用戶精緻" 互動 pattern `Design Review`
 
-**優先**：P1  
-**工程量**：M（3–5 天）
+結構清楚是終：AI 先輸出結果，用戶在輸出後確認，讓後可以改/調整/重新嘗試。AI 先輸出 OKR 設定，先 profile，先 AI 匹配 pattern，再讓用戶細調。
 
-**問題**：AI 對用戶背景一無所知，分析缺乏個人化；用戶輸入模糊時（如「我想變得更好」）AI 無法有效引導。
+**討論方向**：
+- 目前流程是「用戶輸入 → AI 分析」，要轉換為「AI 先給建議 → 用戶確認/修改」
+- 影響 Onboarding、Idea Validator、OKR 建立等所有 AI 互動入口
+- 需定義「AI 先輸出」的資訊完整度標準（避免 AI 亂猜）
+
+---
+
+### [PHIL-002] 標準輸出設計規範，雙語輸出（或 label 標示）`Design Review`
+
+標準輸出標準：意見 optional，output 帶有 label 的「標準」選項，讓用戶可以選「你確認了嗎？」的 label 型 copy 元素。
+
+**討論方向**：
+- 所有 AI 輸出統一格式（建議 / 理由 / 下一步）
+- 雙語輸出策略：zh-TW 為主，en 作為 label 標示還是完整翻譯？
+- 定義哪些輸出是「標準選項」（可直接 apply），哪些需要用戶確認
+
+---
+
+## INTEL — AI 理解用戶
+
+---
+
+### [INTEL-001] 差異化清楚告知（AI 識清用戶真意圖） `MVP`
+
+用戶輸入模糊或情緒化的想法時，AI 識清真正想表達的事，推導出清晰意圖後分析，告知分類比較與最終建議，參考 AI 功能已知的相關信息，收到具體建議。
 
 **範圍**：
-1. **User Profile 建立**（Onboarding Step 6 擴充）：加入「用一句話形容你的狀態」輸入，存至 `user_backgrounds` 表（schema 已存在）
-2. **AI 輸入重述**：Idea Validator 輸入後，若字數 < 20 字且語意模糊，AI 先輸出「你的意思是：[重述]，對嗎？」供用戶確認或修改，確認版本作為分析輸入
+1. **User Profile 建立**（Onboarding Step 6 擴充）：「用一句話形容你的狀態」，存至 localStorage
+2. **AI 輸入重述**：輸入 < 20 字且語意模糊時，AI 先輸出「你的意思是：[重述]，對嗎？」供用戶確認或修改
 3. **AI 上下文注入**：`lib/evaluation-prompt.ts` 的系統 prompt 加入 user background
 
 **新增函數**：`lib/claude.ts` → `rephraseInput()`  
-**新增 API action**：`app/api/ai/route.ts` → `rephraseInput`  
-**影響檔案**：`app/onboarding/page.tsx`、`lib/evaluation-prompt.ts`、`lib/claude.ts`、`app/api/ai/route.ts`
+**新增 API action**：`app/api/ai/route.ts` → `rephraseInput`
 
-**驗收**：新用戶完成 onboarding 有 profile；模糊輸入觸發 AI 重述；AI 分析有個人化語氣（人工 QA）。
-
----
-
-## 🟡 Phase 2 補充 — 外部整合
+**狀態**：已實作 ✅（FEAT-D）
 
 ---
 
-### [FEAT-E] 外部文字批次匯入
+### [INTEL-002] 深入分析個人儲案：本地儲案 / Notion / Google Drive `Phase 3`
 
-**優先**：P2  
-**工程量**：M（3–5 天）
+用戶的個人儲案（工作文件、會議記錄）上傳或連接 Notion workspace / Google Drive 文件，作為「了解個人背景」的資料，讓後續的 AI 分析真正個人化。
 
-**問題**：用戶的靈感、任務清單散落在外部文件（Notion、Google Docs、會議記錄），目前只能手動逐一輸入，摩擦高。
+**範圍**：
+- Notion OAuth 整合：讀取用戶指定的 workspace 或 page
+- Google Drive OAuth 整合：讀取指定文件夾
+- AI 將個人儲案建立成 user context vector，注入所有分析提示詞
+- 定期更新（每週同步一次）
 
-**範圍（MVP）**：
-- Idea Validator 旁加「批次匯入」入口
-- 用戶貼入純文字（≤ 500 字），AI 解析成多個 ideas，每個可勾選後加入 Inbox
-- 不做 OAuth 整合，純 copy-paste
-
-**新增函數**：`lib/claude.ts` → `parseDocumentToIdeas(text, objectives)`  
-**新增 API action**：`app/api/ai/route.ts` → `parseDocument`  
-**影響檔案**：`app/tasks/page.tsx`、`lib/claude.ts`、`app/api/ai/route.ts`
-
-**驗收**：貼入 500 字以內文字可解析出 3+ ideas；解析結果可勾選加入 Inbox；解析失敗有友善提示。
+**前置條件**：INTEL-001 完成，DB-001 完成
 
 ---
 
-## 設計討論區（尚未入 ticket）
+## IDEA — 想法相關功能
 
-### 更多人生管理概念
+---
 
-**前提問題**（需先討論才能立 ticket）：
+### [IDEA-001] 想法成長形成（零碎文字輸入） `MVP`
+
+第一大字形：想法起點是 Placeholder，持續讓用戶輸入零碎想法，進而到 AI 演算整合，加入 AI 演進量。
+
+支援批次貼入文字，AI 解析成多個獨立 ideas，可個別勾選加入 Inbox。
+
+**範圍**：
+- Idea Validator 旁加「批次匯入文件 ↗」入口
+- 用戶貼入純文字（≤ 2000 字），AI 解析成 3–10 個 ideas
+- 每個解析出的 idea 可個別勾選加入 Inbox
+- 解析失敗時有友善錯誤提示
+
+**新增函數**：`lib/claude.ts` → `parseDocumentToIdeas()`  
+**新增 API action**：`app/api/ai/route.ts` → `parseDocument`
+
+**狀態**：已實作 ✅（FEAT-E）
+
+---
+
+### [IDEA-002] AI 連菜評估（邊一難題，可改稿） `MVP`
+
+開始中有文字評估「如果是你自己，你會怎麼做？」個人風格問，提示感 → 讓 AI 帶出想法進入 OKR → 決策支援 → 最終結果。用戶可在評估過程中修改 AI 的輸出。
+
+**範圍**：
+- Idea 分析後可「繼續追問」（inline chat，不需跳頁）
+- AI 針對分析結果給出「下一步具體建議」
+- 用戶可 tag AI 的建議為「我要做」→ 自動建立 Task
+- 分析結果可以重新提交（更新補充說明後再分析一次）
+
+**影響檔案**：`app/page.tsx`（Idea Validator 區塊）、`lib/claude.ts`
+
+---
+
+### [IDEA-003] 精確率提升（Iqiai 引擎 / 收集，目前精確率） `Phase 2`
+
+基礎 trigger 判斷，觸發進入 IDEA 邏輯，判斷是不是一個「想法」，改善 label 型 copy，優化輸出質量。
+
+**範圍**：
+- 分析前先判斷輸入是否為有效「想法」（vs. 指令、問句、雜訊）
+- 若不是想法，提示用戶「這看起來像指令，你是否想說：[重述]？」
+- 優化 `buildEvaluationPrompt` 的提示詞，提升分析準確率
+- 建立人工 QA 評分機制（至少 20 筆真實用戶輸入 → 驗收準確率 ≥ 80%）
+
+---
+
+### [IDEA-004] 決策圖表（選擇 / 決策 / 錯誤） `Phase 2`
+
+視覺化呈現用戶的決策歷史：哪些想法被採納、哪些被放棄、最終結果如何，讓用戶回頭複盤自己的決策模式。
+
+**範圍**：
+- Archive / 歷史頁面：所有已評估 ideas 的時間軸
+- 每個 idea 卡片顯示：評估分數、最終決策（做了 / 沒做）、結果（若有關聯 KR 進度）
+- 過濾器：按 Objective / 時間範圍 / 決策結果
+- 簡易決策統計：「這個月你評估了 X 個想法，其中 Y% 轉化為行動」
+
+**前置條件**：DB-001 完成
+
+---
+
+### [IDEA-005] 提供 OKR 與預設角色，按類 OKR 策略 `Phase 3`
+
+根據用戶的角色（ROLE）和目標類型，AI 提供對應的 OKR 模板和策略建議，降低從零開始設 OKR 的摩擦。
+
+**範圍**：
+- 建立 OKR 模板庫（按角色 × 目標類型 × 時間跨度）
+- 新用戶完成 ROLE 設定後，AI 推薦 3 個 OKR 方向供選擇
+- 用戶可直接套用模板再修改，不需從空白開始
+
+**前置條件**：ROLE-001 完成
+
+---
+
+### [IDEA-006] 想法圖 / Archive `Phase 3`
+
+所有 ideas 的可視化空間，以時間或主題分群顯示，讓用戶感受到「我的想法在成長」。
+
+**範圍**：
+- 圖形化 Archive 頁面（非列表，而是 cluster 或 timeline 視圖）
+- 相似 ideas 自動分群（AI embedding 相似度）
+- 每個 idea 可加標籤、備註、連結至 OKR
+
+---
+
+## WEB — 外部資料分析 / AI 主動搜集
+
+---
+
+### [WEB-001] 廣觀想法分析（自主爬取相關資料） `Phase 2`
+
+廣觀想法分析：AI 自主搜尋相關資料，分析知識背景，判斷想法的適當性，提供更有根據的具體建議（而非純靠用戶的 OKR 列表）。
+
+**範圍**：
+- 分析 idea 時，觸發 web search（Bing / Brave / Exa API）
+- 搜尋結果摘要注入 prompt（≤ 500 token）
+- 分析理由中可引用外部資訊（帶來源標注）
+- 可關閉此功能（設定頁）
+
+---
+
+### [WEB-002] 競品況狀研究（社交媒體、公眾資料分析） `Phase 2`
+
+針對商業或創業類想法，AI 搜尋公開資料（如 Reddit、Twitter/X 等），分析市場現狀與競爭格局，讓「個人 AI」了解外部環境。
+
+**範圍**：
+- 當想法被分類為「商業 / 創業」時，選擇性觸發競品分析
+- 搜尋相關討論、公司、產品，摘要後注入分析 context
+- 顯示「市場訊號」區塊（非侵入式，可收合）
+
+---
+
+## AIW — AI 工作區
+
+---
+
+### [AIW-001] 石育連出 AI 對話庫（不換頁直找） `MVP`
+
+在任何頁面不換頁就能召喚 AI 工作區，持續對話，直到目標達成，在整個工作流程中保持 AI context。
+
+**範圍**：
+- 新建 `components/AIWorkspaceDrawer.tsx`（右側滑入 drawer）
+- 包含：OKR Coach chat、Idea quick-validate 輸入框、Plan analyzer
+- `components/Sidebar.tsx` 加 AI Workspace 觸發按鈕（桌面版）
+- `components/BottomNav.tsx` 加 AI 按鈕（手機版）
+- 各頁面現有 AI 功能原位保留（Drawer 是補充入口）
+- Chat history 用 localStorage 存（key: `aiWorkspaceChat`）
+
+**影響檔案**：新建 `components/AIWorkspaceDrawer.tsx`、`components/AIWorkspaceContext.tsx`、`components/Sidebar.tsx`、`components/BottomNav.tsx`、`app/layout.tsx`
+
+**狀態**：已實作 ✅（FEAT-B）
+
+---
+
+### [AIW-004] 長期對話互動：使用 AI 與其時文思想對話模式 `Phase 3`
+
+長期對話互動使用 AI 與其時文思想對話模式，AI 了解成長軌跡、記憶所有工作，建立「個人 AI」的感受。
+
+**範圍**：
+- AI 工作區對話歷史長期保存（Supabase，不再純 localStorage）
+- AI 可主動回顧過去的對話（「上次你說要...」）
+- 建立用戶 AI 記憶層（user memory graph）
+- 定期生成「AI 觀察」推送（週報 / 月報形式）
+
+**前置條件**：INTEL-001、DB-001 完成
+
+---
+
+## ROLE — 角色人生
+
+---
+
+### [ROLE-001] Layer 0：預設的角色 + AI 自動培養路線 `MVP`
+
+預設生成 roles（學生、工作者、父母、個人成長等），以身份特質為基礎，定義各 role 的 OKR 方向。AI 自動建議如何強化當前 role。
+
+**範圍**：
+- 用戶在 Onboarding 選擇 1–3 個預設 role
+- 每個 role 有預設的 OKR 方向建議
+- AI 分析 idea 時考慮用戶的 role 權重
+- 首頁 dashboard 按 role 分群顯示 OKR
+
+**前置條件**：DB-002 完成
+
+---
+
+### [ROLE-002] Layer 1：月度查查庫（拆解精準 + 「AI 預劃」） `MVP`
+
+月度目標拆解：建立高精準月度清單，針對定目標的 AI 自動分析各 role，生成「這些最好的時機？」或「你想嘗試嗎？」的 AI 預劃建議，以小步快跑入門。
+
+**範圍**：
+- 每月初 AI 生成「本月建議聚焦行動」（按 role 分類）
+- 用戶可確認、修改、或忽略 AI 建議
+- 建議轉化為 Task 後自動關聯至對應 OKR KR
+- 月底 AI 回顧：「本月你對各 role 的投入比例」
+
+**前置條件**：ROLE-001 完成
+
+---
+
+### [ROLE-003] Layer 2 或 入口 UX `Phase 2`
+
+月度目標拆解（以用戶選擇超出的比例），達成過去 72% 的比例出現，提供 Layer 2 的進階 UX 入口給成熟用戶。
+
+**範圍**：
+- 用戶達成月度目標 ≥ 72% 時，解鎖 Layer 2 功能
+- Layer 2：跨 role 的 trade-off 分析（同樣時間，做 A 還是 B 對哪個 role 更有價值？）
+- 視覺化 role 平衡雷達圖
+
+**前置條件**：ROLE-002 完成
+
+---
+
+### [ROLE-004] Layer 3：角色個人化設定 `Phase 3`
+
+自訂 roles 名稱 / 圖示 / 顏色 / 權重，高級用戶設定個人化設備，調整各 role 的比重（例如「職業 40%、家庭 40%、個人 20%」）。
+
+**範圍**：
+- Role 設定頁：完整 CRUD 操作
+- 自訂 role 的 icon、顏色、描述
+- 設定各 role 的時間/精力權重
+- AI 在分析時根據用戶設定的權重調整建議
+
+**前置條件**：ROLE-002、DB-002 完成
+
+---
+
+## LOOP — 多步驟整合
+
+---
+
+### [LOOP-001] 觸徑優化「確定 OKR」改為「驅動指標」 `Phase 2`
+
+觸徑優化：將 Onboarding → 中心點的 AI 過程整合 → AI 設 OKR → 鏈接 → 任務入口，改為以「驅動指標」（leading indicator）為核心語言，而非 OKR 術語。
+
+**範圍**：
+- 評估全站 OKR 術語的替換（哪些改、哪些保留）
+- Onboarding 流程重組：以「你想追蹤什麼？」為入口
+- 文案從 OKR 術語改為用戶語言（「目標」、「指標」、「追蹤項」）
+
+**前置條件**：OB-001、OB-002 完成
+
+---
+
+### [LOOP-002] 驗證核心 OKR 流程各頁面連通性 `Phase 2`
+
+驗證「建立 3 條 OKR 之後，3 個 OKR 達成後，用一條路完整走完」的核心閉環流程在各頁面間是否暢通無阻。
+
+**驗收清單**：
+- [ ] 未登入用戶可以在首頁試用 idea validation
+- [ ] 新用戶可以完整走完 onboarding（step 1-6）並建立第一個 OKR
+- [ ] 登入用戶可以在 `/tasks` 新增任務、完成任務
+- [ ] 可以生成並查看 `/report` weekly alignment report
+- [ ] Google OAuth 登入可以正常完成
+- [ ] OKR → Task → Report 的資料鏈路無斷點
+
+---
+
+## EXT — 外部個人數據匯入
+
+---
+
+### [EXT-001] Google Calendar 匯入 `Phase 2`
+
+接受 Google Calendar 事件，指定時間範圍，可以「我做了什麼」或「工作項目」在 scheduled 後，展現自動同步到任務清單，讓用戶選擇有意義的事件標記為已完成任務。
+
+**範圍**：
+- Google Calendar OAuth 整合（read-only scope）
+- 用戶選擇時間範圍（今天 / 本週 / 自訂）
+- 讀取事件列表，AI 篩選出「有意義的工作事件」
+- 用戶勾選後加入 completed tasks 清單
+- 可選：自動關聯至對應 OKR KR
+
+---
+
+### [EXT-002] GitHub Commits 匯入 `Phase 3`
+
+讓技術用戶可以手動指定時間範圍，讀取 commit 訊息，用來生成「我做了什麼」的真實清單，讓 AI 總結貢獻，自動對應至 KR 進度。
+
+**範圍**：
+- GitHub OAuth 整合（read repo commits）
+- 指定 repo 和時間範圍
+- AI 解析 commit messages → 生成工作摘要
+- 自動對應至相關 OKR KR
+
+---
+
+### [EXT-003] 雙機器指揮界面（iOS / Android API） `Phase 3`
+
+通過 iOS Shortcuts / Android Tasker API 端點，讓用戶快速從手機捷徑加入新任務，AI 識清意圖後自動分類。
+
+**範圍**：
+- 建立 `/api/quick-add` endpoint（支援 API key 認證）
+- iOS Shortcuts 範本（可下載安裝）
+- Android Tasker 設定說明
+- AI 接收自然語言輸入後自動分類為 task / idea
+
+---
+
+## DB — 數據庫
+
+---
+
+### [DB-001] 新增 Ideas 資料表
+
+**Schema**：
+
+```sql
+create table ideas (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  title text not null,
+  text_raw text,
+  text_ai_clarified text,
+  text_final text,
+  trigger_flags jsonb,       -- 觸發器標記
+  scores jsonb,              -- objectiveScores, overallScore
+  web_research_summary text,
+  risks jsonb,
+  decision text,             -- 'accepted' | 'rejected' | 'deferred' | null
+  created_at timestamptz default now()
+);
+```
+
+**目前**：ideas 資料存在 localStorage，需遷移至 Supabase。
+
+**前置條件**：SEC-02（RLS 政策確認）
+
+---
+
+### [DB-002] 擴展 roles 管理（多 layer 路線）
+
+**Schema**：
+
+```sql
+create table roles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  name text not null,
+  emoji text,
+  layer int check (layer in (0,1,2,3)),
+  inferred boolean default false,
+  user_confirmed boolean default false,
+  weight numeric default 1.0,
+  created_at timestamptz default now()
+);
+
+create table role_goals (
+  id uuid primary key default gen_random_uuid(),
+  role_id uuid references roles not null,
+  objective_id uuid references objectives not null,
+  role_confidence numeric,
+  created_at timestamptz default now()
+);
+```
+
+---
+
+## LIFE — 人生管理框架演化
+
+---
+
+### [LIFE-001] 定義家庭與個人的人生管理理念及具體功能演化 `Design Review`
+
+定義家庭與個人的人生管理理念及具體功能演化（生命週期：從年度 OKR → 到 Life Roles → 到家庭共同目標 → 到人生 milestones）。
+
+**需討論的前提問題**：
 1. Life Domain 如何定義？（健康 / 工作 / 關係 / 學習？還是用戶自定義？）
 2. 與現有 Objective 的關係：是 tag 還是獨立層？
-3. 跨 domain 的 idea 如何做加權計算？
-4. 與 TICKETS.md T02 Identity 層的關係？
+3. 家庭/夥伴共同目標的協作模式？
+4. 跨 domain 的 idea 如何做加權計算？
+5. 與 ROLE Layer 體系的關係和邊界在哪？
 
-**建議**：等 T02（Identity 層）完成後，觀察用戶行為再反推需求。
+**參考框架**：Iqiai / Lean Startup / Life Roles / OGSM
+
+**建議**：等 ROLE-001、ROLE-002 完成並有用戶行為資料後，再反推這層的設計。
 
 ---
 
-*Ticket 清單對應 PRD v2.0，最後更新 2026-05-16*
+## 安全底線（不動）
+
+| 項目 | 狀態 |
+|------|------|
+| [SEC-01] Claude API Key 移至後端 Proxy | ✅ 已完成（`app/api/ai/route.ts`） |
+| [SEC-02] Supabase RLS 政策啟用 | 需確認 Dashboard 設定 |
+
+---
+
+*最後更新：2026-05-17*
