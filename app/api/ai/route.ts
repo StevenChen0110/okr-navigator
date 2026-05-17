@@ -5,6 +5,7 @@ import {
   analyzeIdea,
   clarifyIdea,
   rephraseInput,
+  parseDocumentToIdeas,
   classifyKR,
   refineObjective,
   suggestKeyResults,
@@ -132,6 +133,15 @@ export async function POST(req: NextRequest) {
           payload.objectiveTitle as string,
           payload.currentTitle as string,
           payload.userInstruction as string,
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "parseDocument": {
+        const result = await parseDocumentToIdeas(
+          apiKey, model, language,
+          payload.documentText as string,
+          (payload.objectives as Objective[]) ?? [],
           provider,
         );
         return NextResponse.json(result);

@@ -844,3 +844,25 @@ No markdown fences.`,
     suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
   };
 }
+
+// ── Document Bulk Import ─────────────────────────────────────────────────────
+
+export async function parseDocumentToIdeas(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  documentText: string, objectives: Objective[],
+  provider: AIProvider = "anthropic",
+): Promise<string[]> {
+  const objTitles = objectives.map((o) => `- ${o.title}`).join("\n");
+  const text = await complete(provider, apiKey, model,
+    `Extract distinct actionable ideas or tasks from the user's pasted text.
+Each extracted item should be a self-contained one-sentence idea or task.
+Ignore structural text (headers, footers, dates, metadata).
+Return 3–10 items maximum.
+${objectives.length ? `Context — user's current goals:\n${objTitles}` : ""}
+${langInstruction(language)}
+Output ONLY valid JSON array of strings: ["idea 1", "idea 2", ...]
+No markdown fences.`,
+    `Text to parse:\n${documentText.slice(0, 2000)}`, 512);
+  const parsed = JSON.parse(extractJSON(stripFences(text)));
+  return Array.isArray(parsed) ? parsed.filter((s) => typeof s === "string").slice(0, 10) : [];
+}

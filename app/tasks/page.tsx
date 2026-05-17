@@ -51,6 +51,13 @@ export default function TasksPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [reportError, setReportError] = useState("");
 
+  // Bulk import state
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkPhase, setBulkPhase] = useState<"idle" | "parsing" | "result">("idle");
+  const [bulkIdeas, setBulkIdeas] = useState<string[]>([]);
+  const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
+
   // Idea validator state
   const [ideaTitle, setIdeaTitle] = useState("");
   const [ideaNotes, setIdeaNotes] = useState("");
@@ -163,6 +170,37 @@ export default function TasksPage() {
   }
 
   // ── Idea handlers ─────────────────────────────────────────────────────────
+
+  async function handleBulkParse() {
+    if (!bulkText.trim()) return;
+    if (!user) { requireAuth(); return; }
+    setBulkPhase("parsing");
+    try {
+      const ideas = await callAI<string[]>("parseDocument", { documentText: bulkText, objectives });
+      setBulkIdeas(ideas);
+      setBulkSelected(new Set(ideas.map((_, i) => i)));
+      setBulkPhase("result");
+    } catch {
+      setBulkPhase("idle");
+    }
+  }
+
+  async function handleBulkSave() {
+    const selected = bulkIdeas.filter((_, i) => bulkSelected.has(i));
+    for (const title of selected) {
+      const idea: Idea = {
+        id: uuid(), title, description: "", analysis: null,
+        createdAt: new Date().toISOString(), completed: false,
+        linkedKRs: [], taskStatus: "todo", ideaStatus: "inbox",
+      };
+      try { await saveIdea(idea); } catch { /* skip */ }
+    }
+    setBulkOpen(false);
+    setBulkText("");
+    setBulkPhase("idle");
+    setBulkIdeas([]);
+    setBulkSelected(new Set());
+  }
 
   async function handleIdeaAnalyze() {
     if (!ideaTitle.trim()) return;
@@ -375,12 +413,20 @@ export default function TasksPage() {
               </button>
             </div>
 
-            <button
-              onClick={() => setIdeaNotesOpen((v) => !v)}
-              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              › {language === "zh-TW" ? "補充說明（選填）" : "Add notes (optional)"}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIdeaNotesOpen((v) => !v)}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                › {language === "zh-TW" ? "補充說明（選填）" : "Add notes (optional)"}
+              </button>
+              <button
+                onClick={() => setBulkOpen(true)}
+                className="text-xs text-gray-400 hover:text-indigo-600 transition-colors ml-auto"
+              >
+                {language === "zh-TW" ? "批次匯入文件 ↗" : "Bulk import text ↗"}
+              </button>
+            </div>
             {ideaNotesOpen && (
               <textarea
                 value={ideaNotes}
@@ -771,6 +817,94 @@ export default function TasksPage() {
               : undefined
           }
         />
+      )}
+
+      {/* ── Bulk Import Modal ───────────────────────────────────────── */}
+      {bulkOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setBulkOpen(false); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md space-y-4 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">
+                  {language === "zh-TW" ? "批次匯入文件" : "Bulk Import Text"}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {language === "zh-TW" ? "貼入文字，AI 自動拆解成多個想法" : "Paste text — AI splits it into individual ideas"}
+                </p>
+              </div>
+              <button onClick={() => setBulkOpen(false)} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+            </div>
+
+            {bulkPhase !== "result" && (
+              <>
+                <textarea
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  placeholder={language === "zh-TW"
+                    ? "貼入會議記錄、Notion 頁面、Google Docs 節錄…（500 字以內）"
+                    : "Paste meeting notes, Notion page, Google Docs excerpt… (up to 500 words)"}
+                  rows={6}
+                  autoFocus
+                  className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+                />
+                <button
+                  onClick={handleBulkParse}
+                  disabled={!bulkText.trim() || bulkPhase === "parsing"}
+                  className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+                >
+                  {bulkPhase === "parsing"
+                    ? (language === "zh-TW" ? "AI 解析中…" : "AI parsing…")
+                    : (language === "zh-TW" ? "解析成想法 →" : "Parse into ideas →")}
+                </button>
+              </>
+            )}
+
+            {bulkPhase === "result" && (
+              <>
+                <p className="text-xs text-gray-500">
+                  {language === "zh-TW" ? "勾選要加入 Inbox 的想法：" : "Select ideas to add to your Inbox:"}
+                </p>
+                <div className="space-y-2 max-h-56 overflow-y-auto">
+                  {bulkIdeas.map((idea, i) => (
+                    <label key={i} className="flex items-start gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={bulkSelected.has(i)}
+                        onChange={() => setBulkSelected((prev) => {
+                          const next = new Set(prev);
+                          next.has(i) ? next.delete(i) : next.add(i);
+                          return next;
+                        })}
+                        className="mt-0.5 accent-indigo-600 shrink-0"
+                      />
+                      <span className="text-sm text-gray-700 group-hover:text-gray-900 leading-snug">{idea}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={() => { setBulkPhase("idle"); setBulkIdeas([]); setBulkSelected(new Set()); }}
+                    className="flex-1 py-2 rounded-xl border border-gray-200 text-xs text-gray-500 hover:bg-gray-50"
+                  >
+                    {language === "zh-TW" ? "重新貼入" : "Paste again"}
+                  </button>
+                  <button
+                    onClick={handleBulkSave}
+                    disabled={bulkSelected.size === 0}
+                    className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-40"
+                  >
+                    {language === "zh-TW"
+                      ? `加入 Inbox（${bulkSelected.size} 個）`
+                      : `Add to Inbox (${bulkSelected.size})`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
