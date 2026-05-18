@@ -115,7 +115,7 @@ export default function TasksPage() {
     fetchObjectives().then((objs) => {
       setObjectives(objs);
       const settings = getSettings();
-      if (!settings.onboardingCompleted && objs.length === 0) {
+      if (!settings.onboardingCompleted) {
         router.push("/onboarding");
         return;
       }
