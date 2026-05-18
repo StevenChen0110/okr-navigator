@@ -6,6 +6,7 @@ const zh: Record<string, string> = {
   "nav.tasks": "驗證",
   "nav.report": "報告",
   "nav.goals": "目標",
+  "nav.knowledge": "知識庫",
   "nav.settings": "設定",
 
   "status.todo": "待辦",
@@ -190,6 +191,7 @@ const en: Record<string, string> = {
   "nav.tasks": "Validate",
   "nav.report": "Report",
   "nav.goals": "Goals",
+  "nav.knowledge": "Knowledge",
   "nav.settings": "Settings",
 
   "status.todo": "To Do",

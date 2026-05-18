@@ -317,3 +317,29 @@ export interface Role {
   description?: string;
   createdAt: string;
 }
+
+// ── Personal Knowledge Base ───────────────────────────────────────────────────
+
+export type DocumentSource = "paste" | "upload" | "notion" | "gdrive";
+
+export interface UserDocument {
+  id: string;
+  title: string;
+  content: string;
+  source: DocumentSource;
+  sourceUrl?: string;
+  createdAt: string;
+}
+
+export interface NotionPage {
+  id: string;
+  title: string;
+  url: string;
+}
+
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink: string;
+}

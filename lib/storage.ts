@@ -150,3 +150,23 @@ export function getGroupRoadmap(groupId: string): GroupSequencePhase[] {
 export function saveGroupRoadmap(groupId: string, phases: GroupSequencePhase[]): void {
   save(`groupRoadmap_${groupId}`, phases);
 }
+
+// User document context cache — compact version used in AI calls without Supabase fetch
+export interface DocPreview { title: string; preview: string; }
+
+export function getUserDocumentContext(): string {
+  const docs = load<DocPreview[]>("userDocumentContext", []);
+  if (!docs.length) return "";
+  return docs
+    .map((d) => `[${d.title}]\n${d.preview}`)
+    .join("\n\n");
+}
+
+export function saveUserDocumentContext(docs: DocPreview[]): void {
+  save("userDocumentContext", docs);
+}
+
+export function clearUserDocumentContext(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("userDocumentContext");
+}

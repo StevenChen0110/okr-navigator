@@ -268,6 +268,7 @@ export async function chatOKRCoach(
   groups: ObjGroup[],
   mode: "goalBuilder" | "optimize",
   provider: AIProvider = "anthropic",
+  extraContext?: string,
 ): Promise<{ content: string; suggestion?: GoalSuggestion }> {
   const active = objectives.filter((o) => !o.status || o.status === "active");
   const groupMap = new Map((groups ?? []).map((g) => [g.id, g]));
@@ -300,7 +301,7 @@ ${suggestionFormat}
 User's current goals:
 ${existingGoals}
 
-${langInstruction(language)} Do not use any markdown formatting in your reply.`;
+${langInstruction(language)} Do not use any markdown formatting in your reply.${extraContext ? `\n\n=== User Background ===\n${extraContext}` : ""}`;
   } else {
     systemPrompt = `You are a friendly OKR coach reviewing the user's goals. Speak naturally, as if talking through their goals with them in person.
 
@@ -318,7 +319,7 @@ For updates include the goal's existing ID. For removals use action:"remove" wit
 User's current goals:
 ${existingGoals}
 
-${langInstruction(language)} Do not use any markdown formatting in your reply.`;
+${langInstruction(language)} Do not use any markdown formatting in your reply.${extraContext ? `\n\n=== User Background ===\n${extraContext}` : ""}`;
   }
 
   const text = await completeWithHistory(provider, apiKey, model, systemPrompt, messages, 1024);

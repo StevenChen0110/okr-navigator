@@ -1,4 +1,4 @@
-import { getSettings, getEvaluationProfile } from "./storage";
+import { getSettings, getEvaluationProfile, getUserDocumentContext } from "./storage";
 import { buildEvaluationPrompt } from "./evaluation-prompt";
 
 export async function callAI<T>(action: string, payload: Record<string, unknown>): Promise<T> {
@@ -12,6 +12,8 @@ export async function callAI<T>(action: string, payload: Record<string, unknown>
       ? { evaluationContext: buildEvaluationPrompt(getEvaluationProfile()) }
       : {};
 
+  const userDocumentContext = getUserDocumentContext();
+
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -21,6 +23,7 @@ export async function callAI<T>(action: string, payload: Record<string, unknown>
       model,
       apiKey,
       language: settings.language,
+      ...(userDocumentContext ? { userDocumentContext } : {}),
       ...extraPayload,
       ...payload,
     }),

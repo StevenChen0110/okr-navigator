@@ -193,6 +193,22 @@ export default function SettingsPage() {
         {saved ? t("settings.saved") : t("settings.save")}
       </button>
 
+      {/* Knowledge Base link */}
+      <button
+        onClick={() => router.push("/profile")}
+        className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors text-left"
+      >
+        <div>
+          <p className="text-sm font-medium text-gray-700">{language === "zh-TW" ? "個人知識庫" : "Personal Knowledge Base"}</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {language === "zh-TW" ? "匯入筆記、文件，讓 AI 更了解你" : "Import notes and docs so AI understands you better"}
+          </p>
+        </div>
+        <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+
       <div className="border-t border-gray-100 pt-4 flex items-center justify-between">
         <p className="text-xs text-gray-400 truncate">{user?.email}</p>
         <button

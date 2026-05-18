@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { Objective, Idea, TaskStatus, IdeaStatus, WeeklyLog, LogItem, AlignmentReport, Role } from "./types";
+import { Objective, Idea, TaskStatus, IdeaStatus, WeeklyLog, LogItem, AlignmentReport, Role, UserDocument } from "./types";
 
 async function uid(): Promise<string> {
   const {
@@ -294,5 +294,42 @@ export async function saveRole(role: Role): Promise<void> {
 
 export async function deleteRole(id: string): Promise<void> {
   const { error } = await supabase.from("roles").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── User Documents (Personal Knowledge Base) ──────────────────────────────────
+
+export async function fetchUserDocuments(): Promise<UserDocument[]> {
+  const { data, error } = await supabase
+    .from("user_documents")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) { console.warn("user_documents not ready:", error.message); return []; }
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    title: r.title,
+    content: r.content,
+    source: r.source,
+    sourceUrl: r.source_url ?? undefined,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function saveUserDocument(doc: UserDocument): Promise<void> {
+  const userId = await uid();
+  const { error } = await supabase.from("user_documents").upsert({
+    id: doc.id,
+    user_id: userId,
+    title: doc.title,
+    content: doc.content,
+    source: doc.source,
+    source_url: doc.sourceUrl ?? null,
+    created_at: doc.createdAt,
+  });
+  if (error) throw error;
+}
+
+export async function deleteUserDocument(id: string): Promise<void> {
+  const { error } = await supabase.from("user_documents").delete().eq("id", id);
   if (error) throw error;
 }

@@ -65,6 +65,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `API key not configured for provider: ${provider}` }, { status: 500 });
   }
 
+  const userDocContext = payload.userDocumentContext as string | undefined;
+
+  // Helper: merge user document context into an existing context string
+  function withDocCtx(ctx: string | undefined): string | undefined {
+    if (!userDocContext) return ctx;
+    return [ctx, `=== User Background Documents ===\n${userDocContext}`].filter(Boolean).join("\n\n");
+  }
+
   try {
     switch (action) {
       case "analyzeIdea": {
@@ -73,7 +81,7 @@ export async function POST(req: NextRequest) {
           payload.ideaTitle as string,
           payload.ideaNotes as string,
           payload.objectives as Parameters<typeof analyzeIdea>[5],
-          payload.evaluationContext as string | undefined,
+          withDocCtx(payload.evaluationContext as string | undefined),
           payload.groups as Parameters<typeof analyzeIdea>[7],
           provider,
         );
@@ -170,6 +178,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(result);
       }
       case "chat": {
+        const chatExtraCtx = [
+          payload.evaluationContext as string | undefined,
+          userDocContext,
+        ].filter(Boolean).join("\n\n") || undefined;
         const result = await chatOKRCoach(
           apiKey, model, language,
           payload.messages as Array<{ role: "user" | "assistant"; content: string }>,
@@ -177,6 +189,7 @@ export async function POST(req: NextRequest) {
           payload.groups as ObjGroup[],
           payload.mode as "goalBuilder" | "optimize",
           provider,
+          chatExtraCtx,
         );
         return NextResponse.json(result);
       }
@@ -277,11 +290,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(result);
       }
       case "analyzeIdeaValidation": {
+        const bgParts = [payload.userBackground as string | null, userDocContext].filter(Boolean);
         const result = await analyzeIdeaValidation(
           apiKey, model, language,
           payload.ideaTitle as string,
           payload.ideaNotes as string,
-          payload.userBackground as string | null,
+          bgParts.length ? bgParts.join("\n\n") : null,
           payload.objectives as Objective[],
           provider,
           payload.marketResearch as MarketResearch | undefined,
