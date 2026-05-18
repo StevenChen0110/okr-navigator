@@ -25,7 +25,9 @@ import {
   suggestMonthlyActions,
   analyzeIdeaValidation,
   generateIdeaOKR,
+  searchMarketData,
 } from "@/lib/claude";
+import type { MarketResearch } from "@/lib/types";
 import type { ReportItem } from "@/lib/claude";
 
 function getEnvKey(provider: AIProvider): string | undefined {
@@ -266,6 +268,14 @@ export async function POST(req: NextRequest) {
         );
         return NextResponse.json(result);
       }
+      case "searchMarketData": {
+        const result = await searchMarketData(
+          apiKey, model, language,
+          payload.ideaTitle as string,
+          provider,
+        );
+        return NextResponse.json(result);
+      }
       case "analyzeIdeaValidation": {
         const result = await analyzeIdeaValidation(
           apiKey, model, language,
@@ -274,6 +284,7 @@ export async function POST(req: NextRequest) {
           payload.userBackground as string | null,
           payload.objectives as Objective[],
           provider,
+          payload.marketResearch as MarketResearch | undefined,
         );
         return NextResponse.json(result);
       }

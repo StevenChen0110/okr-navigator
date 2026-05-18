@@ -99,6 +99,56 @@ export async function completeWithHistory(
   return data.choices[0].message.content.trim();
 }
 
+export async function completeWithWebSearch(
+  apiKey: string,
+  model: string,
+  system: string,
+  userPrompt: string,
+  maxTokens = 1500,
+): Promise<{ text: string; sources: Array<{ title: string; url: string }> }> {
+  const client = getAnthropicClient(apiKey);
+  // Haiku doesn't support web search — upgrade to Sonnet for this call
+  const searchModel = model.includes("haiku") ? "claude-sonnet-4-6" : model;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const message = await (client.beta as any).messages.create({
+      model: searchModel,
+      max_tokens: maxTokens,
+      betas: ["web-search-2025-03-05"],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      system,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+
+    let text = "";
+    const sources: Array<{ title: string; url: string }> = [];
+    const seenUrls = new Set<string>();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const block of (message.content as any[])) {
+      if (block.type === "text") {
+        text += block.text;
+        if (block.citations) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const citation of (block.citations as any[])) {
+            if (citation.url && !seenUrls.has(citation.url)) {
+              seenUrls.add(citation.url);
+              sources.push({ title: citation.title || citation.url, url: citation.url });
+            }
+          }
+        }
+      }
+    }
+
+    return { text, sources };
+  } catch {
+    // Fallback to regular completion if web search is unavailable
+    const text = await complete("anthropic", apiKey, searchModel, system, userPrompt, maxTokens);
+    return { text, sources: [] };
+  }
+}
+
 export async function complete(
   provider: AIProvider,
   apiKey: string,

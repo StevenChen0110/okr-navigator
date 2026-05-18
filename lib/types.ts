@@ -95,6 +95,14 @@ export interface IkigaiDimension {
   reasoning: string;   // ≤20 words
 }
 
+export interface MarketResearch {
+  marketSize: string;
+  painPoints: string;
+  existingSolutions: string;
+  sources: Array<{ title: string; url: string }>;
+  fromWebSearch: boolean;
+}
+
 export interface IdeaValidationReport {
   ikigai: {
     passion: IkigaiDimension;    // Would you enjoy/be energized by this?
@@ -113,6 +121,7 @@ export interface IdeaValidationReport {
     weeklyAction: string;        // one concrete action to run this week
     successCriteria: string;
   };
+  marketResearch?: MarketResearch;
   generatedAt: string;
 }
 export type TaskTimeframe = "daily" | "weekly" | "monthly" | "custom";

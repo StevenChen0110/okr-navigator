@@ -10,6 +10,7 @@ import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
 import { getObjGroups, saveObjGroups } from "@/lib/storage";
 import { useLanguage } from "@/components/LanguageProvider";
+import { useAIWorkspace } from "@/components/AIWorkspaceContext";
 import RichTextArea from "@/components/RichTextArea";
 import RichTextDisplay from "@/components/RichTextDisplay";
 import OKRChat from "@/components/OKRChat";
@@ -220,6 +221,8 @@ export default function GoalsPage() {
   const { user, requireAuth } = useAuth();
   const { t, language } = useLanguage();
   const router = useRouter();
+  const { setPageContext } = useAIWorkspace();
+  const zh = language === "zh-TW";
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [groups, setGroups] = useState<ObjGroup[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -274,9 +277,19 @@ export default function GoalsPage() {
 
   useEffect(() => {
     if (!user) { requireAuth(); router.replace("/"); return; }
-    fetchObjectives().then(setObjectives).catch(console.error);
+    fetchObjectives().then((objs) => {
+      setObjectives(objs);
+      const active = objs.filter((o) => !o.status || o.status === "active");
+      setPageContext({
+        label: zh ? "OKR 目標" : "OKR Goals",
+        systemContext: active.length
+          ? `User is on the OKR goals page. Their active objectives:\n${active.slice(0, 6).map((o) => `- ${o.title} (${o.keyResults.length} KRs)`).join("\n")}`
+          : "User is on the OKR goals page. They have no active objectives yet.",
+      });
+    }).catch(console.error);
     setGroups(getObjGroups());
-  }, [user]);
+    return () => setPageContext(null);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function krsFromForm(form: FormState): KeyResult[] {
     return form.krs.filter((t) => t.trim()).map((title) => ({ id: uuid(), title: title.trim() }));

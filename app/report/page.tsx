@@ -6,6 +6,7 @@ import { AlignmentReport } from "@/lib/types";
 import { fetchReports } from "@/lib/db";
 import { useAuth } from "@/components/AuthProvider";
 import { useLanguage } from "@/components/LanguageProvider";
+import { useAIWorkspace } from "@/components/AIWorkspaceContext";
 
 function getWeekStart(): string {
   const d = new Date();
@@ -39,17 +40,29 @@ export default function ReportListPage() {
   const { user, requireAuth } = useAuth();
   const { language } = useLanguage();
   const router = useRouter();
+  const { setPageContext } = useAIWorkspace();
   const [reports, setReports] = useState<AlignmentReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const zh = language === "zh-TW";
 
   const currentWeek = getWeekStart();
 
   useEffect(() => {
     if (!user) return;
     fetchReports()
-      .then(setReports)
+      .then((r) => {
+        setReports(r);
+        const latest = r[0];
+        setPageContext({
+          label: zh ? "週報告" : "Weekly Reports",
+          systemContext: latest
+            ? `User is on the alignment reports page. Latest report: week of ${latest.weekStart}, alignment score ${latest.alignmentScore}%. Insight: ${latest.aiInsight}`
+            : "User is on the alignment reports page. They have no reports yet.",
+        });
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
+    return () => setPageContext(null);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasCurrentWeek = reports.some((r) => r.weekStart === currentWeek);

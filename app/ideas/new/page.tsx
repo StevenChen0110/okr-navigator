@@ -11,8 +11,9 @@ import { getUserProfile, getObjGroups } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { getEvaluationProfile } from "@/lib/storage";
 import IkigaiViz from "@/components/IkigaiViz";
+import { useAIWorkspace } from "@/components/AIWorkspaceContext";
 import type {
-  IdeaValidationReport, IdeaDecision, Objective, KeyResult, Role,
+  IdeaValidationReport, IdeaDecision, MarketResearch, Objective, KeyResult, Role,
 } from "@/lib/types";
 
 type Phase =
@@ -31,8 +32,10 @@ export default function NewIdeaPage() {
   const { t, language } = useLanguage();
   const router = useRouter();
   const zh = language === "zh-TW";
+  const { setPageContext } = useAIWorkspace();
 
   const [phase, setPhase] = useState<Phase>("capture");
+  const [analyzeStatus, setAnalyzeStatus] = useState<"searching" | "analyzing" | null>(null);
   const [rawInput, setRawInput] = useState("");
   const [confirmedTitle, setConfirmedTitle] = useState("");
   const [rephraseSuggestion, setRephraseSuggestion] = useState("");
@@ -61,6 +64,29 @@ export default function NewIdeaPage() {
       fetchObjectives().then(setObjectives).catch(() => {});
     }
   }, [user]);
+
+  // Sync page context for AI workspace drawer
+  useEffect(() => {
+    if (phase === "report" && report && confirmedTitle) {
+      setPageContext({
+        label: zh ? "驗證想法" : "Idea Validation",
+        systemContext: `User is reviewing an idea validation report.\nIdea: ${confirmedTitle}\nOverall score: ${report.ikigai.overallScore}/10\nVerdict: ${report.ikigai.verdict}`,
+      });
+    } else if (phase === "capture" || phase === "rephrasing" || phase === "clarifying") {
+      setPageContext({
+        label: zh ? "驗證想法" : "Idea Validation",
+        systemContext: confirmedTitle
+          ? `User is in the middle of validating an idea: ${confirmedTitle}`
+          : "User is about to capture and validate a new idea.",
+      });
+    } else if (phase === "okr-draft") {
+      setPageContext({
+        label: zh ? "建立 OKR" : "Create OKR",
+        systemContext: `User is creating an OKR from an idea they decided to pursue.\nIdea: ${confirmedTitle}\nDraft objective: ${draftObjective}`,
+      });
+    }
+    return () => setPageContext(null);
+  }, [phase, confirmedTitle, report, draftObjective]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Phase transitions ──────────────────────────────────────────────────────
 
@@ -116,11 +142,23 @@ export default function NewIdeaPage() {
     setPhase("analyzing");
     setError("");
     try {
+      // Step 1: search market data (non-blocking — fall back silently if it fails)
+      setAnalyzeStatus("searching");
+      let marketResearch: MarketResearch | undefined;
+      try {
+        marketResearch = await callAI<MarketResearch>("searchMarketData", { ideaTitle: title });
+      } catch {
+        // market search failure is non-fatal
+      }
+
+      // Step 2: run ikigai analysis with market context
+      setAnalyzeStatus("analyzing");
       const result = await callAI<IdeaValidationReport>("analyzeIdeaValidation", {
         ideaTitle: title,
         ideaNotes: notes,
         userBackground,
         objectives,
+        marketResearch,
       });
       setReport(result);
       setConfirmedTitle(title);
@@ -128,6 +166,8 @@ export default function NewIdeaPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("capture");
+    } finally {
+      setAnalyzeStatus(null);
     }
   }
 
@@ -344,8 +384,29 @@ export default function NewIdeaPage() {
         {/* ── ANALYZING ──────────────────────────────────────────────────── */}
         {phase === "analyzing" && (
           <div className="flex flex-col items-center gap-4 py-16">
-            <div className="w-10 h-10 border-3 border-indigo-400 border-t-transparent rounded-full animate-spin" style={{ borderWidth: 3 }} />
-            <p className="text-sm text-gray-400">{t("ideas.new.analyzing")}</p>
+            <div className="w-10 h-10 border-indigo-400 border-t-transparent rounded-full animate-spin" style={{ borderWidth: 3, border: "3px solid #a5b4fc", borderTopColor: "transparent" }} />
+            <div className="text-center space-y-1">
+              <p className="text-sm font-medium text-gray-700">
+                {analyzeStatus === "searching"
+                  ? (zh ? "搜尋市場資料中…" : "Searching market data…")
+                  : (zh ? "分析中…" : "Analyzing…")}
+              </p>
+              {analyzeStatus === "searching" && (
+                <p className="text-xs text-gray-400">
+                  {zh ? "AI 正在搜尋市場規模、痛點與現有解法" : "AI is searching market size, pain points & existing solutions"}
+                </p>
+              )}
+            </div>
+            {/* Step indicators */}
+            <div className="flex items-center gap-2 mt-2">
+              <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${analyzeStatus === "searching" ? "bg-indigo-100 text-indigo-600" : "bg-green-100 text-green-600"}`}>
+                {analyzeStatus !== "searching" ? "✓ " : ""}{zh ? "市場搜尋" : "Market search"}
+              </span>
+              <span className="text-gray-300">→</span>
+              <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${analyzeStatus === "analyzing" ? "bg-indigo-100 text-indigo-600" : "bg-gray-100 text-gray-400"}`}>
+                {zh ? "Ikigai 分析" : "Ikigai analysis"}
+              </span>
+            </div>
           </div>
         )}
 

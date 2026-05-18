@@ -1,6 +1,6 @@
-import { complete, completeWithHistory } from "./llm";
+import { complete, completeWithHistory, completeWithWebSearch } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, IdeaValidationReport, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, Role } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, IdeaValidationReport, MarketResearch, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, Role } from "./types";
 
 export interface ReportItem {
   content: string;
@@ -892,6 +892,49 @@ No markdown fences.`,
   return Array.isArray(parsed) ? parsed.slice(0, 3) : [];
 }
 
+// ── Market Research (web search) ─────────────────────────────────────────────
+
+export async function searchMarketData(
+  apiKey: string,
+  model: string,
+  language: "zh-TW" | "en",
+  ideaTitle: string,
+  provider: AIProvider = "anthropic",
+): Promise<MarketResearch> {
+  const systemPrompt = language === "zh-TW"
+    ? `你是市場研究助手。針對給定想法，搜尋並整理市場資訊。輸出精簡的 JSON，每個欄位 1-3 句話。`
+    : `You are a market research assistant. Search for and summarize market information about the given idea. Output concise JSON, 1-3 sentences per field.`;
+
+  const userPrompt = language === "zh-TW"
+    ? `想法：${ideaTitle}
+
+請搜尋這個想法的市場資料，輸出 JSON：
+{"marketSize":"市場規模與成長趨勢","painPoints":"已知的痛點或需求討論","existingSolutions":"現有主要解法或競爭者"}`
+    : `Idea: ${ideaTitle}
+
+Search for market data about this idea and output JSON:
+{"marketSize":"market size and growth trends","painPoints":"known pain points and demand discussions","existingSolutions":"existing major solutions or competitors"}`;
+
+  if (provider === "anthropic") {
+    const { text, sources } = await completeWithWebSearch(apiKey, model, systemPrompt, userPrompt, 1200);
+    try {
+      const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<MarketResearch, "sources" | "fromWebSearch">;
+      return { ...parsed, sources, fromWebSearch: sources.length > 0 };
+    } catch {
+      return { marketSize: text.slice(0, 300), painPoints: "", existingSolutions: "", sources, fromWebSearch: sources.length > 0 };
+    }
+  }
+
+  // Non-Anthropic: use regular completion (training knowledge, no live search)
+  const text = await complete(provider, apiKey, model, systemPrompt, userPrompt, 800);
+  try {
+    const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<MarketResearch, "sources" | "fromWebSearch">;
+    return { ...parsed, sources: [], fromWebSearch: false };
+  } catch {
+    return { marketSize: text.slice(0, 300), painPoints: "", existingSolutions: "", sources: [], fromWebSearch: false };
+  }
+}
+
 // ── Idea Validation Report (Ikigai framework) ─────────────────────────────────
 
 export async function analyzeIdeaValidation(
@@ -900,10 +943,14 @@ export async function analyzeIdeaValidation(
   userBackground: string | null,
   objectives: Objective[],
   provider: AIProvider = "anthropic",
+  marketResearch?: MarketResearch,
 ): Promise<IdeaValidationReport> {
   const bgCtx = userBackground ? `\nUser background: ${userBackground}` : "";
   const objCtx = objectives.length
     ? `\nUser's current goals:\n${objectives.slice(0, 4).map((o) => `- ${o.title}`).join("\n")}`
+    : "";
+  const marketCtx = marketResearch
+    ? `\nMarket research data:\n- Market size: ${marketResearch.marketSize}\n- Pain points: ${marketResearch.painPoints}\n- Existing solutions: ${marketResearch.existingSolutions}`
     : "";
   const ideaCtx = ideaNotes.trim()
     ? `Idea: ${ideaTitle}\nNotes: ${ideaNotes}`
@@ -911,13 +958,13 @@ export async function analyzeIdeaValidation(
 
   const text = await complete(
     provider, apiKey, model,
-    `You are an idea validation coach. Analyze the idea using an adapted Ikigai framework.${bgCtx}${objCtx}
+    `You are an idea validation coach. Analyze the idea using an adapted Ikigai framework.${bgCtx}${objCtx}${marketCtx}
 
 4 dimensions to score (0-10, one crisp reasoning sentence ≤20 words each):
 1. passion – Would this person genuinely enjoy/be energized working on this?
 2. expertise – Are they positioned to execute? (skills, knowledge, experience)
-3. impact – Does this create meaningful value for themselves or others?
-4. viability – Is this practically achievable given time, resources, constraints?
+3. impact – Does this create meaningful value for themselves or others? ${marketResearch ? "(use the provided market research to inform this score)" : ""}
+4. viability – Is this practically achievable given time, resources, constraints? ${marketResearch ? "(consider existing solutions and market context)" : ""}
 
 Also identify 1-2 core risks that could kill this idea. For each risk give a "fastValidation" — a specific way to test it in under 1 week, free or near-free.
 
@@ -929,8 +976,8 @@ Output ONLY valid JSON, no markdown fences:
     ideaCtx,
     800,
   );
-  const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<IdeaValidationReport, "generatedAt">;
-  return { ...parsed, generatedAt: new Date().toISOString() };
+  const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<IdeaValidationReport, "generatedAt" | "marketResearch">;
+  return { ...parsed, marketResearch, generatedAt: new Date().toISOString() };
 }
 
 // ── Generate OKR draft from idea (with role suggestion) ───────────────────────

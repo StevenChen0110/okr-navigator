@@ -128,6 +128,65 @@ export default function IkigaiViz({ report, zh = true }: Props) {
         </p>
         <p className="text-sm text-gray-700 leading-relaxed">{ikigai.verdict}</p>
       </div>
+
+      {/* Market Research */}
+      {report.marketResearch && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50/40 px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-blue-700 uppercase tracking-widest">
+              {zh ? "市場資料" : "Market Data"}
+            </p>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+              report.marketResearch.fromWebSearch
+                ? "bg-blue-100 text-blue-600"
+                : "bg-gray-100 text-gray-500"
+            }`}>
+              {report.marketResearch.fromWebSearch
+                ? (zh ? "來自網路資料" : "From web search")
+                : (zh ? "AI 知識庫" : "AI knowledge")}
+            </span>
+          </div>
+
+          {report.marketResearch.marketSize && (
+            <div>
+              <p className="text-[11px] font-semibold text-blue-600 mb-0.5">{zh ? "市場規模" : "Market Size"}</p>
+              <p className="text-xs text-gray-700 leading-snug">{report.marketResearch.marketSize}</p>
+            </div>
+          )}
+          {report.marketResearch.painPoints && (
+            <div>
+              <p className="text-[11px] font-semibold text-blue-600 mb-0.5">{zh ? "已知痛點" : "Pain Points"}</p>
+              <p className="text-xs text-gray-700 leading-snug">{report.marketResearch.painPoints}</p>
+            </div>
+          )}
+          {report.marketResearch.existingSolutions && (
+            <div>
+              <p className="text-[11px] font-semibold text-blue-600 mb-0.5">{zh ? "現有解法" : "Existing Solutions"}</p>
+              <p className="text-xs text-gray-700 leading-snug">{report.marketResearch.existingSolutions}</p>
+            </div>
+          )}
+
+          {report.marketResearch.sources.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-blue-600 mb-1">{zh ? "資料來源" : "Sources"}</p>
+              <ul className="space-y-0.5">
+                {report.marketResearch.sources.slice(0, 4).map((s, i) => (
+                  <li key={i}>
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-blue-500 hover:underline truncate block"
+                    >
+                      {s.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
