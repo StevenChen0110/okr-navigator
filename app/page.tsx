@@ -145,8 +145,16 @@ export default function HomePage() {
 
   async function handleIdeaAnalyze() {
     if (!ideaTitle.trim()) return;
-    if (!user && !guestTrialActive) { requireAuth(); return; }
-    if (activeObjectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
+
+    // Auto-start guest trial instead of prompting login
+    let effectiveObjectives = activeObjectives;
+    if (!user && !guestTrialActive) {
+      localStorage.setItem("guestTrialActive", "1");
+      setGuestTrialActive(true);
+      effectiveObjectives = GUEST_OBJECTIVES;
+    }
+
+    if (effectiveObjectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
     setIdeaError("");
 
     // Rephrase short/vague input (< 20 chars)
@@ -168,7 +176,7 @@ export default function HomePage() {
       setIdeaPhase("clarifying");
       try {
         const { shouldClarify, question } = await callAI<{ shouldClarify: boolean; question: string }>(
-          "clarifyIdea", { ideaTitle, objectives: activeObjectives }
+          "clarifyIdea", { ideaTitle, objectives: effectiveObjectives }
         );
         if (shouldClarify && question) {
           setIdeaClarifyQ(question);
@@ -177,19 +185,20 @@ export default function HomePage() {
         }
       } catch { /* fall through */ }
     }
-    await runIdeaAnalysis();
+    await runIdeaAnalysis(undefined, undefined, effectiveObjectives);
   }
 
-  async function runIdeaAnalysis(extraNotes?: string, titleOverride?: string) {
+  async function runIdeaAnalysis(extraNotes?: string, titleOverride?: string, objOverride?: Objective[]) {
     setIdeaPhase("analyzing");
     setIdeaError("");
     try {
       const effectiveTitle = titleOverride ?? ideaTitle;
       const combined = [ideaNotes, extraNotes].filter(Boolean).join("\n");
+      const objs = objOverride ?? activeObjectives;
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
         ideaTitle: effectiveTitle,
         ideaNotes: combined,
-        objectives: activeObjectives,
+        objectives: objs,
         evaluationContext: buildEvaluationPrompt(evalProfile, userBackground),
         groups,
       });
@@ -647,47 +656,59 @@ export default function HomePage() {
 
       {/* ── Guest Hero ──────────────────────────────────────────────── */}
       {!user && !guestTrialActive && (
-        <div className="step-enter mb-8 rounded-2xl bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 p-6 space-y-4">
+        <div className="step-enter mb-8 rounded-2xl bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 p-6 space-y-5">
           <div className="space-y-2">
             <p className="text-xs font-semibold text-indigo-500 uppercase tracking-widest">記錄指針</p>
             <h1 className="text-2xl font-bold text-gray-900 leading-snug">
               {language === "zh-TW"
-                ? "30 秒知道哪個想法最值得做"
-                : "Know in 30 seconds which idea matters most"}
+                ? "把想法丟進來，我幫你判斷值不值得做"
+                : "Drop in an idea — I'll tell you if it's worth doing"}
             </h1>
             <p className="text-sm text-gray-500 leading-relaxed">
               {language === "zh-TW"
-                ? "不是 OKR 工具——是決策加速器。連結你的目標，AI 秒算每件事的貢獻度。"
-                : "Not an OKR tool — a decision accelerator. Link your goals, AI instantly scores each idea."}
+                ? "連結你的目標，AI 秒算每個想法的貢獻度，30 秒做出更好的決策。"
+                : "Link your goals, AI scores each idea's impact in 30 seconds."}
             </p>
           </div>
-          <div className="flex gap-3 flex-wrap">
-            <button
-              onClick={() => { localStorage.setItem("guestTrialActive", "1"); setGuestTrialActive(true); }}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
-            >
-              {language === "zh-TW" ? "立刻試試，不用帳號 →" : "Try without an account →"}
-            </button>
-            <button
-              onClick={openLogin}
-              className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              {language === "zh-TW" ? "登入 / 註冊" : "Sign in / Sign up"}
-            </button>
+          {/* Idea input embedded in hero */}
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                value={ideaTitle}
+                onChange={(e) => setIdeaTitle(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleIdeaAnalyze()}
+                placeholder={language === "zh-TW" ? "例如：開始寫技術部落格、學習 AI 工具…" : "e.g. Start a technical blog, learn AI tools…"}
+                className="flex-1 rounded-xl border border-indigo-200 bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                autoFocus
+              />
+              <button
+                onClick={handleIdeaAnalyze}
+                disabled={!ideaTitle.trim()}
+                className="px-5 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-40 shrink-0 transition-colors"
+              >
+                {language === "zh-TW" ? "分析 →" : "Analyze →"}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400">
+              {language === "zh-TW" ? "無需帳號即可試用。" : "No account needed. "}
+              <button onClick={openLogin} className="text-indigo-500 hover:underline">
+                {language === "zh-TW" ? "登入 / 註冊" : "Sign in / Sign up"}
+              </button>
+            </p>
           </div>
         </div>
       )}
 
       {/* ── Page Header ─────────────────────────────────────────────── */}
       {(user || guestTrialActive) && (
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className="text-xl font-semibold text-gray-900">
-            {language === "zh-TW" ? "任務" : "Tasks"}
+            {language === "zh-TW" ? "驗證你的想法" : "Validate Your Ideas"}
           </h1>
           <p className="text-sm text-gray-400 mt-0.5">
             {language === "zh-TW"
-              ? "規劃待辦清單，驗證想法對目標的幫助"
-              : "Plan your todos and validate ideas against your goals"}
+              ? "輸入想法，AI 算出它對你目標的貢獻值"
+              : "Enter an idea, AI scores its impact on your goals"}
           </p>
         </div>
       )}
@@ -699,16 +720,18 @@ export default function HomePage() {
 
           {/* ── Section 1: Idea Validator ── */}
           <section className="space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700">
-                {language === "zh-TW" ? "想法驗證" : "Idea Validator"}
-              </h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                {language === "zh-TW"
-                  ? "輸入一個想法，看它對你的目標幫助有多大"
-                  : "Enter an idea and see how much it helps your goals"}
-              </p>
-            </div>
+            {(user || guestTrialActive) && (
+              <div>
+                <h2 className="text-base font-semibold text-gray-800">
+                  {language === "zh-TW" ? "想法驗證" : "Idea Validator"}
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {language === "zh-TW"
+                    ? "一句話描述你的想法，AI 告訴你它值不值得做"
+                    : "Describe your idea in one line — AI tells you if it's worth doing"}
+                </p>
+              </div>
+            )}
 
             {ideaPhase === "rephrasing" && !ideaRephraseSuggestion && (
               <div className="flex items-center gap-2 text-xs text-gray-400 px-1">
