@@ -23,6 +23,8 @@ import {
   classifyLogItems,
   generateAlignmentReport,
   suggestMonthlyActions,
+  analyzeIdeaValidation,
+  generateIdeaOKR,
 } from "@/lib/claude";
 import type { ReportItem } from "@/lib/claude";
 
@@ -260,6 +262,27 @@ export async function POST(req: NextRequest) {
           apiKey, model, language,
           payload.roles as Array<{ name: string; emoji: string }>,
           payload.objectives as Objective[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "analyzeIdeaValidation": {
+        const result = await analyzeIdeaValidation(
+          apiKey, model, language,
+          payload.ideaTitle as string,
+          payload.ideaNotes as string,
+          payload.userBackground as string | null,
+          payload.objectives as Objective[],
+          provider,
+        );
+        return NextResponse.json(result);
+      }
+      case "generateIdeaOKR": {
+        const result = await generateIdeaOKR(
+          apiKey, model, language,
+          payload.ideaTitle as string,
+          payload.ideaNotes as string,
+          payload.roles as Array<{ id: string; name: string; emoji: string }>,
           provider,
         );
         return NextResponse.json(result);

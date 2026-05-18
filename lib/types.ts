@@ -85,7 +85,36 @@ export interface IdeaAnalysis {
 }
 
 export type TaskStatus = "todo" | "in-progress" | "done";
-export type IdeaStatus = "active" | "shelved" | "deleted" | "inbox";
+export type IdeaStatus = "active" | "shelved" | "deleted" | "inbox" | "abandoned";
+export type IdeaDecision = "pursue" | "shelve" | "abandon";
+
+// ── Idea Validation Report (Ikigai framework) ─────────────────────────────────
+
+export interface IkigaiDimension {
+  score: number;       // 0-10
+  reasoning: string;   // ≤20 words
+}
+
+export interface IdeaValidationReport {
+  ikigai: {
+    passion: IkigaiDimension;    // Would you enjoy/be energized by this?
+    expertise: IkigaiDimension;  // Are you positioned to execute this?
+    impact: IkigaiDimension;     // Does this create meaningful value?
+    viability: IkigaiDimension;  // Is this practically achievable?
+    overallScore: number;        // 0-10
+    verdict: string;             // 1-2 sentence overall assessment
+  };
+  coreRisks: Array<{
+    risk: string;
+    fastValidation: string;      // how to test this risk in ≤1 week
+  }>;
+  experiment: {
+    hypothesis: string;
+    weeklyAction: string;        // one concrete action to run this week
+    successCriteria: string;
+  };
+  generatedAt: string;
+}
 export type TaskTimeframe = "daily" | "weekly" | "monthly" | "custom";
 
 // ── Plan / Todo Planner ───────────────────────────────────────────────────────
@@ -149,6 +178,9 @@ export interface Idea {
   todos?: TodoItem[];
   taskTimeframe?: TaskTimeframe;
   taskTimeframeCustomLabel?: string;
+  validationReport?: IdeaValidationReport;
+  decision?: IdeaDecision;
+  linkedRoleId?: string;
 }
 
 export type AIProvider = "anthropic" | "openai" | "gemini" | "grok";

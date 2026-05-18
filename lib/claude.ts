@@ -1,6 +1,6 @@
 import { complete, completeWithHistory } from "./llm";
 import type { AIProvider } from "./types";
-import { Objective, ObjGroup, IdeaAnalysis, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, Role } from "./types";
+import { Objective, ObjGroup, IdeaAnalysis, IdeaValidationReport, KRConfidence, GoalSuggestion, Milestone, MilestoneSuggestion, GroupSequencePhase, GroupSequenceSuggestion, TaskTimeframe, PlanPeriod, PlanAnalysisResult, Role } from "./types";
 
 export interface ReportItem {
   content: string;
@@ -890,4 +890,81 @@ No markdown fences.`,
   );
   const parsed = JSON.parse(extractJSON(stripFences(text)));
   return Array.isArray(parsed) ? parsed.slice(0, 3) : [];
+}
+
+// ── Idea Validation Report (Ikigai framework) ─────────────────────────────────
+
+export async function analyzeIdeaValidation(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  ideaTitle: string, ideaNotes: string,
+  userBackground: string | null,
+  objectives: Objective[],
+  provider: AIProvider = "anthropic",
+): Promise<IdeaValidationReport> {
+  const bgCtx = userBackground ? `\nUser background: ${userBackground}` : "";
+  const objCtx = objectives.length
+    ? `\nUser's current goals:\n${objectives.slice(0, 4).map((o) => `- ${o.title}`).join("\n")}`
+    : "";
+  const ideaCtx = ideaNotes.trim()
+    ? `Idea: ${ideaTitle}\nNotes: ${ideaNotes}`
+    : `Idea: ${ideaTitle}`;
+
+  const text = await complete(
+    provider, apiKey, model,
+    `You are an idea validation coach. Analyze the idea using an adapted Ikigai framework.${bgCtx}${objCtx}
+
+4 dimensions to score (0-10, one crisp reasoning sentence ≤20 words each):
+1. passion – Would this person genuinely enjoy/be energized working on this?
+2. expertise – Are they positioned to execute? (skills, knowledge, experience)
+3. impact – Does this create meaningful value for themselves or others?
+4. viability – Is this practically achievable given time, resources, constraints?
+
+Also identify 1-2 core risks that could kill this idea. For each risk give a "fastValidation" — a specific way to test it in under 1 week, free or near-free.
+
+Suggest the single best experiment to run THIS WEEK: one concrete action (not "think about X") that tests the biggest unknown.
+
+${langInstruction(language)}
+Output ONLY valid JSON, no markdown fences:
+{"ikigai":{"passion":{"score":7,"reasoning":"..."},"expertise":{"score":6,"reasoning":"..."},"impact":{"score":8,"reasoning":"..."},"viability":{"score":5,"reasoning":"..."},"overallScore":6.5,"verdict":"1-2 sentence assessment"},"coreRisks":[{"risk":"...","fastValidation":"..."}],"experiment":{"hypothesis":"...","weeklyAction":"...","successCriteria":"..."}}`,
+    ideaCtx,
+    800,
+  );
+  const parsed = JSON.parse(extractJSON(stripFences(text))) as Omit<IdeaValidationReport, "generatedAt">;
+  return { ...parsed, generatedAt: new Date().toISOString() };
+}
+
+// ── Generate OKR draft from idea (with role suggestion) ───────────────────────
+
+export async function generateIdeaOKR(
+  apiKey: string, model: string, language: "zh-TW" | "en",
+  ideaTitle: string, ideaNotes: string,
+  roles: Pick<Role, "id" | "name" | "emoji">[],
+  provider: AIProvider = "anthropic",
+): Promise<{ suggestedRoleId: string | null; objectiveTitle: string; timeframe: string; keyResults: string[] }> {
+  const rolesCtx = roles.length
+    ? `User's roles:\n${roles.map((r) => `- id:${r.id} ${r.emoji} ${r.name}`).join("\n")}`
+    : "No roles defined.";
+  const ideaCtx = ideaNotes.trim()
+    ? `Idea: ${ideaTitle}\nNotes: ${ideaNotes}`
+    : `Idea: ${ideaTitle}`;
+
+  const text = await complete(
+    provider, apiKey, model,
+    `You turn ideas into OKR drafts.
+${rolesCtx}
+${currentDateInstruction()}
+${langInstruction(language)}
+
+Generate a SMART OKR from the idea:
+- objectiveTitle: inspiring, action-oriented, 1 sentence
+- timeframe: nearest upcoming quarter (Q1/Q2/Q3/Q4 YYYY)
+- keyResults: exactly 3 measurable KRs
+- suggestedRoleId: the most relevant role id from the list, or null if none fit
+
+Output ONLY valid JSON, no markdown fences:
+{"suggestedRoleId":"id_or_null","objectiveTitle":"...","timeframe":"Q2 2026","keyResults":["KR1","KR2","KR3"]}`,
+    ideaCtx,
+    400,
+  );
+  return JSON.parse(extractJSON(stripFences(text)));
 }

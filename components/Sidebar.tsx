@@ -17,6 +17,18 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/ideas",
+    labelKey: "nav.ideas",
+    exact: false,
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="6" r="4" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M6 10.5c0 1.1.9 2 2 2s2-.9 2-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M6.5 10.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     href: "/report",
     labelKey: "nav.report",
     exact: false,

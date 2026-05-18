@@ -19,6 +19,19 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/ideas",
+    labelKey: "nav.ideas",
+    exact: false,
+    requireAuth: true,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <circle cx="10" cy="7.5" r="5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M7.5 13c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M8 13h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     href: "/report",
     labelKey: "nav.report",
     exact: false,
