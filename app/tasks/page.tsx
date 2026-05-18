@@ -11,14 +11,14 @@ import {
 import { fetchObjectives, saveIdea, saveWeeklyLog, saveLogItems, saveReport, fetchRoles } from "@/lib/db";
 import { callAI } from "@/lib/ai-client";
 import { useAuth } from "@/components/AuthProvider";
-import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, saveSettings } from "@/lib/storage";
+import { getEvaluationProfile, getObjGroups, getPlanItems, savePlanItems, getSettings, saveSettings, getUserProfile } from "@/lib/storage";
 import { buildEvaluationPrompt } from "@/lib/evaluation-prompt";
 import { useLanguage } from "@/components/LanguageProvider";
 import { computeWeightedScore } from "@/lib/scoring";
 import { PERIOD_LABELS_ZH, PERIOD_LABELS_EN, STATUS_LABELS_ZH, STATUS_LABELS_EN, STATUS_STYLE } from "@/lib/plan-constants";
 import GuidedTour from "@/components/GuidedTour";
 
-type IdeaPhase = "idle" | "clarifying" | "analyzing" | "result" | "saving";
+type IdeaPhase = "idle" | "rephrasing" | "clarifying" | "analyzing" | "result" | "saving";
 type PlanPhase = "idle" | "analyzing" | "result";
 
 function getWeekStart(): string {
@@ -59,10 +59,12 @@ export default function TasksPage() {
   const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
 
   // Idea validator state
+  const [userBackground, setUserBackground] = useState<string | null>(null);
   const [ideaTitle, setIdeaTitle] = useState("");
   const [ideaNotes, setIdeaNotes] = useState("");
   const [ideaNotesOpen, setIdeaNotesOpen] = useState(false);
   const [ideaPhase, setIdeaPhase] = useState<IdeaPhase>("idle");
+  const [ideaRephraseSuggestion, setIdeaRephraseSuggestion] = useState("");
   const [ideaAnalysis, setIdeaAnalysis] = useState<IdeaAnalysis | null>(null);
   const [ideaError, setIdeaError] = useState("");
   const [ideaClarifyQ, setIdeaClarifyQ] = useState("");
@@ -108,6 +110,8 @@ export default function TasksPage() {
   useEffect(() => {
     setGroups(getObjGroups());
     setPlanItems(getPlanItems());
+    const profile = getUserProfile();
+    if (profile) setUserBackground(profile.statement);
   }, []);
 
   useEffect(() => {
@@ -238,6 +242,19 @@ export default function TasksPage() {
     if (!user) { requireAuth(); return; }
     if (objectives.length === 0) { setIdeaError(t("error.noObjectives")); return; }
     setIdeaError("");
+
+    // Rephrase short/vague input (< 20 chars, no extra notes)
+    if (ideaTitle.trim().length < 20 && isQuickIdea) {
+      setIdeaPhase("rephrasing");
+      try {
+        const { rephrased } = await callAI<{ rephrased: string | null }>(
+          "rephraseInput", { ideaTitle: ideaTitle.trim(), userBackground }
+        );
+        if (rephrased) { setIdeaRephraseSuggestion(rephrased); return; }
+      } catch { /* fall through */ }
+      setIdeaPhase("idle");
+    }
+
     if (isQuickIdea) {
       setIdeaPhase("clarifying");
       try {
@@ -250,13 +267,14 @@ export default function TasksPage() {
     await runIdeaAnalysis();
   }
 
-  async function runIdeaAnalysis(extraNotes?: string) {
+  async function runIdeaAnalysis(extraNotes?: string, titleOverride?: string) {
     setIdeaPhase("analyzing");
     setIdeaError("");
     try {
+      const effectiveTitle = titleOverride ?? ideaTitle;
       const combined = [ideaNotes, extraNotes].filter(Boolean).join("\n");
       const result = await callAI<IdeaAnalysis>("analyzeIdea", {
-        ideaTitle, ideaNotes: combined, objectives,
+        ideaTitle: effectiveTitle, ideaNotes: combined, objectives,
         evaluationContext: buildEvaluationPrompt(evalProfile), groups,
       });
       setIdeaAnalysis(result);
@@ -298,6 +316,7 @@ export default function TasksPage() {
   function resetIdeaValidator() {
     setIdeaTitle(""); setIdeaNotes(""); setIdeaNotesOpen(false);
     setIdeaPhase("idle"); setIdeaAnalysis(null); setIdeaError("");
+    setIdeaRephraseSuggestion("");
     setIdeaClarifyQ(""); setIdeaClarifyA(""); setIdeaMessages([]);
     setSuggestedLinks([]); setSelectedLinkIds(new Set());
     setIdeaAutoStarted(false);
@@ -557,6 +576,40 @@ export default function TasksPage() {
 
             {ideaError && <p className="text-xs text-red-500">{ideaError}</p>}
           </div>
+          </div>
+        )}
+
+        {ideaPhase === "rephrasing" && !ideaRephraseSuggestion && (
+          <div className="rounded-2xl border-2 border-indigo-100 bg-indigo-50/20 px-4 py-4 flex items-center gap-2 text-xs text-gray-400">
+            <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+            {language === "zh-TW" ? "AI 理解中…" : "AI is interpreting…"}
+          </div>
+        )}
+
+        {ideaPhase === "rephrasing" && ideaRephraseSuggestion && (
+          <div className="rounded-2xl border-2 border-indigo-100 bg-indigo-50/20 px-4 py-4 space-y-3">
+            <p className="text-xs font-semibold text-indigo-600">
+              {language === "zh-TW" ? "你的意思是：" : "Did you mean:"}
+            </p>
+            <input
+              value={ideaRephraseSuggestion}
+              onChange={(e) => setIdeaRephraseSuggestion(e.target.value)}
+              className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { const t = ideaRephraseSuggestion; setIdeaTitle(t); setIdeaRephraseSuggestion(""); runIdeaAnalysis(undefined, t); }}
+                className="flex-1 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700"
+              >
+                {language === "zh-TW" ? "對，用這個分析 →" : "Yes, analyze this →"}
+              </button>
+              <button
+                onClick={() => { setIdeaRephraseSuggestion(""); setIdeaPhase("idle"); }}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50"
+              >
+                {language === "zh-TW" ? "用原本的" : "Use original"}
+              </button>
+            </div>
           </div>
         )}
 
