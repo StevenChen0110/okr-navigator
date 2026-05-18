@@ -651,6 +651,31 @@ export default function HomePage() {
     (activePanel === "plan" && (planPhase === "result" || planPhase === "analyzing"))
   );
 
+  function renderPanelContent() {
+    return (
+      <>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            {activePanel === "idea"
+              ? (language === "zh-TW" ? "想法分析" : "Idea Analysis")
+              : (language === "zh-TW" ? "計畫分析" : "Plan Analysis")}
+          </p>
+          <button onClick={() => setActivePanel(null)} className="text-gray-300 hover:text-gray-500 text-lg leading-none">×</button>
+        </div>
+        {activePanel === "idea" && planPhase !== "analyzing" && IdeaPanel()}
+        {activePanel === "plan" && planPhase === "analyzing" && (
+          <div className="text-center py-10">
+            <div className="text-3xl mb-3 animate-pulse text-indigo-400">◎</div>
+            <p className="text-xs text-gray-400">
+              {language === "zh-TW" ? "AI 分析計畫中…" : "Analyzing your plan…"}
+            </p>
+          </div>
+        )}
+        {activePanel === "plan" && planPhase === "result" && PlanPanel()}
+      </>
+    );
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 md:px-6 md:py-8">
 
@@ -1029,32 +1054,7 @@ export default function HomePage() {
         {hasRightPanel && (
           <div className="hidden md:block w-[360px] shrink-0 sticky top-6 self-start max-h-[calc(100vh-5rem)] overflow-y-auto">
             <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  {activePanel === "idea"
-                    ? (language === "zh-TW" ? "想法分析" : "Idea Analysis")
-                    : (language === "zh-TW" ? "計畫分析" : "Plan Analysis")}
-                </p>
-                <button
-                  onClick={() => setActivePanel(null)}
-                  className="text-gray-300 hover:text-gray-500 text-lg leading-none"
-                >
-                  ×
-                </button>
-              </div>
-
-              {activePanel === "idea" && planPhase !== "analyzing" && <IdeaPanel />}
-
-              {activePanel === "plan" && planPhase === "analyzing" && (
-                <div className="text-center py-10">
-                  <div className="text-3xl mb-3 animate-pulse text-indigo-400">◎</div>
-                  <p className="text-xs text-gray-400">
-                    {language === "zh-TW" ? "AI 分析計畫中…" : "Analyzing your plan…"}
-                  </p>
-                </div>
-              )}
-
-              {activePanel === "plan" && planPhase === "result" && <PlanPanel />}
+              {renderPanelContent()}
             </div>
           </div>
         )}
@@ -1064,22 +1064,7 @@ export default function HomePage() {
       {hasRightPanel && (
         <div className="md:hidden mt-6">
           <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                {activePanel === "idea"
-                  ? (language === "zh-TW" ? "想法分析" : "Idea Analysis")
-                  : (language === "zh-TW" ? "計畫分析" : "Plan Analysis")}
-              </p>
-              <button onClick={() => setActivePanel(null)} className="text-gray-300 hover:text-gray-500 text-lg leading-none">×</button>
-            </div>
-            {activePanel === "idea" && <IdeaPanel />}
-            {activePanel === "plan" && planPhase === "analyzing" && (
-              <div className="text-center py-6">
-                <div className="text-2xl animate-pulse text-indigo-400 mb-2">◎</div>
-                <p className="text-xs text-gray-400">{language === "zh-TW" ? "AI 分析計畫中…" : "Analyzing…"}</p>
-              </div>
-            )}
-            {activePanel === "plan" && planPhase === "result" && <PlanPanel />}
+            {renderPanelContent()}
           </div>
         </div>
       )}
