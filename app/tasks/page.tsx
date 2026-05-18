@@ -116,7 +116,7 @@ export default function TasksPage() {
       setObjectives(objs);
       const settings = getSettings();
       if (!settings.onboardingCompleted) {
-        router.push("/onboarding");
+        router.replace("/onboarding");
         return;
       }
       if (!settings.tourCompleted) setTourStep(0);

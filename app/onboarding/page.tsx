@@ -133,7 +133,7 @@ export default function OnboardingPage() {
       saveUserProfile({ statement: profileStatement.trim(), createdAt: new Date().toISOString() });
     }
     saveSettings({ ...getSettings(), onboardingCompleted: true });
-    router.push("/tasks");
+    router.replace("/tasks");
   }
 
   // Steps 2-5 shown in progress bar

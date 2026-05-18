@@ -73,6 +73,8 @@ export function getSettings(): AppSettings {
     model: raw.model ?? raw.claudeModel ?? "claude-haiku-4-5-20251001",
     apiKeys: raw.apiKeys ?? {},
     claudeModel: raw.claudeModel,
+    onboardingCompleted: raw.onboardingCompleted,
+    tourCompleted: raw.tourCompleted,
   };
 }
 
