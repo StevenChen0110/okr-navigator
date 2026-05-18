@@ -20,21 +20,27 @@ export default function AuthCallbackPage() {
     }
 
     if (!code) {
-      // PKCE/implicit: supabase-js processes the URL hash automatically.
-      // Wait for the session to be set before redirecting.
+      // Implicit flow: supabase-js processes the URL hash automatically on load.
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
           router.replace("/");
-        } else {
-          // Give supabase-js up to 2s to process the hash token
-          const unsub = supabase.auth.onAuthStateChange((_event, s) => {
-            if (s) { unsub.data.subscription.unsubscribe(); router.replace("/"); }
-          });
-          setTimeout(() => {
+          return;
+        }
+        // Wait up to 3s for onAuthStateChange to fire (hash token processing)
+        let resolved = false;
+        const unsub = supabase.auth.onAuthStateChange((_event, s) => {
+          if (s && !resolved) {
+            resolved = true;
             unsub.data.subscription.unsubscribe();
             router.replace("/");
-          }, 2000);
-        }
+          }
+        });
+        setTimeout(() => {
+          if (!resolved) {
+            unsub.data.subscription.unsubscribe();
+            setError("登入逾時，請重試。");
+          }
+        }, 3000);
       });
       return;
     }

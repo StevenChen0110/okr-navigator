@@ -146,12 +146,17 @@ function LoginContent({ onClose }: { onClose: () => void }) {
   }
 
   async function signInWithGoogle() {
+    setError("");
     setGoogleBusy(true);
-    await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
-    setGoogleBusy(false);
+    if (error) {
+      setError(error.message);
+      setGoogleBusy(false);
+    }
+    // If no error: page redirects away, component unmounts — no need to reset busy
   }
 
   return (
